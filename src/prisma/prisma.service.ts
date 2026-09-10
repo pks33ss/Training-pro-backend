@@ -1,20 +1,16 @@
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+// La importación ahora apunta a la salida personalizada que definimos en schema.prisma
+import { PrismaClient } from '../generated/prisma/client.js'; 
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   constructor() {
-    // Crear el pool de conexiones para PostgreSQL
-    const pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-    });
-    
-    // Crear el adaptador de Prisma
+    const connectionString = process.env.DATABASE_URL; // Esta es la POOLED
+    const pool = new Pool({ connectionString });
     const adapter = new PrismaPg(pool);
-    
-    // Pasar el adaptador al constructor de PrismaClient
+
     super({ adapter });
   }
 
