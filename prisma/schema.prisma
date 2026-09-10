@@ -1,0 +1,252 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  lastName  String
+  role      Role     @default(COACH)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  clubs               ClubMember[]
+  teams               TeamMember[]
+  refreshTokens       RefreshToken[]
+  sessions            Session[]
+  calendarEvents      CalendarEvent[] // ✅ Relación inversa para eventos creados
+  calendarInvitations CalendarInvitation[] // ✅ Relación inversa para invitaciones
+}
+
+enum Role {
+  ADMIN
+  COACH
+  ASSISTANT
+}
+
+model Club {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  address     String?
+  phone       String?
+  email       String?
+  logo        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members        ClubMember[]
+  teams          Team[]
+  calendarEvents CalendarEvent[] // ✅ Relación inversa para eventos
+}
+
+model ClubMember {
+  id       String   @id @default(cuid())
+  userId   String
+  clubId   String
+  role     Role     @default(COACH)
+  isActive Boolean  @default(true)
+  joinedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+  club Club @relation(fields: [clubId], references: [id])
+
+  @@unique([userId, clubId])
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String
+  category  String?
+  season    String?
+  clubId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  club           Club            @relation(fields: [clubId], references: [id])
+  members        TeamMember[]
+  players        Player[]
+  sessions       Session[]
+  calendarEvents CalendarEvent[] // ✅ Relación inversa para eventos
+}
+
+model TeamMember {
+  id       String   @id @default(cuid())
+  userId   String
+  teamId   String
+  role     Role     @default(COACH)
+  isActive Boolean  @default(true)
+  joinedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+  team Team @relation(fields: [teamId], references: [id])
+
+  @@unique([userId, teamId])
+}
+
+model Player {
+  id        String    @id @default(cuid())
+  name      String
+  lastName  String
+  birthDate DateTime?
+  position  String?
+  number    Int?
+  teamId    String
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  team        Team         @relation(fields: [teamId], references: [id])
+  attendances Attendance[]
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+}
+
+model Session {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  date        DateTime
+  duration    Int
+  location    String?
+  teamId      String
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdBy   User         @relation(fields: [createdById], references: [id])
+  exercises   Exercise[]
+  attendances Attendance[]
+
+  @@index([teamId])
+  @@index([date])
+}
+
+model Exercise {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  category    String?
+  duration    Int?
+  difficulty  String?
+  sessionId   String
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  media   Media[]
+}
+
+model Media {
+  id          String    @id @default(cuid())
+  url         String
+  type        MediaType
+  title       String?
+  description String?
+  exerciseId  String
+  createdAt   DateTime  @default(now())
+
+  exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  LINK
+}
+
+model Attendance {
+  id           String           @id @default(cuid())
+  playerId     String
+  sessionId    String
+  status       AttendanceStatus @default(PRESENT)
+  notes        String?
+  registeredAt DateTime         @default(now())
+
+  player  Player  @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, sessionId])
+  @@index([sessionId])
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  EXCUSED
+}
+
+model CalendarEvent {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  startDate   DateTime
+  endDate     DateTime
+  type        EventType @default(TRAINING)
+  location    String?
+  clubId      String
+  teamId      String?
+  createdById String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  club        Club                 @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  team        Team?                @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  createdBy   User                 @relation(fields: [createdById], references: [id])
+  invitations CalendarInvitation[]
+
+  @@index([clubId])
+  @@index([teamId])
+  @@index([startDate])
+}
+
+model CalendarInvitation {
+  id          String           @id @default(cuid())
+  eventId     String
+  userId      String
+  status      InvitationStatus @default(PENDING)
+  invitedAt   DateTime         @default(now())
+  respondedAt DateTime?
+
+  event CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User          @relation(fields: [userId], references: [id])
+
+  @@unique([eventId, userId])
+}
+
+enum EventType {
+  TRAINING
+  MATCH
+  TOURNAMENT
+  MEETING
+  OTHER
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  MAYBE
+}
