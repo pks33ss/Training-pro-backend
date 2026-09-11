@@ -8,6 +8,7 @@ import { TeamModule } from './team/team.module';
 import { PlayerModule } from './player/player.module';
 import { SessionModule } from './session/session.module'; // ✅ UNA SOLA VEZ
 import { AttendanceModule } from './attendance/attendance.module';
+import { CloudinaryModule } from './cloudinary/cloudinary.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { AttendanceModule } from './attendance/attendance.module';
     PlayerModule,
     SessionModule, // ✅ UNA SOLA VEZ
     AttendanceModule,
+    CloudinaryModule,
   ],
 })
 export class AppModule {}

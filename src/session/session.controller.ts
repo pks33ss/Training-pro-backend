@@ -4,11 +4,15 @@ import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { AddExerciseDto } from './dto/add-exercise.dto';
 import { AuthGuard } from '../auth/auth.guard';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 
 @Controller('sessions')
 @UseGuards(AuthGuard)
 export class SessionController {
-  constructor(private readonly sessionService: SessionService) {}
+  constructor(
+    private readonly sessionService: SessionService,
+    private readonly cloudinaryService: CloudinaryService,
+  ) {}
 
   // ============================================
   // SESIONES
@@ -48,7 +52,6 @@ export class SessionController {
     return this.sessionService.addExercise(req.user.id, id, addExerciseDto);
   }
 
-  // ✅ NUEVO: Actualizar ejercicio
   @Put('exercises/:exerciseId')
   updateExercise(
     @Request() req,
@@ -58,7 +61,6 @@ export class SessionController {
     return this.sessionService.updateExercise(req.user.id, exerciseId, updateExerciseDto);
   }
 
-  // ✅ NUEVO: Reordenar ejercicios
   @Put(':id/reorder')
   reorderExercises(
     @Request() req,
@@ -71,5 +73,48 @@ export class SessionController {
   @Delete('exercises/:exerciseId')
   removeExercise(@Request() req, @Param('exerciseId') exerciseId: string) {
     return this.sessionService.removeExercise(req.user.id, exerciseId);
+  }
+
+  // ============================================
+  // MEDIA (Imágenes y Links)
+  // ============================================
+
+  @Post('exercises/:exerciseId/upload-image')
+  async uploadExerciseImage(
+    @Request() req,
+    @Param('exerciseId') exerciseId: string,
+    @Body('image') image: string,
+    @Body('title') title?: string,
+  ) {
+    const result = await this.cloudinaryService.uploadImage(image, 'exercises');
+
+    return this.sessionService.addMediaToExercise(
+      req.user.id,
+      exerciseId,
+      result.url,
+      'IMAGE',
+      title,
+    );
+  }
+
+  @Post('exercises/:exerciseId/add-link')
+  async addExerciseLink(
+    @Request() req,
+    @Param('exerciseId') exerciseId: string,
+    @Body('url') url: string,
+    @Body('title') title?: string,
+  ) {
+    return this.sessionService.addMediaToExercise(
+      req.user.id,
+      exerciseId,
+      url,
+      'LINK',
+      title,
+    );
+  }
+
+  @Delete('media/:mediaId')
+  async removeMedia(@Request() req, @Param('mediaId') mediaId: string) {
+    return this.sessionService.removeMedia(req.user.id, mediaId);
   }
 }

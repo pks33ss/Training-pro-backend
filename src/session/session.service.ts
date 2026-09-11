@@ -360,4 +360,89 @@ export class SessionService {
       where: { id: exerciseId },
     });
   }
+
+    // ============================================
+  // MEDIA (Imágenes y Links)
+  // ============================================
+
+  async addMediaToExercise(
+    userId: string,
+    exerciseId: string,
+    url: string,
+    type: 'IMAGE' | 'VIDEO' | 'LINK',
+    title?: string,
+  ) {
+    const exercise = await this.prisma.exercise.findUnique({
+      where: { id: exerciseId },
+      include: {
+        session: {
+          include: {
+            team: true,
+          },
+        },
+      },
+    });
+
+    if (!exercise) {
+      throw new NotFoundException('Ejercicio no encontrado');
+    }
+
+    const member = await this.prisma.clubMember.findFirst({
+      where: {
+        userId: userId,
+        clubId: exercise.session.team.clubId,
+        isActive: true,
+      },
+    });
+
+    if (!member) {
+      throw new ForbiddenException('No tienes permisos');
+    }
+
+    return this.prisma.media.create({
+      data: {
+        url,
+        type,
+        title,
+        exerciseId,
+      },
+    });
+  }
+
+  async removeMedia(userId: string, mediaId: string) {
+    const media = await this.prisma.media.findUnique({
+      where: { id: mediaId },
+      include: {
+        exercise: {
+          include: {
+            session: {
+              include: {
+                team: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!media) {
+      throw new NotFoundException('Media no encontrada');
+    }
+
+    const member = await this.prisma.clubMember.findFirst({
+      where: {
+        userId: userId,
+        clubId: media.exercise.session.team.clubId,
+        isActive: true,
+      },
+    });
+
+    if (!member) {
+      throw new ForbiddenException('No tienes permisos');
+    }
+
+    return this.prisma.media.delete({
+      where: { id: mediaId },
+    });
+  }
 }
