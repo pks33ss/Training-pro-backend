@@ -150,7 +150,7 @@ export class PlayerService {
         userId: userId,
         clubId: player.team.clubId,
         isActive: true,
-        role: 'ADMIN',
+        role: 'ADMIN_CLUB',
       },
     });
 

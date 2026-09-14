@@ -130,7 +130,7 @@ export class TeamService {
       where: {
         userId: userId,
         clubId: team.clubId,
-        role: 'ADMIN',
+        role: 'ADMIN_CLUB',
         isActive: true,
       },
     });
@@ -168,7 +168,7 @@ export class TeamService {
       where: {
         userId: userId,
         clubId: team.clubId,
-        role: 'ADMIN',
+        role: 'ADMIN_CLUB',
         isActive: true,
       },
     });

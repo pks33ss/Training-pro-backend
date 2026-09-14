@@ -1,6 +1,5 @@
 generator client {
   provider = "prisma-client-js"
-
 }
 
 datasource db {
@@ -8,27 +7,21 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
+  id        String     @id @default(cuid())
+  email     String     @unique
   password  String
   name      String
   lastName  String
-  role      Role     @default(COACH)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  role      GlobalRole @default(USER) // ✅ Rol global
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
   clubs               ClubMember[]
   teams               TeamMember[]
   refreshTokens       RefreshToken[]
   sessions            Session[]
-  calendarEvents      CalendarEvent[] // ✅ Relación inversa para eventos creados
-  calendarInvitations CalendarInvitation[] // ✅ Relación inversa para invitaciones
-}
-
-enum Role {
-  ADMIN
-  COACH
-  ASSISTANT
+  calendarEvents      CalendarEvent[]
+  calendarInvitations CalendarInvitation[]
 }
 
 model Club {
@@ -51,7 +44,7 @@ model ClubMember {
   id       String   @id @default(cuid())
   userId   String
   clubId   String
-  role     Role     @default(COACH)
+  role     ClubRole @default(COACH)
   isActive Boolean  @default(true)
   joinedAt DateTime @default(now())
 
@@ -81,7 +74,7 @@ model TeamMember {
   id       String   @id @default(cuid())
   userId   String
   teamId   String
-  role     Role     @default(COACH)
+  role     TeamRole @default(COACH) // ✅ Rol específico de equipo
   isActive Boolean  @default(true)
   joinedAt DateTime @default(now())
 
@@ -250,4 +243,21 @@ enum InvitationStatus {
   ACCEPTED
   DECLINED
   MAYBE
+}
+
+// ✅ Enums de roles por ámbito
+enum ClubRole {
+  ADMIN_CLUB
+  COACH
+  ASSISTANT
+}
+
+enum TeamRole {
+  COACH
+  ASSISTANT
+}
+
+enum GlobalRole {
+  SUPER_ADMIN
+  USER
 }

@@ -18,7 +18,7 @@ export class ClubService {
         members: {
           create: {
             userId: userId,
-            role: 'ADMIN',
+            role: 'ADMIN_CLUB',
           },
         },
       },
@@ -138,7 +138,7 @@ export class ClubService {
       where: {
         userId: userId,
         clubId: clubId,
-        role: 'ADMIN',
+        role: 'ADMIN_CLUB',
         isActive: true,
       },
     });
@@ -158,7 +158,7 @@ export class ClubService {
       where: {
         userId: userId,
         clubId: clubId,
-        role: 'ADMIN',
+        role: 'ADMIN_CLUB',
         isActive: true,
       },
     });
@@ -177,7 +177,7 @@ export class ClubService {
       where: {
         userId: userId,
         clubId: clubId,
-        role: 'ADMIN',
+        role: 'ADMIN_CLUB',
         isActive: true,
       },
     });

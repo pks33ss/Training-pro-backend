@@ -100,14 +100,14 @@ export class AuthService {
         role: user.role,
       },
       { expiresIn: '15m' }
-    );
+    )
 
     const refreshToken = await this.refreshTokenService.createRefreshToken(user.id);
 
     return {
       accessToken,
       refreshToken,
-    };
+    }
   }
 
   private excludePassword(user: any) {
