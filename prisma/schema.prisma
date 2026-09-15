@@ -12,7 +12,10 @@ model User {
   password  String
   name      String
   lastName  String
-  role      GlobalRole @default(USER) // ✅ Rol global
+  phone     String? // ✅ NUEVO
+  avatar    String? // ✅ NUEVO (URL de Cloudinary)
+  bio       String? // ✅ NUEVO
+  role      GlobalRole @default(USER)
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
@@ -22,6 +25,7 @@ model User {
   sessions            Session[]
   calendarEvents      CalendarEvent[]
   calendarInvitations CalendarInvitation[]
+  playerTutors        PlayerTutor[]
 }
 
 model Club {
@@ -91,13 +95,22 @@ model Player {
   birthDate DateTime?
   position  String?
   number    Int?
+  phone     String? // ✅ NUEVO
+  email     String? // ✅ NUEVO
+  address   String? // ✅ NUEVO
+  height    Float? // ✅ NUEVO (cm)
+  wingspan  Float? // ✅ NUEVO (envergadura, cm)
+  weight    Float? // ✅ NUEVO (kg)
   teamId    String
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  team        Team         @relation(fields: [teamId], references: [id])
+  team        Team          @relation(fields: [teamId], references: [id])
   attendances Attendance[]
+  tutors      PlayerTutor[]
+
+  @@index([teamId])
 }
 
 model RefreshToken {
@@ -260,4 +273,25 @@ enum TeamRole {
 enum GlobalRole {
   SUPER_ADMIN
   USER
+}
+
+model PlayerTutor {
+  id                 String   @id @default(cuid())
+  playerId           String
+  userId             String? // Opcional: si el tutor tiene cuenta en la app
+  name               String // Nombre del tutor
+  lastName           String // Apellido del tutor
+  relationship       String // padre, madre, tutor_legal, otro
+  phone              String?
+  email              String?
+  canPickUp          Boolean  @default(true) // ¿Puede recoger al jugador?
+  isEmergencyContact Boolean  @default(false) // ¿Es contacto de emergencia?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id])
+
+  @@index([playerId])
+  @@index([userId])
 }

@@ -2,30 +2,46 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards, Fo
 import { UserService } from './user.service'
 import { AuthGuard } from '../auth/auth.guard'
 
-
-
 @Controller('users')
 @UseGuards(AuthGuard)
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
-  // ✅ Solo SUPER_ADMIN: Listar todos los usuarios
+  // ============================================
+  // PERFIL DEL USUARIO (deben ir ANTES de :id)
+  // ============================================
+
+  @Get('profile/me')
+  getProfile(@Request() req) {
+    return this.userService.getProfile(req.user.id)
+  }
+
+  @Put('profile/me')
+  updateProfile(@Request() req, @Body() data: any) {
+    return this.userService.updateProfile(req.user.id, data)
+  }
+
+  @Put('profile/change-password')
+  changePassword(@Request() req, @Body() data: any) {
+    return this.userService.changePassword(
+      req.user.id,
+      data.currentPassword,
+      data.newPassword,
+    )
+  }
+
+  // ============================================
+  // GESTIÓN DE USUARIOS (solo SUPER_ADMIN)
+  // ============================================
+
   @Get()
   async findAll(@Request() req) {
-    // Verificar que es SUPER_ADMIN
     if (req.user.role !== 'SUPER_ADMIN') {
       throw new ForbiddenException('Solo los super administradores pueden ver todos los usuarios')
     }
     return this.userService.findAll()
   }
 
-  // ✅ Cualquier usuario autenticado: Ver su propio perfil
-  @Get('me')
-  async getProfile(@Request() req) {
-    return this.userService.findOne(req.user.id)
-  }
-
-  // ✅ Solo SUPER_ADMIN: Ver un usuario específico
   @Get(':id')
   async findOne(@Request() req, @Param('id') id: string) {
     if (req.user.role !== 'SUPER_ADMIN' && req.user.id !== id) {
@@ -34,7 +50,14 @@ export class UserController {
     return this.userService.findOne(id)
   }
 
-  // ✅ Solo SUPER_ADMIN: Cambiar rol global
+  @Post()
+  async create(@Request() req, @Body() createUserDto: { email: string; password: string; name: string; lastName: string; role?: string }) {
+    if (req.user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException('Solo los super administradores pueden crear usuarios')
+    }
+    return this.userService.create(createUserDto)
+  }
+
   @Put(':id/role')
   async updateRole(
     @Request() req,
@@ -47,7 +70,6 @@ export class UserController {
     return this.userService.updateRole(id, role)
   }
 
-  // ✅ Solo SUPER_ADMIN: Eliminar usuario
   @Delete(':id')
   async remove(@Request() req, @Param('id') id: string) {
     if (req.user.role !== 'SUPER_ADMIN') {
@@ -55,20 +77,20 @@ export class UserController {
     }
     return this.userService.remove(id)
   }
-
-  // ✅ Buscar usuario por email (para invitar)
-  @Get('search/:email')
-  async findByEmail(@Request() req, @Param('email') email: string) {
-    return this.userService.findByEmail(email)
-  }
-
-  // ✅ NUEVO: Solo SUPER_ADMIN puede crear usuarios
-  @Post()
-  async create(@Request() req, @Body() createUserDto: { email: string; password: string; name: string; lastName: string; role?: string }) {
+    @Post(':id/reset-password')
+  async resetPassword(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('newPassword') newPassword: string,
+  ) {
     if (req.user.role !== 'SUPER_ADMIN') {
-      throw new ForbiddenException('Solo los super administradores pueden crear usuarios')
+      throw new ForbiddenException('Solo los super administradores pueden resetear contraseñas')
     }
-    return this.userService.create(createUserDto)
+
+    if (!newPassword || newPassword.length < 6) {
+      throw new ForbiddenException('La contraseña debe tener al menos 6 caracteres')
+    }
+
+    return this.userService.resetPassword(id, newPassword)
   }
 }
-

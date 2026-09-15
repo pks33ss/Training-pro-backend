@@ -33,4 +33,43 @@ export class TeamController {
   remove(@Request() req, @Param('id') id: string) {
     return this.teamService.remove(req.user.id, id);
   }
+
+
+    // ============================================
+  // GESTIÓN DE MIEMBROS
+  // ============================================
+
+  @Get(':id/members')
+  getMembers(@Request() req, @Param('id') id: string) {
+    return this.teamService.getMembers(req.user.id, id)
+  }
+
+  @Post(':id/invite')
+  inviteMember(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('email') email: string,
+    @Body('role') role: string,
+  ) {
+    return this.teamService.inviteMember(req.user.id, id, email, role)
+  }
+
+  @Put(':teamId/members/:memberId')
+  updateMemberRole(
+    @Request() req,
+    @Param('teamId') teamId: string,
+    @Param('memberId') memberId: string,
+    @Body('role') role: string,
+  ) {
+    return this.teamService.updateMemberRole(req.user.id, teamId, memberId, role)
+  }
+
+  @Delete(':teamId/members/:memberId')
+  removeMember(
+    @Request() req,
+    @Param('teamId') teamId: string,
+    @Param('memberId') memberId: string,
+  ) {
+    return this.teamService.removeMember(req.user.id, teamId, memberId)
+  }
 }

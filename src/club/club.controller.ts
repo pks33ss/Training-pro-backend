@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards, ForbiddenException } from '@nestjs/common'
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { ClubService } from './club.service';
 import { CreateClubDto } from './dto/create-club.dto';
@@ -51,11 +51,64 @@ export class ClubController {
     return this.clubService.remove(req.user.id, id);
   }
 
-  @Post(':id/invite')
+  
   @ApiOperation({ summary: 'Invitar a un usuario al club' })
   @ApiResponse({ status: 200, description: 'Usuario invitado' })
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
-  invite(@Request() req, @Param('id') id: string, @Body('email') email: string) {
-    return this.clubService.inviteMember(req.user.id, id, email);
+ 
+    // ============================================
+  // GESTIÓN DE MIEMBROS
+  // ============================================
+
+  @Get(':id/members')
+  getMembers(@Request() req, @Param('id') id: string) {
+    return this.clubService.getMembers(req.user.id, id)
+  }
+
+  @Post(':id/invite')
+  inviteMember(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('email') email: string,
+    @Body('role') role: string,
+  ) {
+    return this.clubService.inviteMember(req.user.id, id, email, role)
+  }
+
+  @Put(':clubId/members/:memberId')
+  updateMemberRole(
+    @Request() req,
+    @Param('clubId') clubId: string,
+    @Param('memberId') memberId: string,
+    @Body('role') role: string,
+  ) {
+    return this.clubService.updateMemberRole(req.user.id, clubId, memberId, role)
+  }
+
+  @Delete(':clubId/members/:memberId')
+  removeMember(
+    @Request() req,
+    @Param('clubId') clubId: string,
+    @Param('memberId') memberId: string,
+  ) {
+    return this.clubService.removeMember(req.user.id, clubId, memberId)
+  }
+  @Post(':clubId/members/:memberId/reset-password')
+  resetMemberPassword(
+    @Request() req,
+    @Param('clubId') clubId: string,
+    @Param('memberId') memberId: string,
+    @Body('newPassword') newPassword: string,
+  ) {
+    if (!newPassword || newPassword.length < 6) {
+      throw new ForbiddenException('La contraseña debe tener al menos 6 caracteres')
+    }
+
+    return this.clubService.resetMemberPassword(
+      req.user.id,
+      clubId,
+      memberId,
+      newPassword,
+    )
   }
 }
