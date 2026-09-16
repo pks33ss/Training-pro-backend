@@ -26,6 +26,7 @@ model User {
   calendarEvents      CalendarEvent[]
   calendarInvitations CalendarInvitation[]
   playerTutors        PlayerTutor[]
+  createdMatches      Match[] // ✅ NUEVO
 }
 
 model Club {
@@ -72,6 +73,7 @@ model Team {
   players        Player[]
   sessions       Session[]
   calendarEvents CalendarEvent[] // ✅ Relación inversa para eventos
+  matches        Match[] // ✅ NUEVO
 }
 
 model TeamMember {
@@ -106,9 +108,11 @@ model Player {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  team        Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  team        Team               @relation(fields: [teamId], references: [id], onDelete: Cascade)
   attendances Attendance[]
   tutors      PlayerTutor[]
+  callups     MatchCallup[] // ✅ NUEVO
+  matchStats  MatchPlayerStats[] // ✅ NUEVO
 
   @@index([teamId])
 }
@@ -294,4 +298,122 @@ model PlayerTutor {
 
   @@index([playerId])
   @@index([userId])
+}
+
+// ============================================
+// PARTIDOS
+// ============================================
+
+enum MatchType {
+  LEAGUE // Liga
+  FRIENDLY // Amistoso
+  CUP // Copa
+  PLAYOFF // Playoff
+  TOURNAMENT // Torneo
+}
+
+enum MatchLocation {
+  HOME // Casa
+  AWAY // Fuera
+  NEUTRAL // Neutral
+}
+
+enum MatchStatus {
+  SCHEDULED // Programado
+  IN_PROGRESS // En curso
+  FINISHED // Finalizado
+  CANCELLED // Cancelado
+  POSTPONED // Aplazado
+}
+
+model Match {
+  id          String        @id @default(cuid())
+  date        DateTime // Fecha y hora del partido
+  opponent    String // Nombre del equipo rival
+  location    MatchLocation @default(HOME)
+  type        MatchType     @default(LEAGUE)
+  status      MatchStatus   @default(SCHEDULED)
+  venue       String? // Pabellón/ubicación
+  competition String? // Nombre de la competición
+  notes       String? // Notas adicionales
+
+  // Resultado
+  teamScore     Int? // Puntos del equipo
+  opponentScore Int? // Puntos del rival
+
+  // Relaciones
+  teamId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  callups     MatchCallup[]
+  playerStats MatchPlayerStats[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teamId])
+  @@index([date])
+}
+
+model MatchCallup {
+  id          String       @id @default(cuid())
+  matchId     String
+  playerId    String
+  status      CallupStatus @default(PENDING)
+  notes       String?
+  respondedAt DateTime?
+
+  match  Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([matchId, playerId])
+  @@index([matchId])
+  @@index([playerId])
+}
+
+enum CallupStatus {
+  PENDING // Pendiente de confirmar
+  CONFIRMED // Confirmado
+  DECLINED // Rechazado
+  MAYBE // Quizás
+}
+
+model MatchPlayerStats {
+  id       String @id @default(cuid())
+  matchId  String
+  playerId String
+
+  // Estadísticas
+  minutes   Int? // Minutos jugados
+  points    Int  @default(0)
+  rebounds  Int  @default(0)
+  assists   Int  @default(0)
+  steals    Int  @default(0)
+  blocks    Int  @default(0)
+  turnovers Int  @default(0)
+  fouls     Int  @default(0)
+
+  // Tiros
+  fieldGoalsMade         Int @default(0) // Tiros de campo anotados
+  fieldGoalsAttempted    Int @default(0) // Tiros de campo intentados
+  threePointersMade      Int @default(0) // Triples anotados
+  threePointersAttempted Int @default(0) // Triples intentados
+  freeThrowsMade         Int @default(0) // Tiros libres anotados
+  freeThrowsAttempted    Int @default(0) // Tiros libres intentados
+
+  match  Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([matchId, playerId])
+  @@index([matchId])
+  @@index([playerId])
 }
