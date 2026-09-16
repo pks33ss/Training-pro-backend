@@ -19,6 +19,11 @@ export class TeamController {
     return this.teamService.findAllByClub(req.user.id, clubId);
   }
 
+  @Get('club/:clubId/with-members')
+async findAllByClubWithMembers(@Request() req, @Param('clubId') clubId: string) {
+  return this.teamService.findAllByClubWithMembers(req.user.id, clubId)
+}
+
   @Get(':id')
   findOne(@Request() req, @Param('id') id: string) {
     return this.teamService.findOne(req.user.id, id);
@@ -72,4 +77,5 @@ export class TeamController {
   ) {
     return this.teamService.removeMember(req.user.id, teamId, memberId)
   }
+
 }

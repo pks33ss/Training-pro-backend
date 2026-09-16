@@ -18,6 +18,11 @@ export class PlayerController {
     return this.playerService.findAllByTeam(req.user.id, teamId);
   }
 
+  @Post('by-teams')
+  findAllByTeams(@Request() req, @Body('teamIds') teamIds: string[]) {
+    return this.playerService.findAllByTeams(req.user.id, teamIds)
+  }
+
   @Get(':id')
   findOne(@Request() req, @Param('id') id: string) {
     return this.playerService.findOne(req.user.id, id);

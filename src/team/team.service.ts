@@ -35,19 +35,28 @@ export class TeamService {
   }
 
   async findAllByClub(userId: string, clubId: string) {
-    // Verificar acceso al club
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        isActive: true,
-      },
-    });
+  // Verificar acceso al club
+  const member = await this.prisma.clubMember.findFirst({
+    where: {
+      userId: userId,
+      clubId: clubId,
+      isActive: true,
+    },
+  })
 
-    if (!member) {
-      throw new ForbiddenException('No tienes acceso a este club');
-    }
+  // Verificar si es SUPER_ADMIN
+  const currentUser = await this.prisma.user.findUnique({
+    where: { id: userId },
+  })
 
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
+  if (!member && !isSuperAdmin) {
+    throw new ForbiddenException('No tienes acceso a este club')
+  }
+
+  // ✅ Si es ADMIN_CLUB o SUPER_ADMIN, ve TODOS los equipos
+  if (member?.role === 'ADMIN_CLUB' || isSuperAdmin) {
     return this.prisma.team.findMany({
       where: { clubId },
       include: {
@@ -72,8 +81,54 @@ export class TeamService {
           },
         },
       },
-    });
+    })
   }
+
+  // ✅ Si es COACH o ASSISTANT, solo ve los equipos a los que pertenece
+  const teamMemberships = await this.prisma.teamMember.findMany({
+    where: {
+      userId: userId,
+      isActive: true,
+      team: {
+        clubId: clubId,
+      },
+    },
+    select: {
+      teamId: true,
+    },
+  })
+
+  const teamIds = teamMemberships.map(tm => tm.teamId)
+
+  return this.prisma.team.findMany({
+    where: {
+      clubId,
+      id: { in: teamIds },
+    },
+    include: {
+      players: {
+        select: {
+          id: true,
+          name: true,
+          lastName: true,
+          number: true,
+        },
+      },
+      members: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
+      },
+    },
+  })
+}
 
   async findOne(userId: string, teamId: string) {
     const team = await this.prisma.team.findUnique({
@@ -115,6 +170,54 @@ export class TeamService {
 
     return team;
   }
+
+  async findAllByClubWithMembers(userId: string, clubId: string) {
+  // Verificar que es ADMIN_CLUB o SUPER_ADMIN
+  const currentUser = await this.prisma.user.findUnique({
+    where: { id: userId },
+  })
+
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
+  const isClubAdmin = await this.prisma.clubMember.findFirst({
+    where: {
+      userId: userId,
+      clubId: clubId,
+      role: 'ADMIN_CLUB',
+      isActive: true,
+    },
+  })
+
+  if (!isClubAdmin && !isSuperAdmin) {
+    throw new ForbiddenException('Solo los administradores del club pueden ver esta información')
+  }
+
+  return this.prisma.team.findMany({
+    where: { clubId },
+    include: {
+      members: {
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              lastName: true,
+              email: true,
+            },
+          },
+        },
+      },
+      players: {
+        select: {
+          id: true,
+          name: true,
+          lastName: true,
+        },
+      },
+    },
+    orderBy: { name: 'asc' },
+  })
+}
 
   async update(userId: string, teamId: string, updateTeamDto: UpdateTeamDto) {
     const team = await this.prisma.team.findUnique({
@@ -232,98 +335,123 @@ export class TeamService {
   }
 
   async inviteMember(userId: string, teamId: string, email: string, role: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
+  const currentUser = await this.prisma.user.findUnique({
+    where: { id: userId },
+  })
 
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
 
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-    })
+  const team = await this.prisma.team.findUnique({
+    where: { id: teamId },
+  })
 
-    if (!team) {
-      throw new NotFoundException('Equipo no encontrado')
-    }
+  if (!team) {
+    throw new NotFoundException('Equipo no encontrado')
+  }
 
-    // Verificar permisos: ADMIN_CLUB del club, COACH del equipo o SUPER_ADMIN
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: team.clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
+  // Verificar permisos
+  const isClubAdmin = await this.prisma.clubMember.findFirst({
+    where: {
+      userId: userId,
+      clubId: team.clubId,
+      role: 'ADMIN_CLUB',
+      isActive: true,
+    },
+  })
 
-    const isTeamCoach = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: userId,
-        teamId: teamId,
-        role: 'COACH',
-        isActive: true,
-      },
-    })
+  const isTeamCoach = await this.prisma.teamMember.findFirst({
+    where: {
+      userId: userId,
+      teamId: teamId,
+      role: 'COACH',
+      isActive: true,
+    },
+  })
 
-    if (!isClubAdmin && !isTeamCoach && !isSuperAdmin) {
-      throw new ForbiddenException('No tienes permisos para invitar miembros a este equipo')
-    }
+  if (!isClubAdmin && !isTeamCoach && !isSuperAdmin) {
+    throw new ForbiddenException('No tienes permisos para invitar miembros a este equipo')
+  }
 
-    // Buscar el usuario a invitar
-    const userToInvite = await this.prisma.user.findUnique({
-      where: { email },
-    })
+  // Buscar el usuario a invitar
+  const userToInvite = await this.prisma.user.findUnique({
+    where: { email },
+  })
 
-    if (!userToInvite) {
-      throw new NotFoundException('Usuario no encontrado. Primero debe registrarse en la app.')
-    }
+  if (!userToInvite) {
+    throw new NotFoundException('Usuario no encontrado. Primero debe registrarse en la app.')
+  }
 
-    // Verificar si ya es miembro del equipo
-    const existingMember = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: userToInvite.id,
-        teamId: teamId,
-      },
-    })
+  // ✅ NUEVO: Verificar si ya es miembro del club
+  const existingClubMember = await this.prisma.clubMember.findFirst({
+    where: {
+      userId: userToInvite.id,
+      clubId: team.clubId,
+    },
+  })
 
-    if (existingMember) {
-      if (!existingMember.isActive) {
-        return this.prisma.teamMember.update({
-          where: { id: existingMember.id },
-          data: { isActive: true, role: role as any },
-          include: {
-            user: {
-              select: {
-                id: true,
-                email: true,
-                name: true,
-                lastName: true,
-              },
-            },
-          },
-        })
-      }
-      throw new ForbiddenException('El usuario ya es miembro del equipo')
-    }
-
-    return this.prisma.teamMember.create({
+  // ✅ NUEVO: Si no es miembro del club, añadirlo automáticamente
+  if (!existingClubMember) {
+    await this.prisma.clubMember.create({
       data: {
         userId: userToInvite.id,
-        teamId: teamId,
-        role: role as any,
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            lastName: true,
-          },
-        },
+        clubId: team.clubId,
+        role: 'COACH',  // Rol por defecto en el club
       },
     })
+  } else if (!existingClubMember.isActive) {
+    // Si estaba inactivo, reactivarlo
+    await this.prisma.clubMember.update({
+      where: { id: existingClubMember.id },
+      data: { isActive: true },
+    })
   }
+
+  // Verificar si ya es miembro del equipo
+  const existingMember = await this.prisma.teamMember.findFirst({
+    where: {
+      userId: userToInvite.id,
+      teamId: teamId,
+    },
+  })
+
+  if (existingMember) {
+    if (!existingMember.isActive) {
+      return this.prisma.teamMember.update({
+        where: { id: existingMember.id },
+        data: { isActive: true, role: role as any },
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              name: true,
+              lastName: true,
+            },
+          },
+        },
+      })
+    }
+    throw new ForbiddenException('El usuario ya es miembro del equipo')
+  }
+
+  return this.prisma.teamMember.create({
+    data: {
+      userId: userToInvite.id,
+      teamId: teamId,
+      role: role as any,
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          lastName: true,
+        },
+      },
+    },
+  })
+}
 
   async updateMemberRole(userId: string, teamId: string, memberId: string, newRole: string) {
     const currentUser = await this.prisma.user.findUnique({

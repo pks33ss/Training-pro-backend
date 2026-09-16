@@ -43,41 +43,76 @@ export class ClubService {
   }
 
   async findAll(userId: string) {
-    const clubMembers = await this.prisma.clubMember.findMany({
-      where: {
-        userId: userId,
-        isActive: true,
-      },
+  const currentUser = await this.prisma.user.findUnique({
+    where: { id: userId },
+  })
+
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
+  // Si es SUPER_ADMIN, ver todos los clubs
+  if (isSuperAdmin) {
+    return this.prisma.club.findMany({
       include: {
-        club: {
+        members: {
           include: {
-            members: {
-              include: {
-                user: {
-                  select: {
-                    id: true,
-                    name: true,
-                    lastName: true,
-                    email: true,
-                  },
-                },
-              },
-            },
-            teams: {
+            user: {
               select: {
                 id: true,
                 name: true,
-                category: true,
-                season: true,
+                lastName: true,
+                email: true,
               },
             },
           },
         },
+        teams: {
+          select: {
+            id: true,
+            name: true,
+            category: true,
+            season: true,
+          },
+        },
       },
-    });
-
-    return clubMembers.map(cm => cm.club);
+    })
   }
+
+  // Si no, solo los clubs donde es miembro
+  const clubMembers = await this.prisma.clubMember.findMany({
+    where: {
+      userId: userId,
+      isActive: true,
+    },
+    include: {
+      club: {
+        include: {
+          members: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  name: true,
+                  lastName: true,
+                  email: true,
+                },
+              },
+            },
+          },
+          teams: {
+            select: {
+              id: true,
+              name: true,
+              category: true,
+              season: true,
+            },
+          },
+        },
+      },
+    },
+  })
+
+  return clubMembers.map(cm => cm.club)
+}
 
   async findOne(userId: string, clubId: string) {
     const member = await this.prisma.clubMember.findFirst({

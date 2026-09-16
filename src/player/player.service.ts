@@ -378,4 +378,67 @@ export class PlayerService {
       where: { id: tutorId },
     })
   }
+    // ============================================
+  // JUGADORES DE MÚLTIPLES EQUIPOS
+  // ============================================
+
+  async findAllByTeams(userId: string, teamIds: string[]) {
+    if (!teamIds || teamIds.length === 0) {
+      return []
+    }
+
+    // Verificar acceso a cada equipo
+    const teams = await this.prisma.team.findMany({
+      where: { id: { in: teamIds } },
+    })
+
+    if (teams.length === 0) {
+      throw new NotFoundException('No se encontraron equipos')
+    }
+
+    // Verificar que el usuario tiene acceso a todos los equipos
+    const clubIds = [...new Set(teams.map(t => t.clubId))]
+
+    for (const clubId of clubIds) {
+      const member = await this.prisma.clubMember.findFirst({
+        where: {
+          userId: userId,
+          clubId: clubId,
+          isActive: true,
+        },
+      })
+
+      const currentUser = await this.prisma.user.findUnique({
+        where: { id: userId },
+      })
+
+      const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
+      if (!member && !isSuperAdmin) {
+        throw new ForbiddenException('No tienes acceso a uno de los equipos seleccionados')
+      }
+    }
+
+    return this.prisma.player.findMany({
+      where: {
+        teamId: { in: teamIds },
+        isActive: true,
+      },
+      include: {
+        team: {
+          select: {
+            id: true,
+            name: true,
+            category: true,
+          },
+        },
+        tutors: true,
+      },
+      orderBy: [
+        { team: { name: 'asc' } },
+        { number: 'asc' },
+        { lastName: 'asc' },
+      ],
+    })
+  }
 }

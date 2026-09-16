@@ -52,8 +52,8 @@ model ClubMember {
   isActive Boolean  @default(true)
   joinedAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id])
-  club Club @relation(fields: [clubId], references: [id])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  club Club @relation(fields: [clubId], references: [id], onDelete: Cascade) // ✅ Añadido
 
   @@unique([userId, clubId])
 }
@@ -67,7 +67,7 @@ model Team {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  club           Club            @relation(fields: [clubId], references: [id])
+  club           Club            @relation(fields: [clubId], references: [id], onDelete: Cascade)
   members        TeamMember[]
   players        Player[]
   sessions       Session[]
@@ -82,8 +82,8 @@ model TeamMember {
   isActive Boolean  @default(true)
   joinedAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id])
-  team Team @relation(fields: [teamId], references: [id])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
   @@unique([userId, teamId])
 }
@@ -106,7 +106,7 @@ model Player {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  team        Team          @relation(fields: [teamId], references: [id])
+  team        Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
   attendances Attendance[]
   tutors      PlayerTutor[]
 
