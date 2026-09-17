@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateAttendanceDto, BulkAttendanceDto } from './dto/update-attendance.dto';
 
+
 @Injectable()
 export class AttendanceService {
   constructor(private prisma: PrismaService) {}
@@ -242,7 +243,7 @@ export class AttendanceService {
       absent,
       late,
       excused,
-      attendanceRate: total > 0 ? Math.round((present / total) * 100) : 0,
+      attendanceRate: total > 0 ? Math.round(((present + late) / total) * 100) : 0,
       effectiveAttendanceRate: total > 0 ? Math.round((effectivePresent / total) * 100) : 0,
     };
   }
@@ -304,7 +305,7 @@ export class AttendanceService {
             absent,
             late,
             excused,
-            attendanceRate: total > 0 ? Math.round((present / total) * 100) : 0,
+            attendanceRate: total > 0 ? Math.round(((present + late) / total) * 100) : 0,
           },
         };
       })
@@ -343,8 +344,8 @@ export class AttendanceService {
         totalLate,
         totalExcused,
         attendanceRate: totalAttendances > 0
-          ? Math.round((totalPresent / totalAttendances) * 100)
-          : 0,
+  ? Math.round(((totalPresent + totalLate) / totalAttendances) * 100)
+  : 0,
       },
       playersStats: playersStats.sort((a, b) =>
         b.stats.attendanceRate - a.stats.attendanceRate
@@ -399,7 +400,9 @@ export class AttendanceService {
       absent,
       late,
       excused,
-      attendanceRate: totalPlayers > 0 ? Math.round((present / totalPlayers) * 100) : 0,
+      attendanceRate: totalPlayers > 0
+  ? Math.round(((present + late) / totalPlayers) * 100)
+  : 0,
     };
   }
 }

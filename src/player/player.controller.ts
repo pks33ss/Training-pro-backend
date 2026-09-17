@@ -23,10 +23,17 @@ export class PlayerController {
     return this.playerService.findAllByTeams(req.user.id, teamIds)
   }
 
+  
+  @Get(':id/match-stats')
+  getPlayerMatchStats(@Request() req, @Param('id') id: string) {
+    return this.playerService.getPlayerMatchStats(req.user.id, id)
+  }
+
   @Get(':id')
   findOne(@Request() req, @Param('id') id: string) {
     return this.playerService.findOne(req.user.id, id);
   }
+
 
   @Put(':id')
   update(@Request() req, @Param('id') id: string, @Body() updateData: any) {

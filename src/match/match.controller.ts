@@ -106,4 +106,29 @@ export class MatchController {
   getPlayerStats(@Request() req, @Param('id') id: string) {
     return this.matchService.getPlayerStats(req.user.id, id)
   }
+    // ============================================
+  // LINE UP
+  // ============================================
+
+  @Put(':id/lineup')
+  updateLineup(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('lineup') lineup: any,
+  ) {
+    return this.matchService.updateLineup(req.user.id, id, lineup)
+  }
+
+  // ============================================
+  // PLAN DE PARTIDO
+  // ============================================
+
+  @Put(':id/game-plan')
+  updateGamePlan(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('gamePlan') gamePlan: string,
+  ) {
+    return this.matchService.updateGamePlan(req.user.id, id, gamePlan)
+  }
 }

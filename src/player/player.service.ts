@@ -441,4 +441,196 @@ export class PlayerService {
       ],
     })
   }
+    // ============================================
+  // ESTADÍSTICAS DE PARTIDOS DEL JUGADOR
+  // ============================================
+
+  async getPlayerMatchStats(userId: string, playerId: string) {
+    const player = await this.prisma.player.findUnique({
+      where: { id: playerId },
+      include: {
+        team: { include: { club: true } },
+      },
+    })
+
+    if (!player) {
+      throw new NotFoundException('Jugador no encontrado')
+    }
+
+    const member = await this.prisma.clubMember.findFirst({
+      where: {
+        userId,
+        clubId: player.team.clubId,
+        isActive: true,
+      },
+    })
+
+    if (!member) {
+      throw new ForbiddenException('No tienes acceso a este jugador')
+    }
+
+    // Todos los stats del jugador con la info del partido
+    const stats = await this.prisma.matchPlayerStats.findMany({
+      where: { playerId },
+      include: {
+        match: {
+          select: {
+            id: true,
+            date: true,
+            opponent: true,
+            location: true,
+            type: true,
+            status: true,
+            teamScore: true,
+            opponentScore: true,
+            competition: true,
+          },
+        },
+      },
+      orderBy: {
+        match: { date: 'desc' },
+      },
+    })
+
+    // Solo partidos finalizados para las agregaciones
+    const finished = stats.filter(
+      (s) =>
+        s.match.status === 'FINISHED' &&
+        s.match.teamScore !== null &&
+        s.match.opponentScore !== null,
+    )
+
+    const games = finished.length
+
+    // Totales
+    const totals = finished.reduce(
+      (acc, s) => ({
+        minutes: acc.minutes + (s.minutes ?? 0),
+        points: acc.points + s.points,
+        rebounds: acc.rebounds + s.rebounds,
+        assists: acc.assists + s.assists,
+        steals: acc.steals + s.steals,
+        blocks: acc.blocks + s.blocks,
+        turnovers: acc.turnovers + s.turnovers,
+        fouls: acc.fouls + s.fouls,
+        fieldGoalsMade: acc.fieldGoalsMade + s.fieldGoalsMade,
+        fieldGoalsAttempted: acc.fieldGoalsAttempted + s.fieldGoalsAttempted,
+        threePointersMade: acc.threePointersMade + s.threePointersMade,
+        threePointersAttempted: acc.threePointersAttempted + s.threePointersAttempted,
+        freeThrowsMade: acc.freeThrowsMade + s.freeThrowsMade,
+        freeThrowsAttempted: acc.freeThrowsAttempted + s.freeThrowsAttempted,
+      }),
+      {
+        minutes: 0,
+        points: 0,
+        rebounds: 0,
+        assists: 0,
+        steals: 0,
+        blocks: 0,
+        turnovers: 0,
+        fouls: 0,
+        fieldGoalsMade: 0,
+        fieldGoalsAttempted: 0,
+        threePointersMade: 0,
+        threePointersAttempted: 0,
+        freeThrowsMade: 0,
+        freeThrowsAttempted: 0,
+      },
+    )
+
+    // Medias por partido
+    const averages = {
+      minutes: games ? +(totals.minutes / games).toFixed(1) : 0,
+      points: games ? +(totals.points / games).toFixed(1) : 0,
+      rebounds: games ? +(totals.rebounds / games).toFixed(1) : 0,
+      assists: games ? +(totals.assists / games).toFixed(1) : 0,
+      steals: games ? +(totals.steals / games).toFixed(1) : 0,
+      blocks: games ? +(totals.blocks / games).toFixed(1) : 0,
+      turnovers: games ? +(totals.turnovers / games).toFixed(1) : 0,
+      fouls: games ? +(totals.fouls / games).toFixed(1) : 0,
+    }
+
+    // Porcentajes
+    const percentages = {
+      fieldGoals: totals.fieldGoalsAttempted
+        ? Math.round((totals.fieldGoalsMade / totals.fieldGoalsAttempted) * 100)
+        : 0,
+      threePointers: totals.threePointersAttempted
+        ? Math.round((totals.threePointersMade / totals.threePointersAttempted) * 100)
+        : 0,
+      freeThrows: totals.freeThrowsAttempted
+        ? Math.round((totals.freeThrowsMade / totals.freeThrowsAttempted) * 100)
+        : 0,
+    }
+
+    // Victorias/derrotas del jugador (cuando él ha jugado)
+    const wins = finished.filter(
+      (s) => (s.match.teamScore ?? 0) > (s.match.opponentScore ?? 0),
+    ).length
+    const losses = finished.filter(
+      (s) => (s.match.teamScore ?? 0) < (s.match.opponentScore ?? 0),
+    ).length
+
+    return {
+      player: {
+        id: player.id,
+        name: player.name,
+        lastName: player.lastName,
+        number: player.number,
+        position: player.position,
+      },
+      summary: {
+        gamesPlayed: games,
+        wins,
+        losses,
+        winRate: games ? Math.round((wins / games) * 100) : 0,
+        totals,
+        averages,
+        percentages,
+      },
+      // Ordenado del más antiguo al más nuevo para gráficas
+      evolution: [...finished].reverse().map((s) => ({
+        matchId: s.match.id,
+        date: s.match.date,
+        opponent: s.match.opponent,
+        minutes: s.minutes ?? 0,
+        points: s.points,
+        rebounds: s.rebounds,
+        assists: s.assists,
+        steals: s.steals,
+        blocks: s.blocks,
+        turnovers: s.turnovers,
+        fouls: s.fouls,
+        teamScore: s.match.teamScore,
+        opponentScore: s.match.opponentScore,
+      })),
+      // Todos los stats (incluye partidos no finalizados por si acaso)
+      allGames: stats.map((s) => ({
+        id: s.id,
+        matchId: s.match.id,
+        date: s.match.date,
+        opponent: s.match.opponent,
+        location: s.match.location,
+        type: s.match.type,
+        status: s.match.status,
+        teamScore: s.match.teamScore,
+        opponentScore: s.match.opponentScore,
+        competition: s.match.competition,
+        minutes: s.minutes,
+        points: s.points,
+        rebounds: s.rebounds,
+        assists: s.assists,
+        steals: s.steals,
+        blocks: s.blocks,
+        turnovers: s.turnovers,
+        fouls: s.fouls,
+        fieldGoalsMade: s.fieldGoalsMade,
+        fieldGoalsAttempted: s.fieldGoalsAttempted,
+        threePointersMade: s.threePointersMade,
+        threePointersAttempted: s.threePointersAttempted,
+        freeThrowsMade: s.freeThrowsMade,
+        freeThrowsAttempted: s.freeThrowsAttempted,
+      })),
+    }
+  }
 }

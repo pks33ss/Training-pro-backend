@@ -486,4 +486,181 @@ export class ClubService {
 
     return { message: 'Contraseña reseteada correctamente' }
   }
+// ============================================
+// GESTIÓN DE EQUIPOS POR MIEMBRO
+// ============================================
+
+async getMemberTeams(userId: string, clubId: string, memberId: string) {
+  // Verificar que el usuario es ADMIN_CLUB o SUPER_ADMIN
+  const currentUser = await this.prisma.user.findUnique({
+    where: { id: userId },
+  })
+
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
+  const isClubAdmin = await this.prisma.clubMember.findFirst({
+    where: {
+      userId: userId,
+      clubId: clubId,
+      role: 'ADMIN_CLUB',
+      isActive: true,
+    },
+  })
+
+  if (!isClubAdmin && !isSuperAdmin) {
+    throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+  }
+
+  // Obtener el miembro
+  const member = await this.prisma.clubMember.findUnique({
+    where: { id: memberId },
+  })
+
+  if (!member) {
+    throw new NotFoundException('Miembro no encontrado')
+  }
+
+  // Obtener los equipos del club
+  const allTeams = await this.prisma.team.findMany({
+    where: { clubId },
+    orderBy: { name: 'asc' },
+  })
+
+  // Obtener los equipos a los que está asignado el miembro
+  const memberTeams = await this.prisma.teamMember.findMany({
+    where: {
+      userId: member.userId,
+      isActive: true,
+      team: { clubId },
+    },
+    select: {
+      teamId: true,
+      role: true,
+    },
+  })
+
+  const memberTeamIds = memberTeams.map(mt => mt.teamId)
+
+  return allTeams.map(team => ({
+    id: team.id,
+    name: team.name,
+    category: team.category,
+    isAssigned: memberTeamIds.includes(team.id),
+    role: memberTeams.find(mt => mt.teamId === team.id)?.role || null,
+  }))
+}
+
+async addMemberToTeam(userId: string, clubId: string, memberId: string, teamId: string) {
+  // Verificar permisos
+  const currentUser = await this.prisma.user.findUnique({
+    where: { id: userId },
+  })
+
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
+  const isClubAdmin = await this.prisma.clubMember.findFirst({
+    where: {
+      userId: userId,
+      clubId: clubId,
+      role: 'ADMIN_CLUB',
+      isActive: true,
+    },
+  })
+
+  if (!isClubAdmin && !isSuperAdmin) {
+    throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+  }
+
+  // Verificar que el equipo pertenece al club
+  const team = await this.prisma.team.findFirst({
+    where: { id: teamId, clubId },
+  })
+
+  if (!team) {
+    throw new NotFoundException('Equipo no encontrado en este club')
+  }
+
+  // Obtener el miembro
+  const member = await this.prisma.clubMember.findUnique({
+    where: { id: memberId },
+  })
+
+  if (!member) {
+    throw new NotFoundException('Miembro no encontrado')
+  }
+
+  // Verificar si ya está asignado
+  const existing = await this.prisma.teamMember.findFirst({
+    where: {
+      userId: member.userId,
+      teamId: teamId,
+    },
+  })
+
+  if (existing) {
+    if (!existing.isActive) {
+      return this.prisma.teamMember.update({
+        where: { id: existing.id },
+        data: { isActive: true },
+      })
+    }
+    throw new ForbiddenException('El miembro ya está asignado a este equipo')
+  }
+
+  return this.prisma.teamMember.create({
+    data: {
+      userId: member.userId,
+      teamId: teamId,
+      role: 'COACH',
+    },
+  })
+}
+
+async removeMemberFromTeam(userId: string, clubId: string, memberId: string, teamId: string) {
+  // Verificar permisos
+  const currentUser = await this.prisma.user.findUnique({
+    where: { id: userId },
+  })
+
+  const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
+  const isClubAdmin = await this.prisma.clubMember.findFirst({
+    where: {
+      userId: userId,
+      clubId: clubId,
+      role: 'ADMIN_CLUB',
+      isActive: true,
+    },
+  })
+
+  if (!isClubAdmin && !isSuperAdmin) {
+    throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+  }
+
+  // Obtener el miembro
+  const member = await this.prisma.clubMember.findUnique({
+    where: { id: memberId },
+  })
+
+  if (!member) {
+    throw new NotFoundException('Miembro no encontrado')
+  }
+
+  // Buscar la asignación
+  const teamMember = await this.prisma.teamMember.findFirst({
+    where: {
+      userId: member.userId,
+      teamId: teamId,
+    },
+  })
+
+  if (!teamMember) {
+    throw new NotFoundException('El miembro no está asignado a este equipo')
+  }
+
+  return this.prisma.teamMember.delete({
+    where: { id: teamMember.id },
+  })
+}
+
 }

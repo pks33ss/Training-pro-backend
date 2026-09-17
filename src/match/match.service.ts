@@ -107,47 +107,42 @@ export class MatchService {
     })
   }
 
-  async findOne(userId: string, matchId: string) {
-    const match = await this.prisma.match.findUnique({
-      where: { id: matchId },
-      include: {
-        team: {
-          include: { club: true },
-        },
-        callups: {
-          include: {
-            player: true,
-          },
-          orderBy: {
-            player: { number: 'asc' },
-          },
-        },
-        playerStats: {
-          include: {
-            player: true,
-          },
-          orderBy: {
-            player: { number: 'asc' },
-          },
-        },
-        createdBy: {
-          select: {
-            id: true,
-            name: true,
-            lastName: true,
+async findOne(userId: string, matchId: string) {
+  const match = await this.prisma.match.findUnique({
+    where: { id: matchId },
+    include: {
+      team: {
+        include: {
+          club: true,
+          players: {
+            // ✅ NUEVO: traemos todos los jugadores activos del equipo
+            where: { isActive: true },
+            orderBy: { number: 'asc' },
           },
         },
       },
-    })
+      callups: {
+        include: { player: true },
+        orderBy: { player: { number: 'asc' } },
+      },
+      playerStats: {
+        include: { player: true },
+        orderBy: { player: { number: 'asc' } },
+      },
+      createdBy: {
+        select: { id: true, name: true, lastName: true },
+      },
+    },
+  })
 
-    if (!match) {
-      throw new NotFoundException('Partido no encontrado')
-    }
-
-    await this.verifyTeamAccess(userId, match.teamId)
-
-    return match
+  if (!match) {
+    throw new NotFoundException('Partido no encontrado')
   }
+
+  await this.verifyTeamAccess(userId, match.teamId)
+
+  return match
+}
 
   async update(userId: string, matchId: string, updateMatchDto: UpdateMatchDto) {
     const match = await this.prisma.match.findUnique({
@@ -381,7 +376,47 @@ export class MatchService {
       },
     })
   }
+  // ============================================
+  // LINE UP
+  // ============================================
 
+  async updateLineup(userId: string, matchId: string, lineup: any) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+    })
+
+    if (!match) {
+      throw new NotFoundException('Partido no encontrado')
+    }
+
+    await this.verifyTeamAccess(userId, match.teamId)
+
+    return this.prisma.match.update({
+      where: { id: matchId },
+      data: { lineup },
+    })
+  }
+
+  // ============================================
+  // PLAN DE PARTIDO
+  // ============================================
+
+  async updateGamePlan(userId: string, matchId: string, gamePlan: string) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+    })
+
+    if (!match) {
+      throw new NotFoundException('Partido no encontrado')
+    }
+
+    await this.verifyTeamAccess(userId, match.teamId)
+
+    return this.prisma.match.update({
+      where: { id: matchId },
+      data: { gamePlan },
+    })
+  }
   // ============================================
   // ESTADÍSTICAS DEL EQUIPO
   // ============================================

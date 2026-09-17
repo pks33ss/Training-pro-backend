@@ -27,11 +27,6 @@ model User {
   calendarInvitations CalendarInvitation[]
   playerTutors        PlayerTutor[]
   createdMatches      Match[] // ✅ NUEVO
-
-  hostedStreams       LiveStream[]       @relation("HostedStreams")   
-  liveViewers         LiveViewer[]
-  streamPermissions   StreamPermission[] @relation("UserStreamPermissions")   // ✅ NUEVO
-  grantedPermissions  StreamPermission[] @relation("GrantedBy")
 }
 
 model Club {
@@ -342,10 +337,6 @@ model Match {
   competition String? // Nombre de la competición
   notes       String? // Notas adicionales
 
-   // ✅ NUEVOS
-  gamePlan    String?       // Plan de partido (markdown/texto)
-  lineup      Json?         // Line up: { starters: [...], bench: [...] } o similar
-
   // Resultado
   teamScore     Int? // Puntos del equipo
   opponentScore Int? // Puntos del rival
@@ -359,8 +350,6 @@ model Match {
 
   callups     MatchCallup[]
   playerStats MatchPlayerStats[]
-
-  liveStream  LiveStream?   
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -427,81 +416,4 @@ model MatchPlayerStats {
   @@unique([matchId, playerId])
   @@index([matchId])
   @@index([playerId])
-}
-
-// ============================================
-// LIVE STREAMING
-// ============================================
-
-model LiveStream {
-  id           String    @id @default(cuid())
-  matchId      String    @unique
-  hostId       String?
-  hostPeerId   String?
-  isLive       Boolean   @default(false)
-  maxUsers     Int       @default(12)
-  streamingEnabled Boolean @default(false)
-  startedAt    DateTime?
-  endedAt      DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  // ✅ Scoreboard
-  scoreboardEnabled Boolean @default(false)
-  clockEnabled      Boolean @default(false)
-  homeTeamName      String?
-  awayTeamName      String?
-  homeScore         Int     @default(0)
-  awayScore         Int     @default(0)
-  clockSeconds      Int     @default(600)
-  clockRunning      Boolean @default(false)
-  clockDirection    String  @default("DOWN")
-  clockStartedAt    DateTime?
-  clockDuration     Int     @default(600)
-  currentPeriod     Int     @default(1)
-  isOvertime        Boolean @default(false)
-  quarterDuration   Int     @default(600)
-  overtimeDuration  Int     @default(300)
-
-  match       Match              @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  host        User?              @relation("HostedStreams", fields: [hostId], references: [id], onDelete: SetNull)
-  viewers     LiveViewer[]
-  permissions StreamPermission[]
-
-  @@index([matchId])
-  @@index([hostId])
-}
-
-
-
-
-model LiveViewer {
-  id           String   @id @default(cuid())
-  liveStreamId String
-  userId       String
-  peerId       String   // ID de PeerJS del espectador
-  joinedAt     DateTime @default(now())
-
-  liveStream LiveStream @relation(fields: [liveStreamId], references: [id], onDelete: Cascade)
-  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([liveStreamId, userId])
-  @@index([liveStreamId])
-}
-
-model StreamPermission {
-  id           String   @id @default(cuid())
-  liveStreamId String
-  userId       String
-  canStream    Boolean  @default(false)
-  grantedById  String?
-  grantedAt    DateTime @default(now())
-
-  liveStream LiveStream @relation(fields: [liveStreamId], references: [id], onDelete: Cascade)
-  user       User       @relation("UserStreamPermissions", fields: [userId], references: [id], onDelete: Cascade)
-  grantedBy  User?      @relation("GrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
-
-  @@unique([liveStreamId, userId])
-  @@index([liveStreamId])
-  @@index([userId])
 }

@@ -10,6 +10,8 @@ import { SessionModule } from './session/session.module'; // ✅ UNA SOLA VEZ
 import { AttendanceModule } from './attendance/attendance.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { MatchModule } from './match/match.module';
+import { DashboardModule } from './dashboard/dashboard.module'; // 👈 NUEVO
+import { LiveModule } from './live/live.module'; 
 
 @Module({
   imports: [
@@ -26,6 +28,8 @@ import { MatchModule } from './match/match.module';
     AttendanceModule,
     CloudinaryModule,
     MatchModule,
+    DashboardModule, // 👈 NUEVO
+    LiveModule, 
   ],
 })
 export class AppModule {}

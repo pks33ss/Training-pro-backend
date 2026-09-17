@@ -111,4 +111,32 @@ export class ClubController {
       newPassword,
     )
   }
+  @Get(':clubId/members/:memberId/teams')
+getMemberTeams(
+  @Request() req,
+  @Param('clubId') clubId: string,
+  @Param('memberId') memberId: string,
+) {
+  return this.clubService.getMemberTeams(req.user.id, clubId, memberId)
+}
+
+@Post(':clubId/members/:memberId/teams')
+addMemberToTeam(
+  @Request() req,
+  @Param('clubId') clubId: string,
+  @Param('memberId') memberId: string,
+  @Body('teamId') teamId: string,
+) {
+  return this.clubService.addMemberToTeam(req.user.id, clubId, memberId, teamId)
+}
+
+@Delete(':clubId/members/:memberId/teams/:teamId')
+removeMemberFromTeam(
+  @Request() req,
+  @Param('clubId') clubId: string,
+  @Param('memberId') memberId: string,
+  @Param('teamId') teamId: string,
+) {
+  return this.clubService.removeMemberFromTeam(req.user.id, clubId, memberId, teamId)
+}
 }
