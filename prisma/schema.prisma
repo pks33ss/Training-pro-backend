@@ -462,6 +462,7 @@ model LiveStream {
   isOvertime        Boolean @default(false)
   quarterDuration   Int     @default(600)
   overtimeDuration  Int     @default(300)
+  customPeriodLabel String?  
 
   match       Match              @relation(fields: [matchId], references: [id], onDelete: Cascade)
   host        User?              @relation("HostedStreams", fields: [hostId], references: [id], onDelete: SetNull)

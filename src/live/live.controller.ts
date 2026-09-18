@@ -103,10 +103,28 @@ export class LiveController {
     return this.liveService.updateClock(req.user.id, matchId, action, seconds)
   }
 
-  @Put('scoreboard/period')
-  nextPeriod(@Request() req, @Param('matchId') matchId: string) {
-    return this.liveService.nextPeriod(req.user.id, matchId)
-  }
+@Put('scoreboard/period')
+nextPeriod(@Request() req, @Param('matchId') matchId: string) {
+  return this.liveService.nextPeriod(req.user.id, matchId)
+}
+
+@Put('scoreboard/period-value')
+setPeriodValue(
+  @Request() req,
+  @Param('matchId') matchId: string,
+  @Body('value') value: string,
+) {
+  return this.liveService.setPeriodValue(req.user.id, matchId, value)
+}
+
+@Put('scoreboard/custom-period')
+setCustomPeriod(
+  @Request() req,
+  @Param('matchId') matchId: string,
+  @Body('value') value: string,
+) {
+  return this.liveService.setCustomPeriod(req.user.id, matchId, value)
+}
 
   // ============================================
   // VIEWERS

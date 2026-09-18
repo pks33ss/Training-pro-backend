@@ -258,6 +258,7 @@ export class LiveService {
         isOvertime: fullStream!.isOvertime,
         quarterDuration: fullStream!.quarterDuration,
         overtimeDuration: fullStream!.overtimeDuration,
+        customPeriodLabel: fullStream!.customPeriodLabel,
       },
     }
   }
@@ -326,6 +327,7 @@ async updateScoreboardConfig(
     awayTeamName?: string
     quarterDuration?: number
     overtimeDuration?: number
+    customPeriodLabel?: string
   },
 ) {
   if (!(await this.canManagePermissions(userId, matchId))) {
@@ -399,24 +401,41 @@ async updateScoreboardConfig(
     throw new BadRequestException('Acción no válida')
   }
 
-  async nextPeriod(userId: string, matchId: string) {
-    const stream = await this.assertHost(userId, matchId)
-    const nextPeriod = stream.currentPeriod + 1
-    const isOT = nextPeriod > 4
-    const newDuration = isOT ? stream.overtimeDuration : stream.quarterDuration
+async setCustomPeriod(userId: string, matchId: string, value: string) {
+  await this.assertHost(userId, matchId)
 
-    return this.prisma.liveStream.update({
-      where: { matchId },
-      data: {
-        currentPeriod: nextPeriod,
-        isOvertime: isOT,
-        clockSeconds: newDuration,
-        clockDuration: newDuration,
-        clockRunning: false,
-        clockStartedAt: null,
-      },
-    })
+  // ✅ Limpiar y validar: máximo 3 caracteres
+  const clean = (value || '').trim().slice(0, 3)
+
+  return this.prisma.liveStream.update({
+    where: { matchId },
+    data: { customPeriodLabel: clean || null },
+  })
+}
+
+async nextPeriod(userId: string, matchId: string) {
+  const stream = await this.assertHost(userId, matchId)
+  const next = stream.currentPeriod + 1
+  const isOT = next > 4
+
+  // ✅ Generar label automático (Q1-Q4, OT1, OT2, OT3...)
+  let label: string
+  if (next <= 4) {
+    label = `Q${next}`
+  } else {
+    label = `OT${next - 4}`
   }
+
+  return this.prisma.liveStream.update({
+    where: { matchId },
+    data: {
+      currentPeriod: next,
+      isOvertime: isOT,
+      customPeriodLabel: label,
+      // ⚠️ NO tocamos el reloj (regla B confirmada)
+    },
+  })
+}
 
   // ============================================
   // VIEWERS
@@ -481,4 +500,34 @@ async updateScoreboardConfig(
     })
     return { ok: true }
   }
+
+async setPeriodValue(userId: string, matchId: string, value: string) {
+  await this.assertHost(userId, matchId)
+  
+  // Limpiar y validar: máximo 3 caracteres
+  const clean = (value || '').trim().slice(0, 3).toUpperCase()
+  
+  // Detectar si es OT (empieza por OT)
+  const isOT = clean.startsWith('OT')
+  
+  // Detectar número de periodo si es Q1-Q4
+  let periodNum = 1
+  if (/^Q[1-4]$/.test(clean)) {
+    periodNum = parseInt(clean[1])
+  } else if (/^[1-4]$/.test(clean)) {
+    periodNum = parseInt(clean)
+  } else if (isOT) {
+    periodNum = 5 // marcamos como OT
+  }
+
+  return this.prisma.liveStream.update({
+    where: { matchId },
+    data: {
+      currentPeriod: periodNum,
+      isOvertime: isOT,
+      // ✅ No tocamos el reloj
+    },
+  })
+}
+
 }
