@@ -139,4 +139,27 @@ removeMemberFromTeam(
 ) {
   return this.clubService.removeMemberFromTeam(req.user.id, clubId, memberId, teamId)
 }
+  // ============================================
+  // LOGO DEL CLUB
+  // ============================================
+
+  @Post(':id/upload-logo')
+  @ApiOperation({ summary: 'Subir logo del club (base64)' })
+  uploadLogo(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('image') image: string,
+  ) {
+    if (!image) {
+      throw new ForbiddenException('Imagen requerida')
+    }
+    return this.clubService.uploadLogo(req.user.id, id, image)
+  }
+
+  @Delete(':id/logo')
+  @ApiOperation({ summary: 'Eliminar logo del club' })
+  removeLogo(@Request() req, @Param('id') id: string) {
+    return this.clubService.removeLogo(req.user.id, id)
+  }
+
 }

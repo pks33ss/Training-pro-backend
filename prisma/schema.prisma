@@ -67,6 +67,7 @@ model ClubMember {
 model Team {
   id        String   @id @default(cuid())
   name      String
+  sport     Sport    @default(BASKETBALL) 
   category  String?
   season    String?
   clubId    String
@@ -79,6 +80,7 @@ model Team {
   sessions       Session[]
   calendarEvents CalendarEvent[] // ✅ Relación inversa para eventos
   matches        Match[] // ✅ NUEVO
+  seasons        Season[]    
 }
 
 model TeamMember {
@@ -505,4 +507,78 @@ model StreamPermission {
   @@unique([liveStreamId, userId])
   @@index([liveStreamId])
   @@index([userId])
+}
+
+// ============================================
+// PLANIFICACIÓN DE TEMPORADA
+// ============================================
+
+model Season {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  startDate   DateTime?
+  endDate     DateTime?
+  color       String?
+  teamId      String
+  team        Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  blocks      SeasonBlock[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([teamId])
+}
+
+model SeasonBlock {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  color       String?
+  order       Int       @default(0)
+  startDate   DateTime?
+  endDate     DateTime?
+
+  parentId    String?
+  parent      SeasonBlock?  @relation("BlockHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children    SeasonBlock[] @relation("BlockHierarchy")
+
+  seasonId    String
+  season      Season    @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  sections    SeasonSection[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([seasonId])
+  @@index([parentId])
+  @@index([seasonId, parentId, order])
+}
+
+model SeasonSection {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  color       String?
+  order       Int       @default(0)
+  startDate   DateTime?
+  endDate     DateTime?
+
+  blockId     String
+  block       SeasonBlock @relation(fields: [blockId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([blockId])
+  @@index([blockId, order])
+}
+
+enum Sport {
+  BASKETBALL
+  PADEL
+  FOOTBALL
+  HANDBALL
+  VOLLEYBALL
+  TENNIS
 }

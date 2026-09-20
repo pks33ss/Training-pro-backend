@@ -27,6 +27,7 @@ export class TeamService {
     return this.prisma.team.create({
       data: {
         name: createTeamDto.name,
+        sport: createTeamDto.sport || 'BASKETBALL', 
         category: createTeamDto.category,
         season: createTeamDto.season,
         clubId: createTeamDto.clubId,

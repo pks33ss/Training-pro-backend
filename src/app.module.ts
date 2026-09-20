@@ -12,6 +12,7 @@ import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { MatchModule } from './match/match.module';
 import { DashboardModule } from './dashboard/dashboard.module'; // 👈 NUEVO
 import { LiveModule } from './live/live.module'; 
+import { SeasonModule } from './season/season.module';  // ✅ AÑADIR arriba
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { LiveModule } from './live/live.module';
     MatchModule,
     DashboardModule, // 👈 NUEVO
     LiveModule, 
+    SeasonModule, 
   ],
 })
 export class AppModule {}

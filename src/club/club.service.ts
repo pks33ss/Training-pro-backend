@@ -2,11 +2,14 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateClubDto } from './dto/create-club.dto';
 import { UpdateClubDto } from './dto/update-club.dto';
+import { CloudinaryService } from '../cloudinary/cloudinary.service'
 import * as bcrypt from 'bcrypt'
 
 @Injectable()
 export class ClubService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService,
+            private cloudinaryService: CloudinaryService,
+            ) {}
 
   async create(userId: string, createClubDto: CreateClubDto) {
     const club = await this.prisma.club.create({
@@ -662,5 +665,57 @@ async removeMemberFromTeam(userId: string, clubId: string, memberId: string, tea
     where: { id: teamMember.id },
   })
 }
+  // ============================================
+  // SUBIR LOGO DEL CLUB
+  // ============================================
 
+  async uploadLogo(userId: string, clubId: string, base64Image: string) {
+    // Verificar permisos
+    const member = await this.prisma.clubMember.findFirst({
+      where: {
+        userId,
+        clubId,
+        role: 'ADMIN_CLUB',
+        isActive: true,
+      },
+    })
+
+    if (!member) {
+      throw new ForbiddenException('No tienes permisos para editar este club')
+    }
+
+    const club = await this.prisma.club.findUnique({
+      where: { id: clubId },
+    })
+
+    if (!club) {
+      throw new NotFoundException('Club no encontrado')
+    }
+
+    // Subir imagen a Cloudinary
+    const { url } = await this.cloudinaryService.uploadImage(
+      base64Image,
+      `training-pro/clubs/${clubId}`,
+    )
+
+    // Actualizar club con la nueva URL
+    return this.prisma.club.update({
+      where: { id: clubId },
+      data: { logo: url },
+    })
+  }
+
+  async removeLogo(userId: string, clubId: string) {
+    const member = await this.prisma.clubMember.findFirst({
+      where: { userId, clubId, role: 'ADMIN_CLUB', isActive: true },
+    })
+    if (!member) {
+      throw new ForbiddenException('No tienes permisos para editar este club')
+    }
+
+    return this.prisma.club.update({
+      where: { id: clubId },
+      data: { logo: null },
+    })
+  }
 }

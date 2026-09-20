@@ -1,19 +1,32 @@
-import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEnum } from 'class-validator'
+
+export enum Sport {
+  BASKETBALL = 'BASKETBALL',
+  PADEL = 'PADEL',
+  FOOTBALL = 'FOOTBALL',
+  HANDBALL = 'HANDBALL',
+  VOLLEYBALL = 'VOLLEYBALL',
+  TENNIS = 'TENNIS',
+}
 
 export class CreateTeamDto {
   @IsString()
-  @IsNotEmpty({ message: 'El nombre del equipo es requerido' })
-  name: string;
+  @IsNotEmpty()
+  name: string
+
+  @IsEnum(Sport)
+  @IsOptional()
+  sport?: Sport
 
   @IsString()
   @IsOptional()
-  category?: string;
+  category?: string
 
   @IsString()
   @IsOptional()
-  season?: string;
+  season?: string
 
-  @IsString() // ✅ Cambiar de IsUUID a IsString
-  @IsNotEmpty({ message: 'El ID del club es requerido' })
-  clubId: string;
+  @IsString()
+  @IsNotEmpty()
+  clubId: string
 }
