@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Body, Param, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
 import { UpdateAttendanceDto, BulkAttendanceDto } from './dto/update-attendance.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -45,6 +45,15 @@ export class AttendanceController {
     @Body() bulkAttendanceDto: BulkAttendanceDto[],
   ) {
     return this.attendanceService.bulkUpdate(req.user.id, sessionId, bulkAttendanceDto);
+  }
+
+  @Delete('session/:sessionId/player/:playerId')
+  removeAttendance(
+    @Request() req,
+    @Param('sessionId') sessionId: string,
+    @Param('playerId') playerId: string,
+  ) {
+    return this.attendanceService.removeAttendance(req.user.id, sessionId, playerId);
   }
 
   // ============================================

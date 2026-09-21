@@ -379,10 +379,10 @@ model MatchCallup {
   matchId     String
   playerId    String
   
-  // ✅ 3 estados independientes
-  isAvailable Boolean      @default(true)   // Disponibilidad (jugador + entrenador)
-  isCalledUp  Boolean      @default(false)  // Convocado (solo entrenador)
-  isConfirmed Boolean      @default(false)  // Confirmado (jugador + entrenador)
+   // ✅ 3 estados por flag (PENDING / YES / NO)
+  availableStatus CallupFlagStatus @default(PENDING)
+  calledUpStatus  CallupFlagStatus @default(PENDING)
+  confirmedStatus CallupFlagStatus @default(PENDING)
   
   // Estado legacy (compatibilidad, se mantiene)
   status      CallupStatus @default(PENDING)
@@ -606,4 +606,10 @@ enum Sport {
   HANDBALL
   VOLLEYBALL
   TENNIS
+}
+
+enum CallupFlagStatus {
+  PENDING
+  YES
+  NO
 }

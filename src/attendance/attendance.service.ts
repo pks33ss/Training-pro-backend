@@ -146,6 +146,48 @@ export class AttendanceService {
     return results;
   }
 
+    async removeAttendance(userId: string, sessionId: string, playerId: string) {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      include: { team: true },
+    });
+
+    if (!session) {
+      throw new NotFoundException('Sesión no encontrada');
+    }
+
+    const member = await this.prisma.clubMember.findFirst({
+      where: {
+        userId: userId,
+        clubId: session.team.clubId,
+        isActive: true,
+      },
+    });
+
+    if (!member) {
+      throw new ForbiddenException('No tienes permisos para gestionar asistencias');
+    }
+
+    // Si no existe, no pasa nada (idempotente)
+    const existing = await this.prisma.attendance.findUnique({
+      where: {
+        playerId_sessionId: { playerId, sessionId },
+      },
+    });
+
+    if (!existing) {
+      return { deleted: false, message: 'No había asistencia registrada' };
+    }
+
+    await this.prisma.attendance.delete({
+      where: {
+        playerId_sessionId: { playerId, sessionId },
+      },
+    });
+
+    return { deleted: true };
+  }
+
   // ============================================
   // HISTORIAL DE ASISTENCIA POR JUGADOR
   // ============================================

@@ -72,20 +72,20 @@ export class MatchController {
     return this.matchService.getCallups(req.user.id, id)
   }
 
-  @Put(':id/callups/:playerId')
-  updateCallupFlags(
-    @Request() req,
-    @Param('id') id: string,
-    @Param('playerId') playerId: string,
-    @Body() flags: {
-      isAvailable?: boolean
-      isCalledUp?: boolean
-      isConfirmed?: boolean
-      notes?: string
-    },
-  ) {
-    return this.matchService.updateCallupFlags(req.user.id, id, playerId, flags)
-  }
+@Put(':id/callups/:playerId')
+updateCallupFlags(
+  @Request() req,
+  @Param('id') id: string,
+  @Param('playerId') playerId: string,
+  @Body() flags: {
+    availableStatus?: 'PENDING' | 'YES' | 'NO'
+    calledUpStatus?: 'PENDING' | 'YES' | 'NO'
+    confirmedStatus?: 'PENDING' | 'YES' | 'NO'
+    notes?: string
+  },
+) {
+  return this.matchService.updateCallupFlags(req.user.id, id, playerId, flags)
+}
 
   @Delete(':id/callups/:playerId')
   removeCallup(
