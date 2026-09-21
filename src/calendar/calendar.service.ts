@@ -151,6 +151,128 @@ export class CalendarService {
     return events
   }
 
+    // ============================================
+  // OBTENER EVENTOS DE VARIOS EQUIPOS
+  // ============================================
+
+  async getEventsByTeams(userId: string, teamIds: string[], from: Date, to: Date) {
+    if (!teamIds || teamIds.length === 0) return []
+
+    // Verificar acceso a todos los equipos
+    await Promise.all(teamIds.map((id) => this.verifyTeamAccess(userId, id)))
+
+    // Cargar eventos de todos los equipos en paralelo
+    const [sessions, matches, calendarEvents] = await Promise.all([
+      this.prisma.session.findMany({
+        where: { teamId: { in: teamIds }, date: { gte: from, lte: to } },
+        orderBy: { date: 'asc' },
+        select: {
+          id: true,
+          title: true,
+          date: true,
+          duration: true,
+          location: true,
+          teamId: true,
+          team: { select: { name: true } },
+        },
+      }),
+
+      this.prisma.match.findMany({
+        where: { teamId: { in: teamIds }, date: { gte: from, lte: to } },
+        orderBy: { date: 'asc' },
+        select: {
+          id: true,
+          opponent: true,
+          date: true,
+          location: true,
+          venue: true,
+          type: true,
+          status: true,
+          teamScore: true,
+          opponentScore: true,
+          teamId: true,
+          team: { select: { name: true } },
+        },
+      }),
+
+      this.prisma.calendarEvent.findMany({
+        where: { teamId: { in: teamIds }, startDate: { gte: from, lte: to } },
+        orderBy: { startDate: 'asc' },
+        select: {
+          id: true,
+          title: true,
+          description: true,
+          startDate: true,
+          endDate: true,
+          type: true,
+          location: true,
+          teamId: true,
+          team: { select: { name: true } },
+        },
+      }),
+    ])
+
+    // Normalizamos todo a un formato común (con teamId y teamName)
+    const events: any[] = []
+
+    for (const s of sessions) {
+      events.push({
+        id: s.id,
+        type: 'SESSION',
+        title: s.title,
+        description: null,
+        startDate: s.date,
+        endDate: new Date(new Date(s.date).getTime() + s.duration * 60000),
+        location: s.location,
+        duration: s.duration,
+        link: `/sessions/${s.id}`,
+        teamId: s.teamId,
+        teamName: s.team?.name,
+      })
+    }
+
+    for (const m of matches) {
+      events.push({
+        id: m.id,
+        type: 'MATCH',
+        title: `vs ${m.opponent}`,
+        description: m.type,
+        startDate: m.date,
+        endDate: null,
+        location: m.venue,
+        status: m.status,
+        teamScore: m.teamScore,
+        opponentScore: m.opponentScore,
+        link: `/matches/${m.id}`,
+        teamId: m.teamId,
+        teamName: m.team?.name,
+      })
+    }
+
+    for (const c of calendarEvents) {
+      events.push({
+        id: c.id,
+        type: 'EVENT',
+        title: c.title,
+        description: c.description,
+        startDate: c.startDate,
+        endDate: c.endDate,
+        location: c.location,
+        eventType: c.type,
+        link: null,
+        teamId: c.teamId,
+        teamName: c.team?.name,
+      })
+    }
+
+    events.sort(
+      (a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime(),
+    )
+
+    return events
+  }
+
+
   // ============================================
   // CREAR EVENTO DE CALENDARIO
   // ============================================

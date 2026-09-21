@@ -23,6 +23,21 @@ export class CalendarController {
     return this.calendarService.getEvents(req.user.id, teamId, fromDate, toDate)
   }
 
+    @Post('by-teams')
+  @ApiOperation({ summary: 'Obtener eventos de varios equipos en un rango de fechas' })
+  getEventsByTeams(
+    @Request() req,
+    @Body() body: { teamIds: string[]; from: string; to: string },
+  ) {
+    const fromDate = body.from
+      ? new Date(body.from)
+      : new Date(new Date().getFullYear(), new Date().getMonth(), 1)
+    const toDate = body.to
+      ? new Date(body.to)
+      : new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0, 23, 59, 59)
+    return this.calendarService.getEventsByTeams(req.user.id, body.teamIds, fromDate, toDate)
+  }
+
   @Post('team/:teamId/events')
   @ApiOperation({ summary: 'Crear evento de calendario' })
   createEvent(
