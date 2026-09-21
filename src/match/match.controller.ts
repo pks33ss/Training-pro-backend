@@ -54,12 +54,16 @@ export class MatchController {
     return this.matchService.updateResult(req.user.id, id, updateResultDto)
   }
 
-  // ============================================
+    // ============================================
   // CONVOCATORIA
   // ============================================
 
   @Post(':id/callups')
-  createCallups(@Request() req, @Param('id') id: string, @Body('playerIds') playerIds: string[]) {
+  createCallups(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('playerIds') playerIds: string[],
+  ) {
     return this.matchService.createCallups(req.user.id, id, playerIds)
   }
 
@@ -69,14 +73,18 @@ export class MatchController {
   }
 
   @Put(':id/callups/:playerId')
-  updateCallupStatus(
+  updateCallupFlags(
     @Request() req,
     @Param('id') id: string,
     @Param('playerId') playerId: string,
-    @Body('status') status: string,
-    @Body('notes') notes?: string,
+    @Body() flags: {
+      isAvailable?: boolean
+      isCalledUp?: boolean
+      isConfirmed?: boolean
+      notes?: string
+    },
   ) {
-    return this.matchService.updateCallupStatus(req.user.id, id, playerId, status, notes)
+    return this.matchService.updateCallupFlags(req.user.id, id, playerId, flags)
   }
 
   @Delete(':id/callups/:playerId')
@@ -86,6 +94,11 @@ export class MatchController {
     @Param('playerId') playerId: string,
   ) {
     return this.matchService.removeCallup(req.user.id, id, playerId)
+  }
+
+  @Get(':id/candidates')
+  getCandidatesFromClub(@Request() req, @Param('id') id: string) {
+    return this.matchService.getCandidatesFromClub(req.user.id, id)
   }
 
   // ============================================

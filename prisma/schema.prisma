@@ -27,6 +27,7 @@ model User {
   calendarInvitations CalendarInvitation[]
   playerTutors        PlayerTutor[]
   createdMatches      Match[] // ✅ NUEVO
+  favoriteTeams FavoriteTeam[]
 
   hostedStreams       LiveStream[]       @relation("HostedStreams")   
   liveViewers         LiveViewer[]
@@ -80,7 +81,8 @@ model Team {
   sessions       Session[]
   calendarEvents CalendarEvent[] // ✅ Relación inversa para eventos
   matches        Match[] // ✅ NUEVO
-  seasons        Season[]    
+  seasons        Season[]
+  favoritedBy FavoriteTeam[]    
 }
 
 model TeamMember {
@@ -376,7 +378,15 @@ model MatchCallup {
   id          String       @id @default(cuid())
   matchId     String
   playerId    String
+  
+  // ✅ 3 estados independientes
+  isAvailable Boolean      @default(true)   // Disponibilidad (jugador + entrenador)
+  isCalledUp  Boolean      @default(false)  // Convocado (solo entrenador)
+  isConfirmed Boolean      @default(false)  // Confirmado (jugador + entrenador)
+  
+  // Estado legacy (compatibilidad, se mantiene)
   status      CallupStatus @default(PENDING)
+  
   notes       String?
   respondedAt DateTime?
 
@@ -573,6 +583,20 @@ model SeasonSection {
 
   @@index([blockId])
   @@index([blockId, order])
+}
+
+model FavoriteTeam {
+  id        String   @id @default(cuid())
+  userId    String
+  teamId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, teamId])
+  @@index([userId])
+  @@index([teamId])
 }
 
 enum Sport {

@@ -207,7 +207,7 @@ async findOne(userId: string, matchId: string) {
     })
   }
 
-  // ============================================
+    // ============================================
   // CONVOCATORIA
   // ============================================
 
@@ -225,16 +225,24 @@ async findOne(userId: string, matchId: string) {
     const results = []
     for (const playerId of playerIds) {
       try {
-        const callup = await this.prisma.matchCallup.create({
-          data: {
+        const callup = await this.prisma.matchCallup.upsert({
+          where: {
+            matchId_playerId: { matchId, playerId },
+          },
+          update: {
+            isCalledUp: true,
+          },
+          create: {
             matchId,
             playerId,
-            status: 'PENDING',
+            isAvailable: true,
+            isCalledUp: true,
+            isConfirmed: false,
           },
         })
         results.push(callup)
       } catch (error) {
-        console.log(`Jugador ${playerId} ya convocado`)
+        console.log(`Error con jugador ${playerId}:`, error)
       }
     }
 
@@ -263,12 +271,17 @@ async findOne(userId: string, matchId: string) {
     })
   }
 
-  async updateCallupStatus(
+  // ✅ Actualizar los 3 estados booleanos
+  async updateCallupFlags(
     userId: string,
     matchId: string,
     playerId: string,
-    status: string,
-    notes?: string,
+    flags: {
+      isAvailable?: boolean
+      isCalledUp?: boolean
+      isConfirmed?: boolean
+      notes?: string
+    },
   ) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
@@ -280,16 +293,22 @@ async findOne(userId: string, matchId: string) {
 
     await this.verifyTeamAccess(userId, match.teamId)
 
-    return this.prisma.matchCallup.update({
+    // Si no existe el callup, lo creamos
+    return this.prisma.matchCallup.upsert({
       where: {
-        matchId_playerId: {
-          matchId,
-          playerId,
-        },
+        matchId_playerId: { matchId, playerId },
       },
-      data: {
-        status: status as any,
-        notes,
+      update: {
+        ...flags,
+        respondedAt: new Date(),
+      },
+      create: {
+        matchId,
+        playerId,
+        isAvailable: flags.isAvailable ?? true,
+        isCalledUp: flags.isCalledUp ?? false,
+        isConfirmed: flags.isConfirmed ?? false,
+        notes: flags.notes,
         respondedAt: new Date(),
       },
     })
@@ -314,6 +333,42 @@ async findOne(userId: string, matchId: string) {
         },
       },
     })
+  }
+
+  // ✅ Obtener candidatos de otros equipos del club (para convocatoria)
+  async getCandidatesFromClub(userId: string, matchId: string) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      include: { team: true },
+    })
+
+    if (!match) {
+      throw new NotFoundException('Partido no encontrado')
+    }
+
+    await this.verifyTeamAccess(userId, match.teamId)
+
+    // Jugadores activos de otros equipos del mismo club
+    const players = await this.prisma.player.findMany({
+      where: {
+        isActive: true,
+        team: {
+          clubId: match.team.clubId,
+          id: { not: match.teamId }, // Excluir el equipo actual
+        },
+      },
+      include: {
+        team: {
+          select: { id: true, name: true, category: true, sport: true },
+        },
+      },
+      orderBy: [
+        { team: { name: 'asc' } },
+        { number: 'asc' },
+      ],
+    })
+
+    return players
   }
 
   // ============================================
