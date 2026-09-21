@@ -13,6 +13,8 @@ import { MatchModule } from './match/match.module';
 import { DashboardModule } from './dashboard/dashboard.module'; // 👈 NUEVO
 import { LiveModule } from './live/live.module'; 
 import { SeasonModule } from './season/season.module';  // ✅ AÑADIR arriba
+import { CalendarModule } from './calendar/calendar.module';  // ✅ NUEVO
+
 
 @Module({
   imports: [
@@ -25,7 +27,8 @@ import { SeasonModule } from './season/season.module';  // ✅ AÑADIR arriba
     ClubModule,
     TeamModule,
     PlayerModule,
-    SessionModule, // ✅ UNA SOLA VEZ
+    SessionModule,
+    CalendarModule, // ✅ UNA SOLA VEZ
     AttendanceModule,
     CloudinaryModule,
     MatchModule,

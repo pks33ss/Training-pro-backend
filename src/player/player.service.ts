@@ -419,27 +419,28 @@ export class PlayerService {
       }
     }
 
-    return this.prisma.player.findMany({
-      where: {
-        teamId: { in: teamIds },
-        isActive: true,
+return this.prisma.player.findMany({
+  where: {
+    teamId: { in: teamIds },
+    isActive: true,
+  },
+  include: {
+    team: {
+      select: {
+        id: true,
+        name: true,
+        category: true,
+        sport: true,   // ✅ AÑADIR
       },
-      include: {
-        team: {
-          select: {
-            id: true,
-            name: true,
-            category: true,
-          },
-        },
-        tutors: true,
-      },
-      orderBy: [
-        { team: { name: 'asc' } },
-        { number: 'asc' },
-        { lastName: 'asc' },
-      ],
-    })
+    },
+    tutors: true,
+  },
+  orderBy: [
+    { team: { name: 'asc' } },
+    { number: 'asc' },
+    { lastName: 'asc' },
+  ],
+})
   }
     // ============================================
   // ESTADÍSTICAS DE PARTIDOS DEL JUGADOR
