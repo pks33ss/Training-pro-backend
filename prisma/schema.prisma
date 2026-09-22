@@ -43,6 +43,8 @@ model Club {
   phone       String?
   email       String?
   logo        String?
+  primaryColor   String?  @default("#00E676")
+  secondaryColor String?  @default("#0A0A0A")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -72,6 +74,8 @@ model Team {
   category  String?
   season    String?
   clubId    String
+  primaryColor   String?  // Si es null, hereda del club
+  secondaryColor String?  // Si es null, hereda del club
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
