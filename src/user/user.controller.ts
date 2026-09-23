@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards, ForbiddenException } from '@nestjs/common'
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, Request, UseGuards, ForbiddenException } from '@nestjs/common'
 import { UserService } from './user.service'
 import { AuthGuard } from '../auth/auth.guard'
 
@@ -29,7 +29,29 @@ export class UserController {
       data.newPassword,
     )
   }
+  // ============================================
+  // NUEVOS ENDPOINTS (Fase 3 - User refactor)
+  // ============================================
 
+  @Get('me')
+  getMe(@Request() req) {
+    return this.userService.getMe(req.user.id)
+  }
+
+  @Put('me')
+  updateMe(@Request() req, @Body() data: any) {
+    return this.userService.updateMe(req.user.id, data)
+  }
+
+  @Get('search')
+  search(@Request() req, @Query('q') q: string) {
+    return this.userService.searchUsers(req.user.id, q)
+  }
+
+  @Get('by-username/:username')
+  findByUsername(@Param('username') username: string) {
+    return this.userService.findByUsername(username)
+  }
   // ============================================
   // GESTIÓN DE USUARIOS (solo SUPER_ADMIN)
   // ============================================

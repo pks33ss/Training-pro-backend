@@ -359,49 +359,6 @@ export class TeamService {
   // GESTIÓN DE MIEMBROS
   // ============================================
 
-  async getMembers(userId: string, teamId: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-      include: { club: true },
-    })
-
-    if (!team) {
-      throw new NotFoundException('Equipo no encontrado')
-    }
-
-    const clubMember = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: team.clubId,
-        isActive: true,
-      },
-    })
-
-    if (!clubMember && !isSuperAdmin) {
-      throw new ForbiddenException('No tienes acceso a este equipo')
-    }
-
-    return this.prisma.teamMember.findMany({
-      where: { teamId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            lastName: true,
-          },
-        },
-      },
-      orderBy: { joinedAt: 'asc' },
-    })
-  }
 
   async inviteMember(userId: string, teamId: string, email: string, role: string) {
     const currentUser = await this.prisma.user.findUnique({

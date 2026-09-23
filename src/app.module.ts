@@ -15,6 +15,9 @@ import { LiveModule } from './live/live.module';
 import { SeasonModule } from './season/season.module';  // ✅ AÑADIR arriba
 import { CalendarModule } from './calendar/calendar.module';  // ✅ NUEVO
 import { FavoritesModule } from './favorites/favorites.module';
+import { InvitationsModule } from './invitations/invitations.module'
+import { MembershipsModule } from './memberships/memberships.module'
+import { TutorRelationshipsModule } from './tutor-relationships/tutor-relationships.module'
 
 @Module({
   imports: [
@@ -33,9 +36,12 @@ import { FavoritesModule } from './favorites/favorites.module';
     AttendanceModule,
     CloudinaryModule,
     MatchModule,
-    DashboardModule, // 👈 NUEVO
+    DashboardModule, 
     LiveModule, 
     SeasonModule, 
+    InvitationsModule,
+    MembershipsModule,
+    TutorRelationshipsModule,
   ],
 })
 export class AppModule {}

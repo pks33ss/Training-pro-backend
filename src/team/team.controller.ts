@@ -44,10 +44,7 @@ async findAllByClubWithMembers(@Request() req, @Param('clubId') clubId: string) 
   // GESTIÓN DE MIEMBROS
   // ============================================
 
-  @Get(':id/members')
-  getMembers(@Request() req, @Param('id') id: string) {
-    return this.teamService.getMembers(req.user.id, id)
-  }
+  
 
   @Post(':id/invite')
   inviteMember(

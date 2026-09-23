@@ -203,8 +203,10 @@ model TutorRelationship {
   isEmergencyContact  Boolean  @default(false)
   status              String   @default("PENDING") // PENDING | ACTIVE | REVOKED
   requestedById       String
+  approvedById  String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+  
   
   tutorUser           User     @relation("TutorUser", fields: [tutorUserId], references: [id], onDelete: Cascade)
   playerUser          User     @relation("PlayerUser", fields: [playerUserId], references: [id], onDelete: Cascade)
