@@ -8,8 +8,8 @@ datasource db {
 
 model User {
   id        String     @id @default(cuid())
-  email     String     @unique
-  password  String
+  email     String?     @unique
+  password  String?
   name      String
   lastName  String
   phone     String? // ✅ NUEVO
@@ -18,6 +18,8 @@ model User {
   role      GlobalRole @default(USER)
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+  username          String?   @unique
+  isGhost           Boolean   @default(false)
 
   clubs               ClubMember[]
   teams               TeamMember[]
@@ -28,6 +30,13 @@ model User {
   playerTutors        PlayerTutor[]
   createdMatches      Match[] // ✅ NUEVO
   favoriteTeams FavoriteTeam[]
+  memberships       TeamMembership[]
+  pendingInvitations PendingInvitation[] @relation("InvitationInviter")
+  tutorRelationships TutorRelationship[]  @relation("TutorUser")
+  playerRelationships TutorRelationship[] @relation("PlayerUser")
+  matchStats        MatchPlayerStats[]
+  invitedMemberships TeamMembership[] @relation("MembershipInviter")
+  pendingForMe        PendingInvitation[] // ← AÑADE ESTA LÍNEA
 
   hostedStreams       LiveStream[]       @relation("HostedStreams")   
   liveViewers         LiveViewer[]
@@ -87,6 +96,8 @@ model Team {
   matches        Match[] // ✅ NUEVO
   seasons        Season[]
   favoritedBy FavoriteTeam[]    
+  memberships       TeamMembership[]
+pendingInvitations PendingInvitation[]
 }
 
 model TeamMember {
@@ -128,6 +139,79 @@ model Player {
   matchStats  MatchPlayerStats[] // ✅ NUEVO
 
   @@index([teamId])
+}
+
+model TeamMembership {
+  id            String   @id @default(cuid())
+  userId        String
+  teamId        String
+  role          String   // PLAYER | COACH | ASSISTANT | ADMIN_TEAM
+  jerseyNumber  Int?
+  position      String?
+  status        String   @default("ACTIVE") // ACTIVE | PENDING | INACTIVE | LEFT
+  seasonId      String?
+  joinedAt      DateTime @default(now())
+  leftAt        DateTime?
+  invitedById   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  season        Season?  @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  invitedBy     User?    @relation("MembershipInviter", fields: [invitedById], references: [id], onDelete: SetNull)
+  
+  @@unique([userId, teamId, seasonId])
+  @@index([userId])
+  @@index([teamId])
+  @@index([status])
+}
+
+model PendingInvitation {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  email         String?
+  phone         String?
+  userId        String?
+  teamId        String
+  role          String   @default("PLAYER")
+  channel       String   @default("LINK") // EMAIL | WHATSAPP | LINK
+  status        String   @default("PENDING") // PENDING | USED | EXPIRED | REVOKED
+  sentAt        DateTime @default(now())
+  expiresAt     DateTime
+  usedAt        DateTime?
+  invitedById   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  invitedBy     User     @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+  
+  @@index([code])
+  @@index([email])
+  @@index([status])
+  @@index([teamId])
+}
+
+model TutorRelationship {
+  id                  String   @id @default(cuid())
+  tutorUserId         String
+  playerUserId        String
+  relationship        String   // padre | madre | tutor_legal | otro
+  canPickUp           Boolean  @default(true)
+  isEmergencyContact  Boolean  @default(false)
+  status              String   @default("PENDING") // PENDING | ACTIVE | REVOKED
+  requestedById       String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  tutorUser           User     @relation("TutorUser", fields: [tutorUserId], references: [id], onDelete: Cascade)
+  playerUser          User     @relation("PlayerUser", fields: [playerUserId], references: [id], onDelete: Cascade)
+  
+  @@unique([tutorUserId, playerUserId])
+  @@index([tutorUserId])
+  @@index([playerUserId])
 }
 
 model RefreshToken {
@@ -416,6 +500,8 @@ model MatchPlayerStats {
   id       String @id @default(cuid())
   matchId  String
   playerId String
+  userId  String?  // NUEVO - nullable para convivencia con playerId
+  user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // Estadísticas
   minutes   Int? // Minutos jugados
@@ -540,6 +626,8 @@ model Season {
   blocks      SeasonBlock[]
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+
+  memberships  TeamMembership[]
 
   @@index([teamId])
 }
