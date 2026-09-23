@@ -9,6 +9,8 @@ async function bootstrap() {
 
   app.enableCors({
   origin: [
+    'https://joinsportapp.com',
+    'https://www.joinsportapp.com',
     'https://focuspm.es',
     'https://www.focuspm.es',
     'http://localhost:3001', // Para desarrollo local
