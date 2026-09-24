@@ -220,8 +220,8 @@ export class MembershipsService {
     })
   }
 
-  // ============================================
-  // SALIR DEL EQUIPO
+    // ============================================
+  // SALIR / QUITAR DEL EQUIPO
   // ============================================
 
   async leave(userId: string, membershipId: string) {
@@ -234,15 +234,82 @@ export class MembershipsService {
     })
     if (!membership) throw new NotFoundException('Membership no encontrado')
 
-    if (membership.userId !== userId) {
-      throw new ForbiddenException('Solo puedes salir de tus propios equipos')
-    }
-
     if (membership.status === 'LEFT') {
-      throw new BadRequestException('Ya has salido de este equipo')
+      throw new BadRequestException('Este miembro ya ha salido del equipo')
     }
 
-    // Si era coach/assistant, notificar a los admins del club
+    // ============================================
+    // DETERMINAR PERMISOS
+    // ============================================
+
+    const isSelf = membership.userId === userId
+
+    let isManager = false
+
+    if (!isSelf) {
+      // ¿Es coach/assistant/admin del equipo?
+      const myMembership = await this.prisma.teamMembership.findFirst({
+        where: {
+          userId,
+          teamId: membership.teamId,
+          status: 'ACTIVE',
+          role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+        },
+      })
+
+      if (myMembership) {
+        isManager = true
+      } else {
+        // ¿Es admin del club?
+        const clubAdmin = await this.prisma.clubMember.findFirst({
+          where: {
+            userId,
+            clubId: membership.team.clubId,
+            isActive: true,
+            role: 'ADMIN_CLUB',
+          },
+        })
+        if (clubAdmin) isManager = true
+      }
+
+      // ¿Es super admin?
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+      })
+      if (user?.role === 'SUPER_ADMIN') isManager = true
+    }
+
+    if (!isSelf && !isManager) {
+      throw new ForbiddenException(
+        'No tienes permisos para quitar a este miembro del equipo',
+      )
+    }
+
+    // ============================================
+    // REGLAS ESPECIALES
+    // ============================================
+
+    // Si es el último COACH activo del equipo, no se puede quitar (ni por sí mismo)
+    if (membership.role === 'COACH' && membership.status === 'ACTIVE') {
+      const coachCount = await this.prisma.teamMembership.count({
+        where: {
+          teamId: membership.teamId,
+          role: 'COACH',
+          status: 'ACTIVE',
+        },
+      })
+
+      if (coachCount <= 1) {
+        throw new BadRequestException(
+          'No puedes quitar al último entrenador del equipo. Promueve a otro miembro primero.',
+        )
+      }
+    }
+
+    // ============================================
+    // NOTIFICAR (solo si es coach/assistant)
+    // ============================================
+
     if (
       membership.role === 'COACH' ||
       membership.role === 'ASSISTANT' ||
@@ -256,6 +323,10 @@ export class MembershipsService {
         departedAt: new Date(),
       })
     }
+
+    // ============================================
+    // SOFT DELETE
+    // ============================================
 
     return this.prisma.teamMembership.update({
       where: { id: membershipId },
