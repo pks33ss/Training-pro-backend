@@ -220,7 +220,7 @@ export class MembershipsService {
     })
   }
 
-    // ============================================
+  // ============================================
   // SALIR / QUITAR DEL EQUIPO
   // ============================================
 
@@ -310,18 +310,28 @@ export class MembershipsService {
     // NOTIFICAR (solo si es coach/assistant)
     // ============================================
 
+    const memberName = membership.user
+      ? `${membership.user.name ?? ''} ${membership.user.lastName ?? ''}`.trim() ||
+        'Usuario desconocido'
+      : 'Usuario desconocido'
+
     if (
       membership.role === 'COACH' ||
       membership.role === 'ASSISTANT' ||
       membership.role === 'ADMIN_TEAM'
     ) {
-      await notifyClubAdminOfDeparture(this.prisma, {
-        clubId: membership.team.clubId,
-        teamName: membership.team.name,
-        memberName: `${membership.user.name} ${membership.user.lastName}`,
-        memberRole: membership.role,
-        departedAt: new Date(),
-      })
+      try {
+        await notifyClubAdminOfDeparture(this.prisma, {
+          clubId: membership.team.clubId,
+          teamName: membership.team.name,
+          memberName,
+          memberRole: membership.role,
+          departedAt: new Date(),
+        })
+      } catch (err) {
+        // La notificación no debe tumbar el borrado
+        console.error('⚠️ Error notificando salida (no crítico):', err)
+      }
     }
 
     // ============================================
@@ -356,6 +366,101 @@ export class MembershipsService {
         user: {
           select: { id: true, name: true, lastName: true, username: true },
         },
+      },
+    })
+  }
+
+    // ============================================
+  // AÑADIR MIEMBRO EXISTENTE AL EQUIPO (directo)
+  // ============================================
+
+  /**
+   * Añade un usuario EXISTENTE a un equipo directamente (status: ACTIVE).
+   * Solo para coach/assistant/admin del equipo o admin del club.
+   *
+   * A diferencia de `requestJoin`, aquí el jugador no solicita unirse:
+   * es el coach quien lo añade. Útil cuando el jugador ya está en otro
+   * equipo del mismo club y queremos reutilizarlo sin duplicarlo.
+   */
+  async addMember(
+    requesterId: string,
+    teamId: string,
+    dto: { userId: string; role?: string; jerseyNumber?: number; position?: string },
+  ) {
+    // 1) Verificar permisos del que añade
+    await this.verifyCanManageTeam(requesterId, teamId)
+
+    // 2) Verificar que el usuario existe y es real (no fantasma)
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id: dto.userId },
+    })
+    if (!targetUser) {
+      throw new NotFoundException('Usuario no encontrado')
+    }
+
+    // 3) Verificar que no es ya miembro activo del equipo
+    const existing = await this.prisma.teamMembership.findFirst({
+      where: { userId: dto.userId, teamId },
+    })
+
+    if (existing) {
+      if (existing.status === 'ACTIVE') {
+        throw new BadRequestException('Este usuario ya es miembro del equipo')
+      }
+      if (existing.status === 'PENDING') {
+        throw new BadRequestException('Ya tiene una solicitud pendiente')
+      }
+      // Si está LEFT o INACTIVE → reactivamos
+      return this.prisma.teamMembership.update({
+        where: { id: existing.id },
+        data: {
+          status: 'ACTIVE',
+          role: dto.role || existing.role || 'PLAYER',
+          jerseyNumber: dto.jerseyNumber ?? existing.jerseyNumber,
+          position: dto.position ?? existing.position,
+          joinedAt: new Date(),
+          leftAt: null,
+          invitedById: requesterId,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              lastName: true,
+              username: true,
+              avatar: true,
+              email: true,
+            },
+          },
+          season: true,
+        },
+      })
+    }
+
+    // 4) Crear membership directo (ACTIVE)
+    return this.prisma.teamMembership.create({
+      data: {
+        userId: dto.userId,
+        teamId,
+        role: dto.role || 'PLAYER',
+        status: 'ACTIVE',
+        jerseyNumber: dto.jerseyNumber ?? null,
+        position: dto.position ?? null,
+        invitedById: requesterId,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            lastName: true,
+            username: true,
+            avatar: true,
+            email: true,
+          },
+        },
+        season: true,
       },
     })
   }

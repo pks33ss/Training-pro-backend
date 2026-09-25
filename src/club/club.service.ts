@@ -718,4 +718,100 @@ async removeMemberFromTeam(userId: string, clubId: string, memberId: string, tea
       data: { logo: null },
     })
   }
+  // ============================================
+  // JUGADORES DEL CLUB (vista global)
+  // ============================================
+
+  /**
+   * Devuelve todos los jugadores (Users con rol PLAYER activo) de todos los
+   * equipos del club. Cada jugador aparece UNA SOLA VEZ aunque esté en varios
+   * equipos del club; en ese caso, `memberships` tendrá varios elementos.
+   *
+   * Solo accesible para miembros activos del club.
+   */
+  async findClubPlayers(userId: string, clubId: string) {
+    // 1) Verificar permisos: miembro activo del club o super admin
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+    })
+
+    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
+    if (!isSuperAdmin) {
+      const member = await this.prisma.clubMember.findFirst({
+        where: {
+          userId,
+          clubId,
+          isActive: true,
+        },
+      })
+
+      if (!member) {
+        throw new ForbiddenException('No tienes acceso a este club')
+      }
+    }
+
+    // 2) Buscar Users con membership PLAYER activo en algún equipo del club
+    const players = await this.prisma.user.findMany({
+      where: {
+        memberships: {
+          some: {
+            role: 'PLAYER',
+            status: 'ACTIVE',
+            team: { clubId },
+          },
+        },
+      },
+      select: {
+        id: true,
+        username: true,
+        name: true,
+        lastName: true,
+        avatar: true,
+        bio: true,
+        isGhost: true,
+        memberships: {
+          where: {
+            role: 'PLAYER',
+            status: 'ACTIVE',
+            team: { clubId },
+          },
+          include: {
+            team: {
+              select: {
+                id: true,
+                name: true,
+                sport: true,
+                category: true,
+              },
+            },
+          },
+          orderBy: { joinedAt: 'desc' },
+        },
+      },
+      orderBy: [{ lastName: 'asc' }, { name: 'asc' }],
+    })
+
+    // 3) Aplanar: cada jugador con un array de memberships resumido
+    return players.map((player) => ({
+      id: player.id,
+      username: player.username,
+      name: player.name,
+      lastName: player.lastName,
+      avatar: player.avatar,
+      bio: player.bio,
+      isGhost: player.isGhost,
+      memberships: player.memberships.map((m) => ({
+        id: m.id,
+        teamId: m.team.id,
+        teamName: m.team.name,
+        teamSport: m.team.sport,
+        teamCategory: m.team.category,
+        jerseyNumber: m.jerseyNumber,
+        position: m.position,
+        joinedAt: m.joinedAt,
+      })),
+    }))
+  }
+
 }

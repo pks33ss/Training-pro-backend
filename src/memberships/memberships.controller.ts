@@ -10,8 +10,8 @@ import {
   UseGuards,
 } from '@nestjs/common'
 import { MembershipsService } from './memberships.service'
-import { CreateMembershipDto, UpdateMembershipDto } from './dto'
 import { AuthGuard } from '../auth/auth.guard'
+import { CreateMembershipDto, UpdateMembershipDto, AddMemberDto } from './dto'
 
 @Controller()
 @UseGuards(AuthGuard)
@@ -34,6 +34,19 @@ export class MembershipsController {
   @Get('teams/:teamId/members')
   findByTeam(@Request() req, @Param('teamId') teamId: string) {
     return this.membershipsService.findByTeam(req.user.id, teamId)
+  }
+
+    // ============================================
+  // AÑADIR MIEMBRO EXISTENTE (directo, sin invitación)
+  // ============================================
+
+  @Post('teams/:teamId/members')
+  addMember(
+    @Request() req,
+    @Param('teamId') teamId: string,
+    @Body() dto: AddMemberDto,
+  ) {
+    return this.membershipsService.addMember(req.user.id, teamId, dto)
   }
 
   // ============================================
@@ -67,6 +80,19 @@ export class MembershipsController {
   leave(@Request() req, @Param('id') id: string) {
     return this.membershipsService.leave(req.user.id, id)
   }
+
+  // ============================================
+// QUITAR MIEMBRO DEL EQUIPO (coach/admin echa a alguien)
+// ============================================
+
+@Delete('teams/:teamId/members/:membershipId')
+remove(
+  @Request() req,
+  @Param('teamId') teamId: string,
+  @Param('membershipId') membershipId: string,
+) {
+  return this.membershipsService.leave(req.user.id, membershipId)
+}
 
   // ============================================
   // ACTUALIZAR MEMBERSHIP

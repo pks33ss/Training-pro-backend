@@ -436,10 +436,11 @@ export class UserService {
 
     // 2) Buscar usuarios en esos clubes
     const users = await this.prisma.user.findMany({
-      where: {
+            where: {
         AND: [
           { id: { not: userId } },
-          { isGhost: false },
+          // ✅ Ya no filtramos por isGhost: queremos incluir también jugadores
+          // migrados sin cuenta (fantasmas) porque son reutilizables.
           {
             OR: [
               { username: { contains: q, mode: 'insensitive' } },
@@ -478,6 +479,7 @@ export class UserService {
         avatar: true,
         bio: true,
         role: true,
+        isGhost: true, 
         memberships: {
           where: { status: 'ACTIVE' },
           include: {

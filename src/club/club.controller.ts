@@ -139,6 +139,23 @@ removeMemberFromTeam(
 ) {
   return this.clubService.removeMemberFromTeam(req.user.id, clubId, memberId, teamId)
 }
+
+  // ============================================
+  // JUGADORES DEL CLUB (vista global)
+  // ============================================
+
+  @Get(':clubId/players')
+  @ApiOperation({ summary: 'Listar todos los jugadores del club (vista global)' })
+  @ApiResponse({ status: 200, description: 'Lista de jugadores' })
+  @ApiResponse({ status: 403, description: 'Sin permisos' })
+  findClubPlayers(
+    @Request() req,
+    @Param('clubId') clubId: string,
+  ) {
+    return this.clubService.findClubPlayers(req.user.id, clubId)
+  }
+
+
   // ============================================
   // LOGO DEL CLUB
   // ============================================

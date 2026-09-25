@@ -5,6 +5,7 @@ import { RefreshTokenService } from './refresh-token.service';
 import * as bcrypt from 'bcrypt';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { generateUniqueUsername } from '../user/utils/generate-username'; // ✅ NUEVO
 
 @Injectable()
 export class AuthService {
@@ -14,7 +15,7 @@ export class AuthService {
     private refreshTokenService: RefreshTokenService,
   ) {}
 
-    async register(registerDto: RegisterDto) {
+  async register(registerDto: RegisterDto) {
     // 1) Buscar si ya existe un User con ese email
     const existingUser = await this.prisma.user.findUnique({
       where: { email: registerDto.email },
@@ -27,6 +28,16 @@ export class AuthService {
     if (existingUser) {
       // ✅ Si existe y es un fantasma, lo "reclamamos" (no creamos uno nuevo)
       if (existingUser.isGhost) {
+        // ✅ NUEVO: si el fantasma no tiene username, se lo generamos ahora
+        const finalUsername = existingUser.username
+          ? existingUser.username
+          : await generateUniqueUsername(
+              this.prisma,
+              registerDto.name || existingUser.name,
+              registerDto.lastName || existingUser.lastName,
+              existingUser.id,
+            )
+
         user = await this.prisma.user.update({
           where: { id: existingUser.id },
           data: {
@@ -34,6 +45,7 @@ export class AuthService {
             name: registerDto.name || existingUser.name,
             lastName: registerDto.lastName || existingUser.lastName,
             isGhost: false,
+            username: finalUsername, // ✅ NUEVO
           },
         })
       } else {
@@ -41,6 +53,13 @@ export class AuthService {
         throw new ConflictException('El usuario ya existe')
       }
     } else {
+      // ✅ NUEVO: generar username único para el nuevo user
+      const username = await generateUniqueUsername(
+        this.prisma,
+        registerDto.name,
+        registerDto.lastName,
+      )
+
       // ✅ Crear user nuevo
       user = await this.prisma.user.create({
         data: {
@@ -49,6 +68,7 @@ export class AuthService {
           name: registerDto.name,
           lastName: registerDto.lastName,
           isGhost: false,
+          username, // ✅ NUEVO
         },
       })
     }
@@ -138,6 +158,7 @@ export class AuthService {
       },
     })
   }
+
   async login(loginDto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { email: loginDto.email },
