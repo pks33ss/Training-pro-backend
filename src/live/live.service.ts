@@ -28,20 +28,46 @@ export class LiveService {
 
     if (user.role === 'SUPER_ADMIN') return match
 
+    // 1) ClubMember (cualquiera con acceso al club)
     const clubMember = await this.prisma.clubMember.findFirst({
       where: { userId, clubId: match.team.clubId, isActive: true },
     })
     if (clubMember) return match
 
+    // 2) TeamMembership activa (modelo nuevo)
+    const membership = await this.prisma.teamMembership.findFirst({
+      where: { userId, teamId: match.teamId, status: 'ACTIVE' },
+    })
+    if (membership) return match
+
+    // 3) TeamMember antiguo (compatibilidad)
     const teamMember = await this.prisma.teamMember.findFirst({
       where: { userId, teamId: match.teamId, isActive: true },
     })
     if (teamMember) return match
 
-    const isTutor = await this.prisma.playerTutor.findFirst({
+    // 4) Tutor de un jugador del equipo (modelo NUEVO: TutorRelationship)
+    const isTutorNew = await this.prisma.tutorRelationship.findFirst({
+      where: {
+        tutorUserId: userId,
+        status: 'ACTIVE',
+        playerUser: {
+          memberships: {
+            some: {
+              teamId: match.teamId,
+              status: 'ACTIVE',
+            },
+          },
+        },
+      },
+    })
+    if (isTutorNew) return match
+
+    // 5) Tutor antiguo (compatibilidad con PlayerTutor)
+    const isTutorLegacy = await this.prisma.playerTutor.findFirst({
       where: { userId, player: { teamId: match.teamId, isActive: true } },
     })
-    if (isTutor) return match
+    if (isTutorLegacy) return match
 
     throw new ForbiddenException('No tienes acceso a este partido')
   }
@@ -50,11 +76,29 @@ export class LiveService {
     const { match, user } = await this.getMatchAndUser(userId, matchId)
     if (user.role === 'SUPER_ADMIN') return true
 
+    // 1) ADMIN_CLUB del club
     const adminClub = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: match.team.clubId, isActive: true, role: 'ADMIN_CLUB' },
+      where: {
+        userId,
+        clubId: match.team.clubId,
+        isActive: true,
+        role: 'ADMIN_CLUB',
+      },
     })
     if (adminClub) return true
 
+    // 2) TeamMembership con rol de gestión (modelo nuevo)
+    const membership = await this.prisma.teamMembership.findFirst({
+      where: {
+        userId,
+        teamId: match.teamId,
+        status: 'ACTIVE',
+        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+      },
+    })
+    if (membership) return true
+
+    // 3) COACH del equipo (modelo antiguo)
     const coach = await this.prisma.teamMember.findFirst({
       where: { userId, teamId: match.teamId, isActive: true, role: 'COACH' },
     })
@@ -95,29 +139,66 @@ export class LiveService {
 
     const { match } = await this.getMatchAndUser(userId, matchId)
 
+    // 1) ClubMembers
     const clubMembers = await this.prisma.clubMember.findMany({
       where: { clubId: match.team.clubId, isActive: true },
       include: { user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } } },
     })
-    const teamMembers = await this.prisma.teamMember.findMany({
+
+    // 2) TeamMembers (nuevo modelo)
+    const teamMemberships = await this.prisma.teamMembership.findMany({
+      where: { teamId: match.teamId, status: 'ACTIVE' },
+      include: { user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } } },
+    })
+
+    // 3) TeamMembers (modelo antiguo)
+    const legacyTeamMembers = await this.prisma.teamMember.findMany({
       where: { teamId: match.teamId, isActive: true },
       include: { user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } } },
     })
-    const tutors = await this.prisma.playerTutor.findMany({
+
+    // 4) Tutores (modelo NUEVO: TutorRelationship)
+    const tutorRelationships = await this.prisma.tutorRelationship.findMany({
+      where: {
+        status: 'ACTIVE',
+        playerUser: {
+          memberships: {
+            some: {
+              teamId: match.teamId,
+              status: 'ACTIVE',
+            },
+          },
+        },
+      },
+      include: {
+        tutorUser: { select: { id: true, name: true, lastName: true, email: true, avatar: true } },
+      },
+    })
+
+    // 5) Tutores legacy (PlayerTutor)
+    const legacyTutors = await this.prisma.playerTutor.findMany({
       where: { player: { teamId: match.teamId, isActive: true }, userId: { not: null } },
       include: { user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } } },
     })
 
     const map = new Map<string, any>()
+
+    // Club members (rol más alto → no sobrescribir)
     for (const m of clubMembers) {
       map.set(m.user.id, {
         userId: m.user.id, name: m.user.name, lastName: m.user.lastName,
         email: m.user.email, avatar: m.user.avatar, role: `Club · ${m.role}`,
       })
     }
-    for (const m of teamMembers) {
+
+    // TeamMemberships nuevas
+    for (const m of teamMemberships) {
       if (map.has(m.user.id)) {
-        map.get(m.user.id).role = `Equipo · ${m.role}`
+        // Si ya está por club, solo sobrescribimos si NO es ADMIN_CLUB
+        const existing = map.get(m.user.id)
+        if (!existing.role.startsWith('Club · ADMIN')) {
+          existing.role = `Equipo · ${m.role}`
+        }
       } else {
         map.set(m.user.id, {
           userId: m.user.id, name: m.user.name, lastName: m.user.lastName,
@@ -125,7 +206,34 @@ export class LiveService {
         })
       }
     }
-    for (const t of tutors) {
+
+    // TeamMembers legacy
+    for (const m of legacyTeamMembers) {
+      if (map.has(m.user.id)) {
+        const existing = map.get(m.user.id)
+        if (!existing.role.startsWith('Club · ADMIN')) {
+          existing.role = `Equipo · ${m.role}`
+        }
+      } else {
+        map.set(m.user.id, {
+          userId: m.user.id, name: m.user.name, lastName: m.user.lastName,
+          email: m.user.email, avatar: m.user.avatar, role: `Equipo · ${m.role}`,
+        })
+      }
+    }
+
+    // Tutores nuevos
+    for (const t of tutorRelationships) {
+      if (!map.has(t.tutorUser.id)) {
+        map.set(t.tutorUser.id, {
+          userId: t.tutorUser.id, name: t.tutorUser.name, lastName: t.tutorUser.lastName,
+          email: t.tutorUser.email, avatar: t.tutorUser.avatar, role: `Tutor · ${t.relationship}`,
+        })
+      }
+    }
+
+    // Tutores legacy
+    for (const t of legacyTutors) {
       if (!t.user) continue
       if (!map.has(t.user.id)) {
         map.set(t.user.id, {
@@ -206,16 +314,14 @@ export class LiveService {
   }
 
   // ============================================
-  // INFO DEL STREAM (✅ FIX 2: scoreboard siempre presente)
+  // INFO DEL STREAM
   // ============================================
 
   async getStreamInfo(userId: string, matchId: string) {
     await this.verifyMatchAccess(userId, matchId)
 
-    // ✅ Forzar que exista el stream (upsert)
     const stream = await this.getOrCreateStream(matchId)
 
-    // Volver a leer con includes
     const fullStream = await this.prisma.liveStream.findUnique({
       where: { id: stream.id },
       include: {
@@ -317,25 +423,24 @@ export class LiveService {
     return stream
   }
 
-  // ✅ FIX 3: permite configurar antes de emitir (solo requiere canManagePermissions)
-async updateScoreboardConfig(
-  userId: string, matchId: string,
-  config: {
-    scoreboardEnabled?: boolean
-    clockEnabled?: boolean
-    homeTeamName?: string
-    awayTeamName?: string
-    quarterDuration?: number
-    overtimeDuration?: number
-    customPeriodLabel?: string
-  },
-) {
-  if (!(await this.canManagePermissions(userId, matchId))) {
-    throw new ForbiddenException('No tienes permiso para configurar el marcador')
+  async updateScoreboardConfig(
+    userId: string, matchId: string,
+    config: {
+      scoreboardEnabled?: boolean
+      clockEnabled?: boolean
+      homeTeamName?: string
+      awayTeamName?: string
+      quarterDuration?: number
+      overtimeDuration?: number
+      customPeriodLabel?: string
+    },
+  ) {
+    if (!(await this.canManagePermissions(userId, matchId))) {
+      throw new ForbiddenException('No tienes permiso para configurar el marcador')
+    }
+    await this.getOrCreateStream(matchId)
+    return this.prisma.liveStream.update({ where: { matchId }, data: config })
   }
-  await this.getOrCreateStream(matchId)
-  return this.prisma.liveStream.update({ where: { matchId }, data: config })
-}
 
   async updateScore(userId: string, matchId: string, homeScore: number, awayScore: number) {
     await this.assertHost(userId, matchId)
@@ -401,41 +506,38 @@ async updateScoreboardConfig(
     throw new BadRequestException('Acción no válida')
   }
 
-async setCustomPeriod(userId: string, matchId: string, value: string) {
-  await this.assertHost(userId, matchId)
+  async setCustomPeriod(userId: string, matchId: string, value: string) {
+    await this.assertHost(userId, matchId)
 
-  // ✅ Limpiar y validar: máximo 3 caracteres
-  const clean = (value || '').trim().slice(0, 3)
+    const clean = (value || '').trim().slice(0, 3)
 
-  return this.prisma.liveStream.update({
-    where: { matchId },
-    data: { customPeriodLabel: clean || null },
-  })
-}
-
-async nextPeriod(userId: string, matchId: string) {
-  const stream = await this.assertHost(userId, matchId)
-  const next = stream.currentPeriod + 1
-  const isOT = next > 4
-
-  // ✅ Generar label automático (Q1-Q4, OT1, OT2, OT3...)
-  let label: string
-  if (next <= 4) {
-    label = `Q${next}`
-  } else {
-    label = `OT${next - 4}`
+    return this.prisma.liveStream.update({
+      where: { matchId },
+      data: { customPeriodLabel: clean || null },
+    })
   }
 
-  return this.prisma.liveStream.update({
-    where: { matchId },
-    data: {
-      currentPeriod: next,
-      isOvertime: isOT,
-      customPeriodLabel: label,
-      // ⚠️ NO tocamos el reloj (regla B confirmada)
-    },
-  })
-}
+  async nextPeriod(userId: string, matchId: string) {
+    const stream = await this.assertHost(userId, matchId)
+    const next = stream.currentPeriod + 1
+    const isOT = next > 4
+
+    let label: string
+    if (next <= 4) {
+      label = `Q${next}`
+    } else {
+      label = `OT${next - 4}`
+    }
+
+    return this.prisma.liveStream.update({
+      where: { matchId },
+      data: {
+        currentPeriod: next,
+        isOvertime: isOT,
+        customPeriodLabel: label,
+      },
+    })
+  }
 
   // ============================================
   // VIEWERS
@@ -501,33 +603,28 @@ async nextPeriod(userId: string, matchId: string) {
     return { ok: true }
   }
 
-async setPeriodValue(userId: string, matchId: string, value: string) {
-  await this.assertHost(userId, matchId)
-  
-  // Limpiar y validar: máximo 3 caracteres
-  const clean = (value || '').trim().slice(0, 3).toUpperCase()
-  
-  // Detectar si es OT (empieza por OT)
-  const isOT = clean.startsWith('OT')
-  
-  // Detectar número de periodo si es Q1-Q4
-  let periodNum = 1
-  if (/^Q[1-4]$/.test(clean)) {
-    periodNum = parseInt(clean[1])
-  } else if (/^[1-4]$/.test(clean)) {
-    periodNum = parseInt(clean)
-  } else if (isOT) {
-    periodNum = 5 // marcamos como OT
+  async setPeriodValue(userId: string, matchId: string, value: string) {
+    await this.assertHost(userId, matchId)
+
+    const clean = (value || '').trim().slice(0, 3).toUpperCase()
+
+    const isOT = clean.startsWith('OT')
+
+    let periodNum = 1
+    if (/^Q[1-4]$/.test(clean)) {
+      periodNum = parseInt(clean[1])
+    } else if (/^[1-4]$/.test(clean)) {
+      periodNum = parseInt(clean)
+    } else if (isOT) {
+      periodNum = 5
+    }
+
+    return this.prisma.liveStream.update({
+      where: { matchId },
+      data: {
+        currentPeriod: periodNum,
+        isOvertime: isOT,
+      },
+    })
   }
-
-  return this.prisma.liveStream.update({
-    where: { matchId },
-    data: {
-      currentPeriod: periodNum,
-      isOvertime: isOT,
-      // ✅ No tocamos el reloj
-    },
-  })
-}
-
 }

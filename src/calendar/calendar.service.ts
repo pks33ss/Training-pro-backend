@@ -1,3 +1,4 @@
+
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 
@@ -19,17 +20,34 @@ export class CalendarService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
     if (user?.role === 'SUPER_ADMIN') return team
 
-    const clubMember = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: team.clubId, isActive: true },
+    // 1) Admin del club (acceso global al club)
+    const clubAdmin = await this.prisma.clubMember.findFirst({
+      where: {
+        userId,
+        clubId: team.clubId,
+        isActive: true,
+        role: 'ADMIN_CLUB',
+      },
     })
-    if (clubMember) return team
+    if (clubAdmin) return team
 
+    // 2) TeamMembership activa (modelo nuevo)
+    const membership = await this.prisma.teamMembership.findFirst({
+      where: {
+        userId,
+        teamId,
+        status: 'ACTIVE',
+      },
+    })
+    if (membership) return team
+
+    // 3) TeamMember antiguo (compatibilidad con datos pre-migración)
     const teamMember = await this.prisma.teamMember.findFirst({
       where: { userId, teamId, isActive: true },
     })
-    if (!teamMember) throw new ForbiddenException('No tienes acceso a este equipo')
+    if (teamMember) return team
 
-    return team
+    throw new ForbiddenException('No tienes acceso a este equipo')
   }
 
   // ============================================
@@ -151,7 +169,7 @@ export class CalendarService {
     return events
   }
 
-    // ============================================
+  // ============================================
   // OBTENER EVENTOS DE VARIOS EQUIPOS
   // ============================================
 
@@ -271,7 +289,6 @@ export class CalendarService {
 
     return events
   }
-
 
   // ============================================
   // CREAR EVENTO DE CALENDARIO

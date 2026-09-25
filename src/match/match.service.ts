@@ -26,28 +26,50 @@ export class MatchService {
     })
 
     const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+    if (isSuperAdmin) return team
 
+    // 1) Admin del club (acceso global al club)
+    const clubAdmin = await this.prisma.clubMember.findFirst({
+      where: {
+        userId,
+        clubId: team.clubId,
+        isActive: true,
+        role: 'ADMIN_CLUB',
+      },
+    })
+    if (clubAdmin) return team
+
+    // 2) ClubMember cualquiera (coach, assistant) — compatibilidad
     const clubMember = await this.prisma.clubMember.findFirst({
       where: {
-        userId: userId,
+        userId,
         clubId: team.clubId,
         isActive: true,
       },
     })
+    if (clubMember) return team
 
+    // 3) TeamMembership activa (modelo nuevo)
+    const membership = await this.prisma.teamMembership.findFirst({
+      where: {
+        userId,
+        teamId,
+        status: 'ACTIVE',
+      },
+    })
+    if (membership) return team
+
+    // 4) TeamMember antiguo (compatibilidad con datos pre-migración)
     const teamMember = await this.prisma.teamMember.findFirst({
       where: {
-        userId: userId,
-        teamId: teamId,
+        userId,
+        teamId,
         isActive: true,
       },
     })
+    if (teamMember) return team
 
-    if (!clubMember && !teamMember && !isSuperAdmin) {
-      throw new ForbiddenException('No tienes acceso a este equipo')
-    }
-
-    return team
+    throw new ForbiddenException('No tienes acceso a este equipo')
   }
 
   // ============================================
@@ -107,42 +129,42 @@ export class MatchService {
     })
   }
 
-async findOne(userId: string, matchId: string) {
-  const match = await this.prisma.match.findUnique({
-    where: { id: matchId },
-    include: {
-      team: {
-        include: {
-          club: true,
-          players: {
-            // ✅ NUEVO: traemos todos los jugadores activos del equipo
-            where: { isActive: true },
-            orderBy: { number: 'asc' },
+  async findOne(userId: string, matchId: string) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      include: {
+        team: {
+          include: {
+            club: true,
+            players: {
+              // ✅ NUEVO: traemos todos los jugadores activos del equipo
+              where: { isActive: true },
+              orderBy: { number: 'asc' },
+            },
           },
         },
+        callups: {
+          include: { player: true },
+          orderBy: { player: { number: 'asc' } },
+        },
+        playerStats: {
+          include: { player: true },
+          orderBy: { player: { number: 'asc' } },
+        },
+        createdBy: {
+          select: { id: true, name: true, lastName: true },
+        },
       },
-      callups: {
-        include: { player: true },
-        orderBy: { player: { number: 'asc' } },
-      },
-      playerStats: {
-        include: { player: true },
-        orderBy: { player: { number: 'asc' } },
-      },
-      createdBy: {
-        select: { id: true, name: true, lastName: true },
-      },
-    },
-  })
+    })
 
-  if (!match) {
-    throw new NotFoundException('Partido no encontrado')
+    if (!match) {
+      throw new NotFoundException('Partido no encontrado')
+    }
+
+    await this.verifyTeamAccess(userId, match.teamId)
+
+    return match
   }
-
-  await this.verifyTeamAccess(userId, match.teamId)
-
-  return match
-}
 
   async update(userId: string, matchId: string, updateMatchDto: UpdateMatchDto) {
     const match = await this.prisma.match.findUnique({
@@ -207,47 +229,47 @@ async findOne(userId: string, matchId: string) {
     })
   }
 
-    // ============================================
+  // ============================================
   // CONVOCATORIA
   // ============================================
 
-async createCallups(userId: string, matchId: string, playerIds: string[]) {
-  const match = await this.prisma.match.findUnique({
-    where: { id: matchId },
-  })
+  async createCallups(userId: string, matchId: string, playerIds: string[]) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+    })
 
-  if (!match) {
-    throw new NotFoundException('Partido no encontrado')
-  }
-
-  await this.verifyTeamAccess(userId, match.teamId)
-
-  const results = []
-  for (const playerId of playerIds) {
-    try {
-      const callup = await this.prisma.matchCallup.upsert({
-        where: {
-          matchId_playerId: { matchId, playerId },
-        },
-        update: {
-          calledUpStatus: 'YES',
-        },
-        create: {
-          matchId,
-          playerId,
-          availableStatus: 'PENDING',
-          calledUpStatus: 'YES',
-          confirmedStatus: 'PENDING',
-        },
-      })
-      results.push(callup)
-    } catch (error) {
-      console.log(`Error con jugador ${playerId}:`, error)
+    if (!match) {
+      throw new NotFoundException('Partido no encontrado')
     }
-  }
 
-  return results
-}
+    await this.verifyTeamAccess(userId, match.teamId)
+
+    const results = []
+    for (const playerId of playerIds) {
+      try {
+        const callup = await this.prisma.matchCallup.upsert({
+          where: {
+            matchId_playerId: { matchId, playerId },
+          },
+          update: {
+            calledUpStatus: 'YES',
+          },
+          create: {
+            matchId,
+            playerId,
+            availableStatus: 'PENDING',
+            calledUpStatus: 'YES',
+            confirmedStatus: 'PENDING',
+          },
+        })
+        results.push(callup)
+      } catch (error) {
+        console.log(`Error con jugador ${playerId}:`, error)
+      }
+    }
+
+    return results
+  }
 
   async getCallups(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
@@ -272,46 +294,46 @@ async createCallups(userId: string, matchId: string, playerIds: string[]) {
   }
 
   // ✅ Actualizar los 3 estados booleanos
-async updateCallupFlags(
-  userId: string,
-  matchId: string,
-  playerId: string,
-  flags: {
-    availableStatus?: 'PENDING' | 'YES' | 'NO'
-    calledUpStatus?: 'PENDING' | 'YES' | 'NO'
-    confirmedStatus?: 'PENDING' | 'YES' | 'NO'
-    notes?: string
-  },
-) {
-  const match = await this.prisma.match.findUnique({
-    where: { id: matchId },
-  })
+  async updateCallupFlags(
+    userId: string,
+    matchId: string,
+    playerId: string,
+    flags: {
+      availableStatus?: 'PENDING' | 'YES' | 'NO'
+      calledUpStatus?: 'PENDING' | 'YES' | 'NO'
+      confirmedStatus?: 'PENDING' | 'YES' | 'NO'
+      notes?: string
+    },
+  ) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+    })
 
-  if (!match) {
-    throw new NotFoundException('Partido no encontrado')
+    if (!match) {
+      throw new NotFoundException('Partido no encontrado')
+    }
+
+    await this.verifyTeamAccess(userId, match.teamId)
+
+    return this.prisma.matchCallup.upsert({
+      where: {
+        matchId_playerId: { matchId, playerId },
+      },
+      update: {
+        ...flags,
+        respondedAt: new Date(),
+      },
+      create: {
+        matchId,
+        playerId,
+        availableStatus: flags.availableStatus ?? 'PENDING',
+        calledUpStatus: flags.calledUpStatus ?? 'PENDING',
+        confirmedStatus: flags.confirmedStatus ?? 'PENDING',
+        notes: flags.notes,
+        respondedAt: new Date(),
+      },
+    })
   }
-
-  await this.verifyTeamAccess(userId, match.teamId)
-
-  return this.prisma.matchCallup.upsert({
-    where: {
-      matchId_playerId: { matchId, playerId },
-    },
-    update: {
-      ...flags,
-      respondedAt: new Date(),
-    },
-    create: {
-      matchId,
-      playerId,
-      availableStatus: flags.availableStatus ?? 'PENDING',
-      calledUpStatus: flags.calledUpStatus ?? 'PENDING',
-      confirmedStatus: flags.confirmedStatus ?? 'PENDING',
-      notes: flags.notes,
-      respondedAt: new Date(),
-    },
-  })
-}
 
   async removeCallup(userId: string, matchId: string, playerId: string) {
     const match = await this.prisma.match.findUnique({
@@ -430,6 +452,7 @@ async updateCallupFlags(
       },
     })
   }
+
   // ============================================
   // LINE UP
   // ============================================
@@ -471,6 +494,7 @@ async updateCallupFlags(
       data: { gamePlan },
     })
   }
+
   // ============================================
   // ESTADÍSTICAS DEL EQUIPO
   // ============================================

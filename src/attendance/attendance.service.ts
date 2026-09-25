@@ -2,10 +2,39 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateAttendanceDto, BulkAttendanceDto } from './dto/update-attendance.dto';
 
-
 @Injectable()
 export class AttendanceService {
   constructor(private prisma: PrismaService) {}
+
+  // ============================================
+  // HELPER: verificar acceso al equipo
+  // ============================================
+
+  private async canAccessTeam(userId: string, teamId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } })
+    if (user?.role === 'SUPER_ADMIN') return true
+
+    const team = await this.prisma.team.findUnique({ where: { id: teamId } })
+    if (!team) return false
+
+    // 1) ClubMember
+    const clubMember = await this.prisma.clubMember.findFirst({
+      where: { userId, clubId: team.clubId, isActive: true },
+    })
+    if (clubMember) return true
+
+    // 2) TeamMembership activa (modelo nuevo)
+    const membership = await this.prisma.teamMembership.findFirst({
+      where: { userId, teamId, status: 'ACTIVE' },
+    })
+    if (membership) return true
+
+    // 3) TeamMember antiguo (compatibilidad)
+    const teamMember = await this.prisma.teamMember.findFirst({
+      where: { userId, teamId, isActive: true },
+    })
+    return !!teamMember
+  }
 
   // ============================================
   // ASISTENCIA POR SESIÓN
@@ -21,15 +50,7 @@ export class AttendanceService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: session.team.clubId,
-        isActive: true,
-      },
-    });
-
-    if (!member) {
+    if (!(await this.canAccessTeam(userId, session.teamId))) {
       throw new ForbiddenException('No tienes acceso a esta sesión');
     }
 
@@ -65,15 +86,7 @@ export class AttendanceService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: session.team.clubId,
-        isActive: true,
-      },
-    });
-
-    if (!member) {
+    if (!(await this.canAccessTeam(userId, session.teamId))) {
       throw new ForbiddenException('No tienes permisos para gestionar asistencias');
     }
 
@@ -107,19 +120,11 @@ export class AttendanceService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: session.team.clubId,
-        isActive: true,
-      },
-    });
-
-    if (!member) {
+    if (!(await this.canAccessTeam(userId, session.teamId))) {
       throw new ForbiddenException('No tienes permisos para gestionar asistencias');
     }
 
-    const results: any[] = []; // ✅ Tipado correcto
+    const results: any[] = [];
 
     for (const att of attendances) {
       const result = await this.prisma.attendance.upsert({
@@ -146,7 +151,7 @@ export class AttendanceService {
     return results;
   }
 
-    async removeAttendance(userId: string, sessionId: string, playerId: string) {
+  async removeAttendance(userId: string, sessionId: string, playerId: string) {
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
       include: { team: true },
@@ -156,19 +161,10 @@ export class AttendanceService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: session.team.clubId,
-        isActive: true,
-      },
-    });
-
-    if (!member) {
+    if (!(await this.canAccessTeam(userId, session.teamId))) {
       throw new ForbiddenException('No tienes permisos para gestionar asistencias');
     }
 
-    // Si no existe, no pasa nada (idempotente)
     const existing = await this.prisma.attendance.findUnique({
       where: {
         playerId_sessionId: { playerId, sessionId },
@@ -197,9 +193,7 @@ export class AttendanceService {
       where: { id: playerId },
       include: {
         team: {
-          include: {
-            club: true,
-          },
+          include: { club: true },
         },
       },
     });
@@ -208,28 +202,14 @@ export class AttendanceService {
       throw new NotFoundException('Jugador no encontrado');
     }
 
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: player.team.clubId,
-        isActive: true,
-      },
-    });
-
-    if (!member) {
+    if (!(await this.canAccessTeam(userId, player.teamId))) {
       throw new ForbiddenException('No tienes acceso a este jugador');
     }
 
     const attendances = await this.prisma.attendance.findMany({
       where: { playerId },
-      include: {
-        session: true,
-      },
-      orderBy: {
-        session: {
-          date: 'desc',
-        },
-      },
+      include: { session: true },
+      orderBy: { session: { date: 'desc' } },
     });
 
     return attendances;
@@ -244,9 +224,7 @@ export class AttendanceService {
       where: { id: playerId },
       include: {
         team: {
-          include: {
-            club: true,
-          },
+          include: { club: true },
         },
       },
     });
@@ -255,15 +233,7 @@ export class AttendanceService {
       throw new NotFoundException('Jugador no encontrado');
     }
 
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: player.team.clubId,
-        isActive: true,
-      },
-    });
-
-    if (!member) {
+    if (!(await this.canAccessTeam(userId, player.teamId))) {
       throw new ForbiddenException('No tienes acceso a este jugador');
     }
 
@@ -309,15 +279,7 @@ export class AttendanceService {
       throw new NotFoundException('Equipo no encontrado');
     }
 
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: team.clubId,
-        isActive: true,
-      },
-    });
-
-    if (!member) {
+    if (!(await this.canAccessTeam(userId, teamId))) {
       throw new ForbiddenException('No tienes acceso a este equipo');
     }
 
@@ -386,8 +348,8 @@ export class AttendanceService {
         totalLate,
         totalExcused,
         attendanceRate: totalAttendances > 0
-  ? Math.round(((totalPresent + totalLate) / totalAttendances) * 100)
-  : 0,
+          ? Math.round(((totalPresent + totalLate) / totalAttendances) * 100)
+          : 0,
       },
       playersStats: playersStats.sort((a, b) =>
         b.stats.attendanceRate - a.stats.attendanceRate
@@ -412,15 +374,7 @@ export class AttendanceService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: session.team.clubId,
-        isActive: true,
-      },
-    });
-
-    if (!member) {
+    if (!(await this.canAccessTeam(userId, session.teamId))) {
       throw new ForbiddenException('No tienes acceso a esta sesión');
     }
 
@@ -443,8 +397,8 @@ export class AttendanceService {
       late,
       excused,
       attendanceRate: totalPlayers > 0
-  ? Math.round(((present + late) / totalPlayers) * 100)
-  : 0,
+        ? Math.round(((present + late) / totalPlayers) * 100)
+        : 0,
     };
   }
 }

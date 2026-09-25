@@ -6,6 +6,36 @@ export class FavoritesService {
   constructor(private prisma: PrismaService) {}
 
   // ============================================
+  // HELPER: verificar acceso al equipo
+  // ============================================
+
+  private async canAccessTeam(userId: string, teamId: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } })
+    if (user?.role === 'SUPER_ADMIN') return true
+
+    const team = await this.prisma.team.findUnique({ where: { id: teamId } })
+    if (!team) return false
+
+    // 1) ClubMember (ADMIN_CLUB o cualquier ClubMember con acceso)
+    const clubMember = await this.prisma.clubMember.findFirst({
+      where: { userId, clubId: team.clubId, isActive: true },
+    })
+    if (clubMember) return true
+
+    // 2) TeamMembership activa (modelo nuevo)
+    const membership = await this.prisma.teamMembership.findFirst({
+      where: { userId, teamId, status: 'ACTIVE' },
+    })
+    if (membership) return true
+
+    // 3) TeamMember antiguo (compatibilidad)
+    const teamMember = await this.prisma.teamMember.findFirst({
+      where: { userId, teamId, isActive: true },
+    })
+    return !!teamMember
+  }
+
+  // ============================================
   // LISTAR FAVORITOS
   // ============================================
 
@@ -52,23 +82,16 @@ export class FavoritesService {
   // ============================================
 
   async addFavorite(userId: string, teamId: string) {
-    // Verificar que el equipo existe y el usuario tiene acceso
+    // Verificar que el equipo existe
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    if (user?.role !== 'SUPER_ADMIN') {
-      const clubMember = await this.prisma.clubMember.findFirst({
-        where: { userId, clubId: team.clubId, isActive: true },
-      })
-      const teamMember = await this.prisma.teamMember.findFirst({
-        where: { userId, teamId, isActive: true },
-      })
-      if (!clubMember && !teamMember) {
-        throw new ForbiddenException('No tienes acceso a este equipo')
-      }
+    // Verificar acceso con la lógica unificada
+    const hasAccess = await this.canAccessTeam(userId, teamId)
+    if (!hasAccess) {
+      throw new ForbiddenException('No tienes acceso a este equipo')
     }
 
     // Upsert (si ya existe, no falla)

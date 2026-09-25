@@ -39,6 +39,12 @@ export class TeamService {
   }
 
   async findAllByClub(userId: string, clubId: string) {
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+    })
+
+    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
     const member = await this.prisma.clubMember.findFirst({
       where: {
         userId: userId,
@@ -47,37 +53,22 @@ export class TeamService {
       },
     })
 
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
     if (!member && !isSuperAdmin) {
       throw new ForbiddenException('No tienes acceso a este club')
     }
 
+    // ADMIN_CLUB ve todo el club
     if (member?.role === 'ADMIN_CLUB' || isSuperAdmin) {
       return this.prisma.team.findMany({
         where: { clubId },
         include: {
           players: {
-            select: {
-              id: true,
-              name: true,
-              lastName: true,
-              number: true,
-            },
+            select: { id: true, name: true, lastName: true, number: true },
           },
           members: {
             include: {
               user: {
-                select: {
-                  id: true,
-                  name: true,
-                  lastName: true,
-                  email: true,
-                },
+                select: { id: true, name: true, lastName: true, email: true },
               },
             },
           },
@@ -85,48 +76,37 @@ export class TeamService {
       })
     }
 
-    const teamMemberships = await this.prisma.teamMember.findMany({
-      where: {
-        userId: userId,
-        isActive: true,
-        team: {
-          clubId: clubId,
-        },
-      },
-      select: {
-        teamId: true,
-      },
-    })
+    // COACH/ASSISTANT: solo equipos donde tiene TeamMember O TeamMembership
+    const [legacyTeamMembers, newMemberships] = await Promise.all([
+      this.prisma.teamMember.findMany({
+        where: { userId, isActive: true, team: { clubId } },
+        select: { teamId: true },
+      }),
+      this.prisma.teamMembership.findMany({
+        where: { userId, status: 'ACTIVE', team: { clubId } },
+        select: { teamId: true },
+      }),
+    ])
 
-    const teamIds = teamMemberships.map(tm => tm.teamId)
+    const teamIds = Array.from(
+      new Set([
+        ...legacyTeamMembers.map((tm) => tm.teamId),
+        ...newMemberships.map((m) => m.teamId),
+      ]),
+    )
 
-    if (teamIds.length === 0) {
-      return []
-    }
+    if (teamIds.length === 0) return []
 
     return this.prisma.team.findMany({
-      where: {
-        clubId,
-        id: { in: teamIds },
-      },
+      where: { clubId, id: { in: teamIds } },
       include: {
         players: {
-          select: {
-            id: true,
-            name: true,
-            lastName: true,
-            number: true,
-          },
+          select: { id: true, name: true, lastName: true, number: true },
         },
         members: {
           include: {
             user: {
-              select: {
-                id: true,
-                name: true,
-                lastName: true,
-                email: true,
-              },
+              select: { id: true, name: true, lastName: true, email: true },
             },
           },
         },
@@ -134,7 +114,7 @@ export class TeamService {
     })
   }
 
-    async findAllByClubWithMembers(userId: string, clubId: string) {
+  async findAllByClubWithMembers(userId: string, clubId: string) {
     const currentUser = await this.prisma.user.findUnique({
       where: { id: userId },
     })
@@ -153,7 +133,6 @@ export class TeamService {
       throw new ForbiddenException('No tienes acceso a este club')
     }
 
-    // ✅ ADMIN_CLUB y SUPER_ADMIN ven todos los equipos con miembros
     if (member?.role === 'ADMIN_CLUB' || isSuperAdmin) {
       return this.prisma.team.findMany({
         where: { clubId },
@@ -161,67 +140,51 @@ export class TeamService {
           members: {
             include: {
               user: {
-                select: {
-                  id: true,
-                  name: true,
-                  lastName: true,
-                  email: true,
-                },
+                select: { id: true, name: true, lastName: true, email: true },
               },
             },
           },
           players: {
-            select: {
-              id: true,
-              name: true,
-              lastName: true,
-            },
+            select: { id: true, name: true, lastName: true },
           },
         },
         orderBy: { name: 'asc' },
       })
     }
 
-    // ✅ COACH/ASSISTANT: solo ven equipos donde están asignados
-    const teamMemberships = await this.prisma.teamMember.findMany({
-      where: {
-        userId: userId,
-        isActive: true,
-        team: { clubId: clubId },
-      },
-      select: { teamId: true },
-    })
+    // COACH/ASSISTANT
+    const [legacyTeamMembers, newMemberships] = await Promise.all([
+      this.prisma.teamMember.findMany({
+        where: { userId, isActive: true, team: { clubId } },
+        select: { teamId: true },
+      }),
+      this.prisma.teamMembership.findMany({
+        where: { userId, status: 'ACTIVE', team: { clubId } },
+        select: { teamId: true },
+      }),
+    ])
 
-    const teamIds = teamMemberships.map(tm => tm.teamId)
+    const teamIds = Array.from(
+      new Set([
+        ...legacyTeamMembers.map((tm) => tm.teamId),
+        ...newMemberships.map((m) => m.teamId),
+      ]),
+    )
 
-    if (teamIds.length === 0) {
-      return []
-    }
+    if (teamIds.length === 0) return []
 
     return this.prisma.team.findMany({
-      where: {
-        clubId,
-        id: { in: teamIds },
-      },
+      where: { clubId, id: { in: teamIds } },
       include: {
         members: {
           include: {
             user: {
-              select: {
-                id: true,
-                name: true,
-                lastName: true,
-                email: true,
-              },
+              select: { id: true, name: true, lastName: true, email: true },
             },
           },
         },
         players: {
-          select: {
-            id: true,
-            name: true,
-            lastName: true,
-          },
+          select: { id: true, name: true, lastName: true },
         },
       },
       orderBy: { name: 'asc' },
@@ -237,12 +200,7 @@ export class TeamService {
         members: {
           include: {
             user: {
-              select: {
-                id: true,
-                name: true,
-                lastName: true,
-                email: true,
-              },
+              select: { id: true, name: true, lastName: true, email: true },
             },
           },
         },
@@ -257,38 +215,34 @@ export class TeamService {
       where: { id: userId },
     })
 
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    if (isSuperAdmin) {
-      return team
-    }
+    if (currentUser?.role === 'SUPER_ADMIN') return team
 
     const isClubAdmin = await this.prisma.clubMember.findFirst({
       where: {
-        userId: userId,
+        userId,
         clubId: team.clubId,
         role: 'ADMIN_CLUB',
         isActive: true,
       },
     })
 
-    if (isClubAdmin) {
-      return team
-    }
+    if (isClubAdmin) return team
 
-    const isTeamMember = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: userId,
-        teamId: teamId,
-        isActive: true,
-      },
+    // TeamMembership activa
+    const membership = await this.prisma.teamMembership.findFirst({
+      where: { userId, teamId, status: 'ACTIVE' },
     })
 
-    if (!isTeamMember) {
-      throw new ForbiddenException('No tienes acceso a este equipo')
-    }
+    if (membership) return team
 
-    return team
+    // TeamMember antiguo
+    const legacyMember = await this.prisma.teamMember.findFirst({
+      where: { userId, teamId, isActive: true },
+    })
+
+    if (legacyMember) return team
+
+    throw new ForbiddenException('No tienes acceso a este equipo')
   }
 
   async update(userId: string, teamId: string, updateTeamDto: UpdateTeamDto) {
@@ -302,23 +256,32 @@ export class TeamService {
 
     const isAdmin = await this.prisma.clubMember.findFirst({
       where: {
-        userId: userId,
+        userId,
         clubId: team.clubId,
         role: 'ADMIN_CLUB',
         isActive: true,
       },
     })
 
-    const isCoach = await this.prisma.teamMember.findFirst({
+    const membership = await this.prisma.teamMembership.findFirst({
       where: {
-        userId: userId,
-        teamId: teamId,
+        userId,
+        teamId,
+        status: 'ACTIVE',
+        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+      },
+    })
+
+    const legacyCoach = await this.prisma.teamMember.findFirst({
+      where: {
+        userId,
+        teamId,
         role: 'COACH',
         isActive: true,
       },
     })
 
-    if (!isAdmin && !isCoach) {
+    if (!isAdmin && !membership && !legacyCoach) {
       throw new ForbiddenException('No tienes permisos para editar este equipo')
     }
 
@@ -356,9 +319,10 @@ export class TeamService {
   }
 
   // ============================================
-  // GESTIÓN DE MIEMBROS
+  // GESTIÓN DE MIEMBROS (legacy — sigue usando TeamMember antiguo)
   // ============================================
-
+  // ⚠️ Estos métodos se eliminarán en Fase 5 cuando TeamMember desaparezca.
+  // La gestión nueva de miembros vive en memberships.service.ts.
 
   async inviteMember(userId: string, teamId: string, email: string, role: string) {
     const currentUser = await this.prisma.user.findUnique({
@@ -441,12 +405,7 @@ export class TeamService {
           data: { isActive: true, role: role as any },
           include: {
             user: {
-              select: {
-                id: true,
-                email: true,
-                name: true,
-                lastName: true,
-              },
+              select: { id: true, email: true, name: true, lastName: true },
             },
           },
         })
@@ -462,12 +421,7 @@ export class TeamService {
       },
       include: {
         user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            lastName: true,
-          },
+          select: { id: true, email: true, name: true, lastName: true },
         },
       },
     })
@@ -515,12 +469,7 @@ export class TeamService {
       data: { role: newRole as any },
       include: {
         user: {
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            lastName: true,
-          },
+          select: { id: true, email: true, name: true, lastName: true },
         },
       },
     })

@@ -19,17 +19,40 @@ export class SeasonService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
     if (user?.role === 'SUPER_ADMIN') return team
 
+    // 1) Admin del club (acceso global al club)
+    const clubAdmin = await this.prisma.clubMember.findFirst({
+      where: {
+        userId,
+        clubId: team.clubId,
+        isActive: true,
+        role: 'ADMIN_CLUB',
+      },
+    })
+    if (clubAdmin) return team
+
+    // 2) ClubMember cualquiera (coach, assistant) — compatibilidad
     const clubMember = await this.prisma.clubMember.findFirst({
       where: { userId, clubId: team.clubId, isActive: true },
     })
     if (clubMember) return team
 
+    // 3) TeamMembership activa (modelo nuevo)
+    const membership = await this.prisma.teamMembership.findFirst({
+      where: {
+        userId,
+        teamId,
+        status: 'ACTIVE',
+      },
+    })
+    if (membership) return team
+
+    // 4) TeamMember antiguo (compatibilidad con datos pre-migración)
     const teamMember = await this.prisma.teamMember.findFirst({
       where: { userId, teamId, isActive: true },
     })
-    if (!teamMember) throw new ForbiddenException('No tienes acceso a este equipo')
+    if (teamMember) return team
 
-    return team
+    throw new ForbiddenException('No tienes acceso a este equipo')
   }
 
   private async canManage(userId: string, teamId: string) {
@@ -39,13 +62,24 @@ export class SeasonService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
     if (user?.role === 'SUPER_ADMIN') return true
 
-    // ADMIN_CLUB del club
+    // 1) ADMIN_CLUB del club
     const adminClub = await this.prisma.clubMember.findFirst({
       where: { userId, clubId: team.clubId, isActive: true, role: 'ADMIN_CLUB' },
     })
     if (adminClub) return true
 
-    // COACH del equipo
+    // 2) TeamMembership con rol de gestión (modelo nuevo)
+    const membership = await this.prisma.teamMembership.findFirst({
+      where: {
+        userId,
+        teamId,
+        status: 'ACTIVE',
+        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+      },
+    })
+    if (membership) return true
+
+    // 3) COACH del equipo (modelo antiguo)
     const coach = await this.prisma.teamMember.findFirst({
       where: { userId, teamId, isActive: true, role: 'COACH' },
     })

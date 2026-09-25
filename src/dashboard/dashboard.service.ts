@@ -25,14 +25,24 @@ export class DashboardService {
     })
     if (isClubAdmin) return team
 
-    const isTeamMember = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true },
-    })
-    if (!isTeamMember) {
-      throw new ForbiddenException('No tienes acceso a este equipo')
-    }
+// 1) TeamMembership (modelo nuevo) — cubre jugadores, coaches, etc.
+const membership = await this.prisma.teamMembership.findFirst({
+  where: {
+    userId,
+    teamId,
+    status: 'ACTIVE',
+  },
+})
+if (membership) return team
 
-    return team
+// 2) TeamMember (modelo antiguo) — por compatibilidad con datos pre-migración
+const isLegacyTeamMember = await this.prisma.teamMember.findFirst({
+  where: { userId, teamId, isActive: true },
+})
+if (isLegacyTeamMember) return team
+
+throw new ForbiddenException('No tienes acceso a este equipo')
+
   }
 
   async getTeamSummary(userId: string, teamId: string) {
