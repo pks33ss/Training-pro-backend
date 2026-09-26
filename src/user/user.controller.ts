@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, Request, UseGuards, ForbiddenException } from '@nestjs/common'
 import { UserService } from './user.service'
 import { AuthGuard } from '../auth/auth.guard'
+import { CreateGhostDto } from './dto/create-ghost.dto'
 
 @Controller('users')
 @UseGuards(AuthGuard)
@@ -52,6 +53,12 @@ export class UserController {
   findByUsername(@Param('username') username: string) {
     return this.userService.findByUsername(username)
   }
+
+    @Post('ghost')
+  createGhost(@Request() req, @Body() dto: CreateGhostDto) {
+    return this.userService.createGhost(req.user.id, dto)
+  }
+
   // ============================================
   // GESTIÓN DE USUARIOS (solo SUPER_ADMIN)
   // ============================================

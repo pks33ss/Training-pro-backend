@@ -1,6 +1,8 @@
-import { Injectable, NotFoundException, ConflictException, UnauthorizedException } from '@nestjs/common'
+import { Injectable, NotFoundException, ConflictException, UnauthorizedException, ForbiddenException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import * as bcrypt from 'bcrypt'
+import { CreateGhostDto } from './dto/create-ghost.dto'
+import { generateUniqueUsername } from './utils/generate-username'
 
 @Injectable()
 export class UserService {
@@ -542,12 +544,133 @@ export class UserService {
       throw new NotFoundException('Usuario no encontrado')
     }
 
-    if (user.isGhost) {
-      throw new NotFoundException('Usuario no encontrado')
-    }
-
     return user
   }
+  // ============================================
+  // CREAR USUARIO FANTASMA Y AÑADIRLO A UN EQUIPO
+  // ============================================
+
+  /**
+   * Crea un User "fantasma" (isGhost: true, sin password) y lo vincula a un equipo.
+   * Útil cuando un coach quiere añadir a un jugador que todavía no se ha registrado.
+   *
+   * - Genera username autogenerado.
+   * - Crea TeamMembership con status ACTIVE.
+   * - Crea ClubMember con rol MEMBER (auto-vinculación al club).
+   *
+   * Cuando el jugador se registre con el mismo email, su cuenta se "reclamará"
+   * (auth.service → register detecta isGhost y lo convierte en real).
+   */
+  async createGhost(requesterId: string, dto: CreateGhostDto) {
+    // 1) Verificar equipo
+    const team = await this.prisma.team.findUnique({
+      where: { id: dto.teamId },
+      include: { club: true },
+    })
+    if (!team) throw new NotFoundException('Equipo no encontrado')
+
+    // 2) Verificar permisos del requester
+    const requester = await this.prisma.user.findUnique({
+      where: { id: requesterId },
+    })
+    if (!requester) throw new NotFoundException('Usuario no encontrado')
+
+    const isSuperAdmin = requester.role === 'SUPER_ADMIN'
+
+    const isClubAdmin = await this.prisma.clubMember.findFirst({
+      where: {
+        userId: requesterId,
+        clubId: team.clubId,
+        isActive: true,
+        role: 'ADMIN_CLUB',
+      },
+    })
+
+    const isTeamManager = await this.prisma.teamMembership.findFirst({
+      where: {
+        userId: requesterId,
+        teamId: dto.teamId,
+        status: 'ACTIVE',
+        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+      },
+    })
+
+    if (!isSuperAdmin && !isClubAdmin && !isTeamManager) {
+      throw new ForbiddenException(
+        'No tienes permisos para añadir jugadores a este equipo',
+      )
+    }
+
+    // 3) Verificar email si lo dan
+    if (dto.email) {
+      const existing = await this.prisma.user.findUnique({
+        where: { email: dto.email },
+      })
+      if (existing) {
+        throw new ConflictException(
+          'Ya existe un usuario con ese email. Búscalo en "Buscar existente" y añádelo directamente.',
+        )
+      }
+    }
+
+    // 4) Generar username único
+    const username = await generateUniqueUsername(
+      this.prisma,
+      dto.name,
+      dto.lastName,
+    )
+
+    // 5) Crear User + TeamMembership + ClubMember en una transacción
+    const newUser = await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.create({
+        data: {
+          name: dto.name,
+          lastName: dto.lastName,
+          email: dto.email ?? null,
+          phone: dto.phone ?? null,
+          password: null,
+          username,
+          isGhost: true,
+          role: 'USER',
+        },
+      })
+
+      await tx.teamMembership.create({
+        data: {
+          userId: user.id,
+          teamId: dto.teamId,
+          role: dto.role ?? 'PLAYER',
+          status: 'ACTIVE',
+          jerseyNumber: dto.jerseyNumber ?? null,
+          position: dto.position ?? null,
+          invitedById: requesterId,
+        },
+      })
+
+      await tx.clubMember.create({
+        data: {
+          userId: user.id,
+          clubId: team.clubId,
+          role: 'MEMBER',
+          isActive: true,
+        },
+      })
+
+      return user
+    })
+
+    // 6) Devolver con la forma que espera el frontend
+    return {
+      id: newUser.id,
+      username: newUser.username,
+      name: newUser.name,
+      lastName: newUser.lastName,
+      email: newUser.email,
+      isGhost: newUser.isGhost,
+    }
+  }
+
+
 }
 
 

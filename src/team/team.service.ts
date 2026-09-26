@@ -27,7 +27,7 @@ export class TeamService {
     return this.prisma.team.create({
       data: {
         name: createTeamDto.name,
-        sport: createTeamDto.sport || 'BASKETBALL', 
+        sport: createTeamDto.sport || 'BASKETBALL',
         category: createTeamDto.category,
         season: createTeamDto.season,
         clubId: createTeamDto.clubId,
@@ -191,12 +191,45 @@ export class TeamService {
     })
   }
 
+  // ============================================
+  // OBTENER UN EQUIPO CON SUS MIEMBROS (modelo nuevo)
+  // ============================================
+
   async findOne(userId: string, teamId: string) {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
       include: {
         club: true,
-        players: true,
+        // ✅ Modelo NUEVO: todos los miembros activos
+        memberships: {
+          where: {
+            status: 'ACTIVE',
+          },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                lastName: true,
+                username: true,
+                avatar: true,
+                email: true,
+                isGhost: true,
+              },
+            },
+            season: {
+              select: { id: true, name: true, color: true },
+            },
+          },
+          orderBy: [
+            { role: 'asc' },        // COACH, ASSISTANT, ADMIN_TEAM, PLAYER
+            { jerseyNumber: 'asc' }, // luego por dorsal
+          ],
+        },
+        // ⚠️ Legacy: lo dejamos para no romper otros sitios, pero el frontend nuevo ya no lo usa
+        players: {
+          select: { id: true, name: true, lastName: true, number: true },
+        },
         members: {
           include: {
             user: {
