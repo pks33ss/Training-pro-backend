@@ -367,6 +367,7 @@ enum ClubRole {
   ADMIN_CLUB
   COACH
   ASSISTANT
+  MEMBER
 }
 
 enum TeamRole {

@@ -6,6 +6,7 @@ import * as bcrypt from 'bcrypt';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { generateUniqueUsername } from '../user/utils/generate-username'; // ✅ NUEVO
+import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member'
 
 @Injectable()
 export class AuthService {
@@ -136,17 +137,20 @@ export class AuthService {
       },
     })
 
-    if (!existingMembership) {
-      await this.prisma.teamMembership.create({
-        data: {
-          userId: user.id,
-          teamId: invitation.teamId,
-          role: invitation.role || 'PLAYER',
-          status: 'ACTIVE',
-          invitedById: invitation.invitedById,
-        },
-      })
-    }
+   if (!existingMembership) {
+  await this.prisma.teamMembership.create({
+    data: {
+      userId: user.id,
+      teamId: invitation.teamId,
+      role: invitation.role || 'PLAYER',
+      status: 'ACTIVE',
+      invitedById: invitation.invitedById,
+    },
+  })
+
+  // ✅ Asegurar que el user también es miembro del club
+  await ensureClubMemberForTeam(this.prisma, user.id, invitation.teamId)
+}
 
     // ✅ Marcar invitación como usada
     await this.prisma.pendingInvitation.update({

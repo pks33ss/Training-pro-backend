@@ -11,6 +11,7 @@ import {
   MembershipRole,
 } from './dto'
 import { notifyClubAdminOfDeparture } from './utils/notify-club-admin'
+import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member'
 
 @Injectable()
 export class MembershipsService {
@@ -158,17 +159,22 @@ export class MembershipsService {
       })
     }
 
-    return this.prisma.teamMembership.create({
-      data: {
-        userId,
-        teamId: dto.teamId,
-        role: dto.role || 'PLAYER',
-        status: 'PENDING',
-      },
-      include: {
-        team: { include: { club: true } },
-      },
-    })
+const membership = await this.prisma.teamMembership.create({
+  data: {
+    userId,
+    teamId: dto.teamId,
+    role: dto.role || 'PLAYER',
+    status: 'PENDING',
+  },
+  include: {
+    team: { include: { club: true } },
+  },
+})
+
+// ✅ Asegurar que el user también es miembro del club
+await ensureClubMemberForTeam(this.prisma, userId, dto.teamId)
+
+return membership
   }
 
   // ============================================
@@ -410,58 +416,68 @@ export class MembershipsService {
       if (existing.status === 'PENDING') {
         throw new BadRequestException('Ya tiene una solicitud pendiente')
       }
-      // Si está LEFT o INACTIVE → reactivamos
-      return this.prisma.teamMembership.update({
-        where: { id: existing.id },
-        data: {
-          status: 'ACTIVE',
-          role: dto.role || existing.role || 'PLAYER',
-          jerseyNumber: dto.jerseyNumber ?? existing.jerseyNumber,
-          position: dto.position ?? existing.position,
-          joinedAt: new Date(),
-          leftAt: null,
-          invitedById: requesterId,
-        },
-        include: {
-          user: {
-            select: {
-              id: true,
-              name: true,
-              lastName: true,
-              username: true,
-              avatar: true,
-              email: true,
-            },
-          },
-          season: true,
-        },
-      })
+// Si está LEFT o INACTIVE → reactivamos
+const membership = await this.prisma.teamMembership.update({
+  where: { id: existing.id },
+  data: {
+    status: 'ACTIVE',
+    role: dto.role || existing.role || 'PLAYER',
+    jerseyNumber: dto.jerseyNumber ?? existing.jerseyNumber,
+    position: dto.position ?? existing.position,
+    joinedAt: new Date(),
+    leftAt: null,
+    invitedById: requesterId,
+  },
+  include: {
+  user: {
+    select: {
+      id: true,
+      name: true,
+      lastName: true,
+      username: true,
+      avatar: true,
+      email: true,
+    },
+  },
+  season: true,
+},
+})
+
+// ✅ Asegurar que el user también es miembro del club
+await ensureClubMemberForTeam(this.prisma, dto.userId, teamId)
+
+return membership
     }
 
-    // 4) Crear membership directo (ACTIVE)
-    return this.prisma.teamMembership.create({
-      data: {
-        userId: dto.userId,
-        teamId,
-        role: dto.role || 'PLAYER',
-        status: 'ACTIVE',
-        jerseyNumber: dto.jerseyNumber ?? null,
-        position: dto.position ?? null,
-        invitedById: requesterId,
+// 4) Crear membership directo (ACTIVE)
+const membership = await this.prisma.teamMembership.create({
+  data: {
+    userId: dto.userId,
+    teamId,
+    role: dto.role || 'PLAYER',
+    status: 'ACTIVE',
+    jerseyNumber: dto.jerseyNumber ?? null,
+    position: dto.position ?? null,
+    invitedById: requesterId,
+  },
+  include: {
+    user: {
+      select: {
+        id: true,
+        name: true,
+        lastName: true,
+        username: true,
+        avatar: true,
+        email: true,
       },
-      include: {
-        user: {
-          select: {
-            id: true,
-            name: true,
-            lastName: true,
-            username: true,
-            avatar: true,
-            email: true,
-          },
-        },
-        season: true,
-      },
-    })
+    },
+    season: true,
+  },
+})
+
+// ✅ Asegurar que el user también es miembro del club
+await ensureClubMemberForTeam(this.prisma, dto.userId, teamId)
+
+return membership
   }
 }

@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service'
 import { generateInvitationCode } from './utils/generate-code'
 import { CreateInvitationDto } from './dto'
+import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member'
 
 const INVITATION_EXPIRY_DAYS = 7
 
@@ -190,17 +191,19 @@ export class InvitationsService {
     })
 
     if (!existingMembership) {
-      await this.prisma.teamMembership.create({
-        data: {
-          userId,
-          teamId: invitation.teamId,
-          role: invitation.role,
-          status: 'ACTIVE',
-          invitedById: invitation.invitedById,
-        },
-      })
-    }
+  await this.prisma.teamMembership.create({
+    data: {
+      userId,
+      teamId: invitation.teamId,
+      role: invitation.role,
+      status: 'ACTIVE',
+      invitedById: invitation.invitedById,
+    },
+  })
 
+  // ✅ Asegurar que el user también es miembro del club
+  await ensureClubMemberForTeam(this.prisma, userId, invitation.teamId)
+}
     // Marcar la invitación como usada
     return this.prisma.pendingInvitation.update({
       where: { id: invitation.id },

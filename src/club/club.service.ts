@@ -80,55 +80,112 @@ export class ClubService {
     })
   }
 
-  // Si no, solo los clubs donde es miembro
-  const clubMembers = await this.prisma.clubMember.findMany({
-    where: {
-      userId: userId,
-      isActive: true,
-    },
-    include: {
-      club: {
-        include: {
-          members: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  lastName: true,
-                  email: true,
-                },
+// Si no, los clubs donde es miembro (ClubMember) O tiene algún TeamMembership
+const clubMembers = await this.prisma.clubMember.findMany({
+  where: {
+    userId: userId,
+    isActive: true,
+  },
+  include: {
+    club: {
+      include: {
+        members: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                lastName: true,
+                email: true,
               },
             },
           },
-          teams: {
-            select: {
-              id: true,
-              name: true,
-              category: true,
-              season: true,
+        },
+        teams: {
+          select: {
+            id: true,
+            name: true,
+            category: true,
+            season: true,
+          },
+        },
+      },
+    },
+  },
+})
+
+// Clubs adicionales vía TeamMembership (por si no está como ClubMember)
+const memberships = await this.prisma.teamMembership.findMany({
+  where: {
+    userId,
+    status: 'ACTIVE',
+  },
+  include: {
+    team: {
+      include: {
+        club: {
+          include: {
+            members: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    lastName: true,
+                    email: true,
+                  },
+                },
+              },
+            },
+            teams: {
+              select: {
+                id: true,
+                name: true,
+                category: true,
+                season: true,
+              },
             },
           },
         },
       },
     },
-  })
+  },
+})
 
-  return clubMembers.map(cm => cm.club)
+// Merge y deduplicar por club.id
+const clubMap = new Map<string, any>()
+for (const cm of clubMembers) clubMap.set(cm.club.id, cm.club)
+for (const m of memberships) {
+  const club = m.team.club
+  if (!clubMap.has(club.id)) clubMap.set(club.id, club)
+}
+
+return Array.from(clubMap.values())
 }
 
   async findOne(userId: string, clubId: string) {
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        isActive: true,
-      },
-    });
+const member = await this.prisma.clubMember.findFirst({
+  where: {
+    userId: userId,
+    clubId: clubId,
+    isActive: true,
+  },
+});
 
-    if (!member) {
-      throw new ForbiddenException('No tienes acceso a este club');
-    }
+// Si no es ClubMember, comprobar si tiene TeamMembership activa en algún equipo del club
+if (!member) {
+  const hasMembership = await this.prisma.teamMembership.findFirst({
+    where: {
+      userId,
+      status: 'ACTIVE',
+      team: { clubId },
+    },
+  });
+
+  if (!hasMembership) {
+    throw new ForbiddenException('No tienes acceso a este club');
+  }
+}
 
     const club = await this.prisma.club.findUnique({
       where: { id: clubId },
