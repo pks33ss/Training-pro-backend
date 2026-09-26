@@ -5,7 +5,7 @@ import { UserModule } from './user/user.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ClubModule } from './club/club.module';
 import { TeamModule } from './team/team.module';
-import { PlayerModule } from './player/player.module';
+
 import { SessionModule } from './session/session.module'; // ✅ UNA SOLA VEZ
 import { AttendanceModule } from './attendance/attendance.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
@@ -29,7 +29,7 @@ import { TutorRelationshipsModule } from './tutor-relationships/tutor-relationsh
     UserModule,
     ClubModule,
     TeamModule,
-    PlayerModule,
+   
     SessionModule,
     CalendarModule,
     FavoritesModule, 

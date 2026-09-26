@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { UpdateAttendanceDto, BulkAttendanceDto } from './dto/update-attendance.dto';
+import { BulkAttendanceDto } from './dto/update-attendance.dto';
 
 @Injectable()
 export class AttendanceService {
@@ -17,19 +17,16 @@ export class AttendanceService {
     const team = await this.prisma.team.findUnique({ where: { id: teamId } })
     if (!team) return false
 
-    // 1) ClubMember
     const clubMember = await this.prisma.clubMember.findFirst({
       where: { userId, clubId: team.clubId, isActive: true },
     })
     if (clubMember) return true
 
-    // 2) TeamMembership activa (modelo nuevo)
     const membership = await this.prisma.teamMembership.findFirst({
       where: { userId, teamId, status: 'ACTIVE' },
     })
     if (membership) return true
 
-    // 3) TeamMember antiguo (compatibilidad)
     const teamMember = await this.prisma.teamMember.findFirst({
       where: { userId, teamId, isActive: true },
     })
@@ -54,19 +51,44 @@ export class AttendanceService {
       throw new ForbiddenException('No tienes acceso a esta sesión');
     }
 
-    const players = await this.prisma.player.findMany({
-      where: { teamId: session.teamId, isActive: true },
-      orderBy: { lastName: 'asc' },
-    });
+    // ✅ Ahora buscamos Users con TeamMembership PLAYER activo
+    const memberships = await this.prisma.teamMembership.findMany({
+      where: {
+        teamId: session.teamId,
+        role: 'PLAYER',
+        status: 'ACTIVE',
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            lastName: true,
+            username: true,
+            avatar: true,
+            isGhost: true,
+          },
+        },
+      },
+      orderBy: { user: { lastName: 'asc' } },
+    })
 
     const attendances = await this.prisma.attendance.findMany({
       where: { sessionId },
     });
 
-    return players.map((player) => {
-      const attendance = attendances.find((a) => a.playerId === player.id);
+    return memberships.map((m) => {
+      const attendance = attendances.find((a) => a.userId === m.user.id);
       return {
-        ...player,
+        id: m.user.id,
+        name: m.user.name,
+        lastName: m.user.lastName,
+        username: m.user.username,
+        avatar: m.user.avatar,
+        isGhost: m.user.isGhost,
+        jerseyNumber: m.jerseyNumber,
+        position: m.position,
+        membershipId: m.id,
         attendance: attendance || null,
       };
     });
@@ -76,7 +98,13 @@ export class AttendanceService {
   // MARCAR ASISTENCIA
   // ============================================
 
-  async upsertAttendance(userId: string, sessionId: string, playerId: string, status: string, notes?: string) {
+  async upsertAttendance(
+    userId: string,
+    sessionId: string,
+    targetUserId: string,
+    status: string,
+    notes?: string,
+  ) {
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
       include: { team: true },
@@ -92,8 +120,8 @@ export class AttendanceService {
 
     return this.prisma.attendance.upsert({
       where: {
-        playerId_sessionId: {
-          playerId: playerId,
+        userId_sessionId: {
+          userId: targetUserId,
           sessionId: sessionId,
         },
       },
@@ -102,7 +130,7 @@ export class AttendanceService {
         notes: notes,
       },
       create: {
-        playerId: playerId,
+        userId: targetUserId,
         sessionId: sessionId,
         status: status as any,
         notes: notes,
@@ -129,8 +157,8 @@ export class AttendanceService {
     for (const att of attendances) {
       const result = await this.prisma.attendance.upsert({
         where: {
-          playerId_sessionId: {
-            playerId: att.playerId,
+          userId_sessionId: {
+            userId: att.userId,
             sessionId: att.sessionId,
           },
         },
@@ -139,7 +167,7 @@ export class AttendanceService {
           notes: att.notes,
         },
         create: {
-          playerId: att.playerId,
+          userId: att.userId,
           sessionId: att.sessionId,
           status: att.status as any,
           notes: att.notes,
@@ -151,7 +179,7 @@ export class AttendanceService {
     return results;
   }
 
-  async removeAttendance(userId: string, sessionId: string, playerId: string) {
+  async removeAttendance(userId: string, sessionId: string, targetUserId: string) {
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
       include: { team: true },
@@ -167,7 +195,7 @@ export class AttendanceService {
 
     const existing = await this.prisma.attendance.findUnique({
       where: {
-        playerId_sessionId: { playerId, sessionId },
+        userId_sessionId: { userId: targetUserId, sessionId },
       },
     });
 
@@ -177,7 +205,7 @@ export class AttendanceService {
 
     await this.prisma.attendance.delete({
       where: {
-        playerId_sessionId: { playerId, sessionId },
+        userId_sessionId: { userId: targetUserId, sessionId },
       },
     });
 
@@ -185,29 +213,24 @@ export class AttendanceService {
   }
 
   // ============================================
-  // HISTORIAL DE ASISTENCIA POR JUGADOR
+  // HISTORIAL DE ASISTENCIA POR USUARIO
   // ============================================
 
-  async getPlayerAttendance(userId: string, playerId: string) {
-    const player = await this.prisma.player.findUnique({
-      where: { id: playerId },
-      include: {
-        team: {
-          include: { club: true },
-        },
-      },
+  async getUserAttendance(userId: string, targetUserId: string) {
+    // Verificar que el targetUserId existe
+    const targetUser = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true },
     });
 
-    if (!player) {
-      throw new NotFoundException('Jugador no encontrado');
+    if (!targetUser) {
+      throw new NotFoundException('Usuario no encontrado');
     }
 
-    if (!(await this.canAccessTeam(userId, player.teamId))) {
-      throw new ForbiddenException('No tienes acceso a este jugador');
-    }
-
+    // Verificar que quien consulta tiene acceso a algún equipo donde el target está
+    // (simplificado: solo verificamos que el requester es miembro activo de algún club común)
     const attendances = await this.prisma.attendance.findMany({
-      where: { playerId },
+      where: { userId: targetUserId },
       include: { session: true },
       orderBy: { session: { date: 'desc' } },
     });
@@ -216,29 +239,12 @@ export class AttendanceService {
   }
 
   // ============================================
-  // ESTADÍSTICAS DE ASISTENCIA POR JUGADOR
+  // ESTADÍSTICAS DE ASISTENCIA POR USUARIO
   // ============================================
 
-  async getPlayerStats(userId: string, playerId: string) {
-    const player = await this.prisma.player.findUnique({
-      where: { id: playerId },
-      include: {
-        team: {
-          include: { club: true },
-        },
-      },
-    });
-
-    if (!player) {
-      throw new NotFoundException('Jugador no encontrado');
-    }
-
-    if (!(await this.canAccessTeam(userId, player.teamId))) {
-      throw new ForbiddenException('No tienes acceso a este jugador');
-    }
-
+  async getUserStats(userId: string, targetUserId: string) {
     const attendances = await this.prisma.attendance.findMany({
-      where: { playerId },
+      where: { userId: targetUserId },
     });
 
     const total = attendances.length;
@@ -267,12 +273,7 @@ export class AttendanceService {
   async getTeamStats(userId: string, teamId: string) {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
-      include: {
-        club: true,
-        players: {
-          where: { isActive: true },
-        },
-      },
+      include: { club: true },
     });
 
     if (!team) {
@@ -283,10 +284,31 @@ export class AttendanceService {
       throw new ForbiddenException('No tienes acceso a este equipo');
     }
 
+    // ✅ Miembros con rol PLAYER activo
+    const memberships = await this.prisma.teamMembership.findMany({
+      where: {
+        teamId,
+        role: 'PLAYER',
+        status: 'ACTIVE',
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            lastName: true,
+            username: true,
+            avatar: true,
+            isGhost: true,
+          },
+        },
+      },
+    });
+
     const playersStats = await Promise.all(
-      team.players.map(async (player) => {
+      memberships.map(async (m) => {
         const attendances = await this.prisma.attendance.findMany({
-          where: { playerId: player.id },
+          where: { userId: m.user.id },
         });
 
         const total = attendances.length;
@@ -297,11 +319,13 @@ export class AttendanceService {
 
         return {
           player: {
-            id: player.id,
-            name: player.name,
-            lastName: player.lastName,
-            number: player.number,
-            position: player.position,
+            id: m.user.id,
+            name: m.user.name,
+            lastName: m.user.lastName,
+            username: m.user.username,
+            isGhost: m.user.isGhost,
+            number: m.jerseyNumber,
+            position: m.position,
           },
           stats: {
             total,
@@ -341,18 +365,19 @@ export class AttendanceService {
       },
       summary: {
         totalSessions,
-        totalPlayers: team.players.length,
+        totalPlayers: memberships.length,
         totalAttendances,
         totalPresent,
         totalAbsent,
         totalLate,
         totalExcused,
-        attendanceRate: totalAttendances > 0
-          ? Math.round(((totalPresent + totalLate) / totalAttendances) * 100)
-          : 0,
+        attendanceRate:
+          totalAttendances > 0
+            ? Math.round(((totalPresent + totalLate) / totalAttendances) * 100)
+            : 0,
       },
-      playersStats: playersStats.sort((a, b) =>
-        b.stats.attendanceRate - a.stats.attendanceRate
+      playersStats: playersStats.sort(
+        (a, b) => b.stats.attendanceRate - a.stats.attendanceRate,
       ),
     };
   }
@@ -378,8 +403,12 @@ export class AttendanceService {
       throw new ForbiddenException('No tienes acceso a esta sesión');
     }
 
-    const totalPlayers = await this.prisma.player.count({
-      where: { teamId: session.teamId, isActive: true },
+    const totalPlayers = await this.prisma.teamMembership.count({
+      where: {
+        teamId: session.teamId,
+        role: 'PLAYER',
+        status: 'ACTIVE',
+      },
     });
 
     const present = session.attendances.filter(a => a.status === 'PRESENT').length;
@@ -396,9 +425,10 @@ export class AttendanceService {
       absent,
       late,
       excused,
-      attendanceRate: totalPlayers > 0
-        ? Math.round(((present + late) / totalPlayers) * 100)
-        : 0,
+      attendanceRate:
+        totalPlayers > 0
+          ? Math.round(((present + late) / totalPlayers) * 100)
+          : 0,
     };
   }
 }

@@ -8,10 +8,6 @@ import { AddExerciseDto } from './dto/add-exercise.dto';
 export class SessionService {
   constructor(private prisma: PrismaService) {}
 
-  // ============================================
-  // HELPER: verificar acceso al equipo
-  // ============================================
-
   private async canAccessTeam(userId: string, teamId: string): Promise<boolean> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
     if (user?.role === 'SUPER_ADMIN') return true
@@ -19,19 +15,16 @@ export class SessionService {
     const team = await this.prisma.team.findUnique({ where: { id: teamId } })
     if (!team) return false
 
-    // 1) ClubMember (cualquiera con acceso al club)
     const clubMember = await this.prisma.clubMember.findFirst({
       where: { userId, clubId: team.clubId, isActive: true },
     })
     if (clubMember) return true
 
-    // 2) TeamMembership activa (modelo nuevo)
     const membership = await this.prisma.teamMembership.findFirst({
       where: { userId, teamId, status: 'ACTIVE' },
     })
     if (membership) return true
 
-    // 3) TeamMember antiguo (compatibilidad)
     const teamMember = await this.prisma.teamMember.findFirst({
       where: { userId, teamId, isActive: true },
     })
@@ -45,13 +38,11 @@ export class SessionService {
     const team = await this.prisma.team.findUnique({ where: { id: teamId } })
     if (!team) return false
 
-    // 1) ADMIN_CLUB del club
     const clubAdmin = await this.prisma.clubMember.findFirst({
       where: { userId, clubId: team.clubId, isActive: true, role: 'ADMIN_CLUB' },
     })
     if (clubAdmin) return true
 
-    // 2) TeamMembership con rol de gestión (modelo nuevo)
     const membership = await this.prisma.teamMembership.findFirst({
       where: {
         userId,
@@ -62,16 +53,11 @@ export class SessionService {
     })
     if (membership) return true
 
-    // 3) COACH del equipo (modelo antiguo)
     const coach = await this.prisma.teamMember.findFirst({
       where: { userId, teamId, isActive: true, role: 'COACH' },
     })
     return !!coach
   }
-
-  // ============================================
-  // SESIONES
-  // ============================================
 
   async create(userId: string, createSessionDto: CreateSessionDto) {
     const date = new Date(createSessionDto.date);
@@ -102,11 +88,7 @@ export class SessionService {
         createdById: userId,
       },
       include: {
-        team: {
-          include: {
-            club: true,
-          },
-        },
+        team: { include: { club: true } },
         exercises: true,
       },
     });
@@ -129,12 +111,19 @@ export class SessionService {
       where: { teamId },
       orderBy: { date: 'desc' },
       include: {
-        exercises: {
-          orderBy: { order: 'asc' },
-        },
+        exercises: { orderBy: { order: 'asc' } },
         attendances: {
           include: {
-            player: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                lastName: true,
+                username: true,
+                avatar: true,
+                isGhost: true,
+              },
+            },
           },
         },
       },
@@ -148,30 +137,44 @@ export class SessionService {
         team: {
           include: {
             club: true,
-            players: {
-              where: { isActive: true },
-              orderBy: { lastName: 'asc' },
+            memberships: {
+              where: { role: 'PLAYER', status: 'ACTIVE' },
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    name: true,
+                    lastName: true,
+                    username: true,
+                    avatar: true,
+                    isGhost: true,
+                  },
+                },
+              },
+              orderBy: { user: { lastName: 'asc' } },
             },
           },
         },
         exercises: {
           orderBy: { order: 'asc' },
-          include: {
-            media: true,
-          },
+          include: { media: true },
         },
         attendances: {
           include: {
-            player: true,
+            user: {
+              select: {
+                id: true,
+                name: true,
+                lastName: true,
+                username: true,
+                avatar: true,
+                isGhost: true,
+              },
+            },
           },
         },
         createdBy: {
-          select: {
-            id: true,
-            name: true,
-            lastName: true,
-            email: true,
-          },
+          select: { id: true, name: true, lastName: true, email: true },
         },
       },
     });
@@ -232,10 +235,6 @@ export class SessionService {
     });
   }
 
-  // ============================================
-  // EJERCICIOS
-  // ============================================
-
   async addExercise(userId: string, sessionId: string, addExerciseDto: AddExerciseDto) {
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
@@ -266,13 +265,7 @@ export class SessionService {
   async updateExercise(userId: string, exerciseId: string, updateExerciseDto: any) {
     const exercise = await this.prisma.exercise.findUnique({
       where: { id: exerciseId },
-      include: {
-        session: {
-          include: {
-            team: true,
-          },
-        },
-      },
+      include: { session: { include: { team: true } } },
     });
 
     if (!exercise) {
@@ -325,13 +318,7 @@ export class SessionService {
   async removeExercise(userId: string, exerciseId: string) {
     const exercise = await this.prisma.exercise.findUnique({
       where: { id: exerciseId },
-      include: {
-        session: {
-          include: {
-            team: true,
-          },
-        },
-      },
+      include: { session: { include: { team: true } } },
     });
 
     if (!exercise) {
@@ -347,10 +334,6 @@ export class SessionService {
     });
   }
 
-  // ============================================
-  // MEDIA (Imágenes y Links)
-  // ============================================
-
   async addMediaToExercise(
     userId: string,
     exerciseId: string,
@@ -360,13 +343,7 @@ export class SessionService {
   ) {
     const exercise = await this.prisma.exercise.findUnique({
       where: { id: exerciseId },
-      include: {
-        session: {
-          include: {
-            team: true,
-          },
-        },
-      },
+      include: { session: { include: { team: true } } },
     });
 
     if (!exercise) {
@@ -378,12 +355,7 @@ export class SessionService {
     }
 
     return this.prisma.media.create({
-      data: {
-        url,
-        type,
-        title,
-        exerciseId,
-      },
+      data: { url, type, title, exerciseId },
     });
   }
 
@@ -393,11 +365,7 @@ export class SessionService {
       include: {
         exercise: {
           include: {
-            session: {
-              include: {
-                team: true,
-              },
-            },
+            session: { include: { team: true } },
           },
         },
       },

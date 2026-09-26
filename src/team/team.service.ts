@@ -62,8 +62,10 @@ export class TeamService {
       return this.prisma.team.findMany({
         where: { clubId },
         include: {
-          players: {
-            select: { id: true, name: true, lastName: true, number: true },
+          // ✅ NUEVO: contador de jugadores reales
+          memberships: {
+            where: { role: 'PLAYER', status: 'ACTIVE' },
+            select: { id: true },
           },
           members: {
             include: {
@@ -100,8 +102,10 @@ export class TeamService {
     return this.prisma.team.findMany({
       where: { clubId, id: { in: teamIds } },
       include: {
-        players: {
-          select: { id: true, name: true, lastName: true, number: true },
+        // ✅ NUEVO: contador de jugadores reales
+        memberships: {
+          where: { role: 'PLAYER', status: 'ACTIVE' },
+          select: { id: true },
         },
         members: {
           include: {
@@ -137,15 +141,16 @@ export class TeamService {
       return this.prisma.team.findMany({
         where: { clubId },
         include: {
+          memberships: {
+            where: { role: 'PLAYER', status: 'ACTIVE' },
+            select: { id: true },
+          },
           members: {
             include: {
               user: {
                 select: { id: true, name: true, lastName: true, email: true },
               },
             },
-          },
-          players: {
-            select: { id: true, name: true, lastName: true },
           },
         },
         orderBy: { name: 'asc' },
@@ -176,6 +181,11 @@ export class TeamService {
     return this.prisma.team.findMany({
       where: { clubId, id: { in: teamIds } },
       include: {
+        // ✅ NUEVO: contador de jugadores reales
+        memberships: {
+          where: { role: 'PLAYER', status: 'ACTIVE' },
+          select: { id: true },
+        },
         members: {
           include: {
             user: {
@@ -183,16 +193,13 @@ export class TeamService {
             },
           },
         },
-        players: {
-          select: { id: true, name: true, lastName: true },
-        },
       },
       orderBy: { name: 'asc' },
     })
   }
 
   // ============================================
-  // OBTENER UN EQUIPO CON SUS MIEMBROS (modelo nuevo)
+  // OBTENER UN EQUIPO CON SUS MIEMBROS
   // ============================================
 
   async findOne(userId: string, teamId: string) {
@@ -200,11 +207,8 @@ export class TeamService {
       where: { id: teamId },
       include: {
         club: true,
-        // ✅ Modelo NUEVO: todos los miembros activos
         memberships: {
-          where: {
-            status: 'ACTIVE',
-          },
+          where: { status: 'ACTIVE' },
           include: {
             user: {
               select: {
@@ -221,14 +225,7 @@ export class TeamService {
               select: { id: true, name: true, color: true },
             },
           },
-          orderBy: [
-            { role: 'asc' },        // COACH, ASSISTANT, ADMIN_TEAM, PLAYER
-            { jerseyNumber: 'asc' }, // luego por dorsal
-          ],
-        },
-        // ⚠️ Legacy: lo dejamos para no romper otros sitios, pero el frontend nuevo ya no lo usa
-        players: {
-          select: { id: true, name: true, lastName: true, number: true },
+          orderBy: [{ role: 'asc' }, { jerseyNumber: 'asc' }],
         },
         members: {
           include: {
@@ -261,14 +258,12 @@ export class TeamService {
 
     if (isClubAdmin) return team
 
-    // TeamMembership activa
     const membership = await this.prisma.teamMembership.findFirst({
       where: { userId, teamId, status: 'ACTIVE' },
     })
 
     if (membership) return team
 
-    // TeamMember antiguo
     const legacyMember = await this.prisma.teamMember.findFirst({
       where: { userId, teamId, isActive: true },
     })
@@ -354,7 +349,7 @@ export class TeamService {
   // ============================================
   // GESTIÓN DE MIEMBROS (legacy — sigue usando TeamMember antiguo)
   // ============================================
-  // ⚠️ Estos métodos se eliminarán en Fase 5 cuando TeamMember desaparezca.
+  // ⚠️ Estos métodos se eliminarán cuando TeamMember desaparezca.
   // La gestión nueva de miembros vive en memberships.service.ts.
 
   async inviteMember(userId: string, teamId: string, email: string, role: string) {

@@ -116,6 +116,7 @@ export class MembershipsService {
             username: true,
             avatar: true,
             email: true,
+            isGhost: true,
           },
         },
         season: true,
@@ -198,7 +199,7 @@ return membership
       data: { status: 'ACTIVE', joinedAt: new Date() },
       include: {
         user: {
-          select: { id: true, name: true, lastName: true, username: true },
+          select: { id: true, name: true, lastName: true, username: true, isGhost: true },
         },
       },
     })
@@ -370,7 +371,7 @@ return membership
       data: dto,
       include: {
         user: {
-          select: { id: true, name: true, lastName: true, username: true },
+          select: { id: true, name: true, lastName: true, username: true, isGhost: true },
         },
       },
     })
@@ -437,6 +438,7 @@ const membership = await this.prisma.teamMembership.update({
       username: true,
       avatar: true,
       email: true,
+      isGhost: true,
     },
   },
   season: true,
@@ -469,6 +471,7 @@ const membership = await this.prisma.teamMembership.create({
         username: true,
         avatar: true,
         email: true,
+        isGhost: true,
       },
     },
     season: true,

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Request, UseGuards } from '@nestjs/common';
 import { AttendanceService } from './attendance.service';
 import { UpdateAttendanceDto, BulkAttendanceDto } from './dto/update-attendance.dto';
 import { AuthGuard } from '../auth/auth.guard';
@@ -22,17 +22,18 @@ export class AttendanceController {
     return this.attendanceService.getSessionStats(req.user.id, sessionId);
   }
 
-  @Post('session/:sessionId/player/:playerId')
+  // ✅ Cambiado: playerId → userId en las rutas
+  @Post('session/:sessionId/user/:userId')
   upsertAttendance(
     @Request() req,
     @Param('sessionId') sessionId: string,
-    @Param('playerId') playerId: string,
+    @Param('userId') targetUserId: string,
     @Body() updateAttendanceDto: UpdateAttendanceDto,
   ) {
     return this.attendanceService.upsertAttendance(
       req.user.id,
       sessionId,
-      playerId,
+      targetUserId,
       updateAttendanceDto.status,
       updateAttendanceDto.notes,
     );
@@ -47,27 +48,28 @@ export class AttendanceController {
     return this.attendanceService.bulkUpdate(req.user.id, sessionId, bulkAttendanceDto);
   }
 
-  @Delete('session/:sessionId/player/:playerId')
+  @Delete('session/:sessionId/user/:userId')
   removeAttendance(
     @Request() req,
     @Param('sessionId') sessionId: string,
-    @Param('playerId') playerId: string,
+    @Param('userId') targetUserId: string,
   ) {
-    return this.attendanceService.removeAttendance(req.user.id, sessionId, playerId);
+    return this.attendanceService.removeAttendance(req.user.id, sessionId, targetUserId);
   }
 
   // ============================================
   // HISTORIAL POR JUGADOR
   // ============================================
 
-  @Get('player/:playerId')
-  getPlayerAttendance(@Request() req, @Param('playerId') playerId: string) {
-    return this.attendanceService.getPlayerAttendance(req.user.id, playerId);
+  // ✅ Cambiado: /player/:playerId → /user/:userId
+  @Get('user/:userId')
+  getUserAttendance(@Request() req, @Param('userId') targetUserId: string) {
+    return this.attendanceService.getUserAttendance(req.user.id, targetUserId);
   }
 
-  @Get('player/:playerId/stats')
-  getPlayerStats(@Request() req, @Param('playerId') playerId: string) {
-    return this.attendanceService.getPlayerStats(req.user.id, playerId);
+  @Get('user/:userId/stats')
+  getUserStats(@Request() req, @Param('userId') targetUserId: string) {
+    return this.attendanceService.getUserStats(req.user.id, targetUserId);
   }
 
   // ============================================

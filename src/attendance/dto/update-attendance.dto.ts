@@ -22,9 +22,10 @@ export class BulkAttendanceDto {
   @IsNotEmpty()
   sessionId: string;
 
+  // ✅ cambiado: ahora es userId en lugar de playerId
   @IsString()
   @IsNotEmpty()
-  playerId: string;
+  userId: string;
 
   @IsEnum(AttendanceStatus)
   @IsNotEmpty()

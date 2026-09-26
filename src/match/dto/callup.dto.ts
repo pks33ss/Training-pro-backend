@@ -1,7 +1,7 @@
-import { IsString, IsOptional, IsArray } from 'class-validator'
+import { IsString, IsArray } from 'class-validator'
 
 export class CreateCallupsDto {
   @IsArray()
   @IsString({ each: true })
-  playerIds: string[]
+  userIds: string[]
 }

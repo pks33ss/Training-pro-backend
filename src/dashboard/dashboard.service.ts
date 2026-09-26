@@ -1,4 +1,3 @@
-// backend/src/dashboard/dashboard.service.ts
 import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 
@@ -25,55 +24,40 @@ export class DashboardService {
     })
     if (isClubAdmin) return team
 
-// 1) TeamMembership (modelo nuevo) — cubre jugadores, coaches, etc.
-const membership = await this.prisma.teamMembership.findFirst({
-  where: {
-    userId,
-    teamId,
-    status: 'ACTIVE',
-  },
-})
-if (membership) return team
+    const membership = await this.prisma.teamMembership.findFirst({
+      where: { userId, teamId, status: 'ACTIVE' },
+    })
+    if (membership) return team
 
-// 2) TeamMember (modelo antiguo) — por compatibilidad con datos pre-migración
-const isLegacyTeamMember = await this.prisma.teamMember.findFirst({
-  where: { userId, teamId, isActive: true },
-})
-if (isLegacyTeamMember) return team
+    const teamMember = await this.prisma.teamMember.findFirst({
+      where: { userId, teamId, isActive: true },
+    })
+    if (teamMember) return team
 
-throw new ForbiddenException('No tienes acceso a este equipo')
-
+    throw new ForbiddenException('No tienes acceso a este equipo')
   }
 
   async getTeamSummary(userId: string, teamId: string) {
     const team = await this.assertTeamAccess(userId, teamId)
     const now = new Date()
 
-    // ⚠️ IMPORTANTE: el orden de esta desestructuración DEBE coincidir
-    // con el orden de las queries dentro del Promise.all
     const [
-      nextTraining,       // 1
-      nextMatch,          // 2
-      attendanceStats,    // 3
-      totalSessions,      // 4  ← session.count()
-      topPlayersRaw,      // 5
-      pendingCallupsRaw,  // 6
-      matchBalanceRaw,    // 7
+      nextTraining,
+      nextMatch,
+      attendanceStats,
+      totalSessions,
+      topPlayersRaw,
+      pendingCallupsRaw,
+      matchBalanceRaw,
     ] = await Promise.all([
-      // --- 1) Próximo entrenamiento ---
+      // 1) Próximo entrenamiento
       this.prisma.session.findFirst({
         where: { teamId, date: { gte: now } },
         orderBy: { date: 'asc' },
-        select: {
-          id: true,
-          title: true,
-          date: true,
-          duration: true,
-          location: true,
-        },
+        select: { id: true, title: true, date: true, duration: true, location: true },
       }),
 
-      // --- 2) Próximo partido ---
+      // 2) Próximo partido
       this.prisma.match.findFirst({
         where: { teamId, date: { gte: now }, status: 'SCHEDULED' },
         orderBy: { date: 'asc' },
@@ -87,24 +71,21 @@ throw new ForbiddenException('No tienes acceso a este equipo')
         },
       }),
 
-      // --- 3) Asistencia total del equipo ---
+      // 3) Asistencia total del equipo
       this.prisma.attendance.groupBy({
         by: ['status'],
         where: { session: { teamId } },
         _count: { _all: true },
       }),
 
-      // --- 4) ✅ NUEVO: total de entrenamientos del equipo ---
-      this.prisma.session.count({
-        where: { teamId },
-      }),
+      // 4) Total de entrenamientos
+      this.prisma.session.count({ where: { teamId } }),
 
-      // --- 5) Top jugadores ---
+      // 5) Top jugadores — ✅ ahora agrupamos por userId
       this.prisma.matchPlayerStats.groupBy({
-        by: ['playerId'],
+        by: ['userId'],
         where: {
-          player: { teamId },
-          match: { status: 'FINISHED' },
+          match: { teamId, status: 'FINISHED' },
         },
         _sum: { points: true, rebounds: true, assists: true },
         _count: { _all: true },
@@ -112,21 +93,17 @@ throw new ForbiddenException('No tienes acceso a este equipo')
         take: 5,
       }),
 
-      // --- 6) Convocatorias pendientes ---
+      // 6) Convocatorias pendientes
       this.prisma.matchCallup.groupBy({
         by: ['matchId'],
         where: {
           status: 'PENDING',
-          match: {
-            teamId,
-            date: { gte: now },
-            status: 'SCHEDULED',
-          },
+          match: { teamId, date: { gte: now }, status: 'SCHEDULED' },
         },
         _count: { _all: true },
       }),
 
-      // --- 7) Balance de partidos ---
+      // 7) Balance de partidos
       this.prisma.match.findMany({
         where: { teamId, status: 'FINISHED' },
         select: { teamScore: true, opponentScore: true, date: true },
@@ -159,23 +136,44 @@ throw new ForbiddenException('No tienes acceso a este equipo')
         : 0
 
     // --- Procesar top jugadores ---
-    const playerIds = topPlayersRaw.map((p) => p.playerId)
-    const players = await this.prisma.player.findMany({
-      where: { id: { in: playerIds } },
-      select: { id: true, name: true, lastName: true, number: true },
+    // ✅ Ahora buscamos Users en lugar de Players
+    const userIds = topPlayersRaw.map((p) => p.userId)
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: {
+        id: true,
+        name: true,
+        lastName: true,
+        username: true,
+        isGhost: true,
+      },
     })
-    const playersMap = new Map(players.map((p) => [p.id, p]))
+    const usersMap = new Map(users.map((u) => [u.id, u]))
+
+    // ✅ Necesitamos el jersey number del membership activo en este equipo
+    const memberships = await this.prisma.teamMembership.findMany({
+      where: {
+        userId: { in: userIds },
+        teamId,
+        role: 'PLAYER',
+        status: 'ACTIVE',
+      },
+      select: { userId: true, jerseyNumber: true },
+    })
+    const jerseyMap = new Map(memberships.map((m) => [m.userId, m.jerseyNumber]))
 
     const topPlayers = topPlayersRaw.map((row) => {
-      const player = playersMap.get(row.playerId)
+      const user = usersMap.get(row.userId)
       const games = row._count._all
       const points = row._sum.points ?? 0
       const rebounds = row._sum.rebounds ?? 0
       const assists = row._sum.assists ?? 0
       return {
-        id: row.playerId,
-        name: player ? `${player.name} ${player.lastName}` : 'Desconocido',
-        number: player?.number ?? null,
+        id: row.userId,
+        name: user ? `${user.name} ${user.lastName}` : 'Desconocido',
+        username: user?.username ?? null,
+        isGhost: user?.isGhost ?? false,
+        number: jerseyMap.get(row.userId) ?? null,
         gamesPlayed: games,
         totalPoints: points,
         totalRebounds: rebounds,
@@ -216,18 +214,14 @@ throw new ForbiddenException('No tienes acceso a este equipo')
     const wins = finished.filter((m) => (m.teamScore ?? 0) > (m.opponentScore ?? 0)).length
     const losses = finished.filter((m) => (m.teamScore ?? 0) < (m.opponentScore ?? 0)).length
     const draws = finished.length - wins - losses
-    const winRate = finished.length
-      ? Math.round((wins / finished.length) * 100)
-      : 0
-    const last5 = finished
-      .slice(0, 5)
-      .map((m) =>
-        (m.teamScore ?? 0) > (m.opponentScore ?? 0)
-          ? 'W'
-          : (m.teamScore ?? 0) < (m.opponentScore ?? 0)
-          ? 'L'
-          : 'D',
-      )
+    const winRate = finished.length ? Math.round((wins / finished.length) * 100) : 0
+    const last5 = finished.slice(0, 5).map((m) =>
+      (m.teamScore ?? 0) > (m.opponentScore ?? 0)
+        ? 'W'
+        : (m.teamScore ?? 0) < (m.opponentScore ?? 0)
+        ? 'L'
+        : 'D',
+    )
 
     return {
       team: {

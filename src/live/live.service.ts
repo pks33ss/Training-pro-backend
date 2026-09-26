@@ -46,7 +46,7 @@ export class LiveService {
     })
     if (teamMember) return match
 
-    // 4) Tutor de un jugador del equipo (modelo NUEVO: TutorRelationship)
+    // 4) Tutor de un jugador del equipo
     const isTutorNew = await this.prisma.tutorRelationship.findFirst({
       where: {
         tutorUserId: userId,
@@ -62,12 +62,6 @@ export class LiveService {
       },
     })
     if (isTutorNew) return match
-
-    // 5) Tutor antiguo (compatibilidad con PlayerTutor)
-    const isTutorLegacy = await this.prisma.playerTutor.findFirst({
-      where: { userId, player: { teamId: match.teamId, isActive: true } },
-    })
-    if (isTutorLegacy) return match
 
     throw new ForbiddenException('No tienes acceso a este partido')
   }
@@ -175,11 +169,7 @@ export class LiveService {
       },
     })
 
-    // 5) Tutores legacy (PlayerTutor)
-    const legacyTutors = await this.prisma.playerTutor.findMany({
-      where: { player: { teamId: match.teamId, isActive: true }, userId: { not: null } },
-      include: { user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } } },
-    })
+
 
     const map = new Map<string, any>()
 
@@ -232,16 +222,7 @@ export class LiveService {
       }
     }
 
-    // Tutores legacy
-    for (const t of legacyTutors) {
-      if (!t.user) continue
-      if (!map.has(t.user.id)) {
-        map.set(t.user.id, {
-          userId: t.user.id, name: t.user.name, lastName: t.user.lastName,
-          email: t.user.email, avatar: t.user.avatar, role: `Tutor · ${t.relationship}`,
-        })
-      }
-    }
+
 
     return Array.from(map.values()).sort((a, b) => a.lastName.localeCompare(b.lastName))
   }

@@ -216,7 +216,7 @@ if (!member) {
                 },
               },
             },
-            players: true,
+
           },
         },
       },

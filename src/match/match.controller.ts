@@ -11,10 +11,6 @@ import { AuthGuard } from '../auth/auth.guard'
 export class MatchController {
   constructor(private readonly matchService: MatchService) {}
 
-  // ============================================
-  // CRUD PARTIDOS
-  // ============================================
-
   @Post()
   create(@Request() req, @Body() createMatchDto: CreateMatchDto) {
     return this.matchService.create(req.user.id, createMatchDto)
@@ -45,26 +41,23 @@ export class MatchController {
     return this.matchService.remove(req.user.id, id)
   }
 
-  // ============================================
-  // RESULTADO
-  // ============================================
-
   @Put(':id/result')
   updateResult(@Request() req, @Param('id') id: string, @Body() updateResultDto: UpdateResultDto) {
     return this.matchService.updateResult(req.user.id, id, updateResultDto)
   }
 
-    // ============================================
+  // ============================================
   // CONVOCATORIA
   // ============================================
 
+  // ✅ Ahora el body usa userIds
   @Post(':id/callups')
   createCallups(
     @Request() req,
     @Param('id') id: string,
-    @Body('playerIds') playerIds: string[],
+    @Body('userIds') userIds: string[],
   ) {
-    return this.matchService.createCallups(req.user.id, id, playerIds)
+    return this.matchService.createCallups(req.user.id, id, userIds)
   }
 
   @Get(':id/callups')
@@ -72,28 +65,30 @@ export class MatchController {
     return this.matchService.getCallups(req.user.id, id)
   }
 
-@Put(':id/callups/:playerId')
-updateCallupFlags(
-  @Request() req,
-  @Param('id') id: string,
-  @Param('playerId') playerId: string,
-  @Body() flags: {
-    availableStatus?: 'PENDING' | 'YES' | 'NO'
-    calledUpStatus?: 'PENDING' | 'YES' | 'NO'
-    confirmedStatus?: 'PENDING' | 'YES' | 'NO'
-    notes?: string
-  },
-) {
-  return this.matchService.updateCallupFlags(req.user.id, id, playerId, flags)
-}
+  // ✅ Ruta :playerId → :userId
+  @Put(':id/callups/:userId')
+  updateCallupFlags(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('userId') targetUserId: string,
+    @Body()
+    flags: {
+      availableStatus?: 'PENDING' | 'YES' | 'NO'
+      calledUpStatus?: 'PENDING' | 'YES' | 'NO'
+      confirmedStatus?: 'PENDING' | 'YES' | 'NO'
+      notes?: string
+    },
+  ) {
+    return this.matchService.updateCallupFlags(req.user.id, id, targetUserId, flags)
+  }
 
-  @Delete(':id/callups/:playerId')
+  @Delete(':id/callups/:userId')
   removeCallup(
     @Request() req,
     @Param('id') id: string,
-    @Param('playerId') playerId: string,
+    @Param('userId') targetUserId: string,
   ) {
-    return this.matchService.removeCallup(req.user.id, id, playerId)
+    return this.matchService.removeCallup(req.user.id, id, targetUserId)
   }
 
   @Get(':id/candidates')
@@ -105,21 +100,23 @@ updateCallupFlags(
   // ESTADÍSTICAS
   // ============================================
 
-  @Post(':id/stats/:playerId')
+  // ✅ Ruta :playerId → :userId
+  @Post(':id/stats/:userId')
   upsertPlayerStats(
     @Request() req,
     @Param('id') id: string,
-    @Param('playerId') playerId: string,
+    @Param('userId') targetUserId: string,
     @Body() stats: UpdateStatsDto,
   ) {
-    return this.matchService.upsertPlayerStats(req.user.id, id, playerId, stats)
+    return this.matchService.upsertPlayerStats(req.user.id, id, targetUserId, stats)
   }
 
   @Get(':id/stats')
   getPlayerStats(@Request() req, @Param('id') id: string) {
     return this.matchService.getPlayerStats(req.user.id, id)
   }
-    // ============================================
+
+  // ============================================
   // LINE UP
   // ============================================
 

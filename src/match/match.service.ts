@@ -5,6 +5,16 @@ import { UpdateMatchDto } from './dto/update-match.dto'
 import { UpdateResultDto } from './dto/update-result.dto'
 import { UpdateStatsDto } from './dto/update-stats.dto'
 
+const USER_SELECT = {
+  id: true,
+  name: true,
+  lastName: true,
+  username: true,
+  avatar: true,
+  email: true,
+  isGhost: true,
+} as const
+
 @Injectable()
 export class MatchService {
   constructor(private prisma: PrismaService) {}
@@ -28,44 +38,23 @@ export class MatchService {
     const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
     if (isSuperAdmin) return team
 
-    // 1) Admin del club (acceso global al club)
     const clubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId,
-        clubId: team.clubId,
-        isActive: true,
-        role: 'ADMIN_CLUB',
-      },
+      where: { userId, clubId: team.clubId, isActive: true, role: 'ADMIN_CLUB' },
     })
     if (clubAdmin) return team
 
-    // 2) ClubMember cualquiera (coach, assistant) — compatibilidad
     const clubMember = await this.prisma.clubMember.findFirst({
-      where: {
-        userId,
-        clubId: team.clubId,
-        isActive: true,
-      },
+      where: { userId, clubId: team.clubId, isActive: true },
     })
     if (clubMember) return team
 
-    // 3) TeamMembership activa (modelo nuevo)
     const membership = await this.prisma.teamMembership.findFirst({
-      where: {
-        userId,
-        teamId,
-        status: 'ACTIVE',
-      },
+      where: { userId, teamId, status: 'ACTIVE' },
     })
     if (membership) return team
 
-    // 4) TeamMember antiguo (compatibilidad con datos pre-migración)
     const teamMember = await this.prisma.teamMember.findFirst({
-      where: {
-        userId,
-        teamId,
-        isActive: true,
-      },
+      where: { userId, teamId, isActive: true },
     })
     if (teamMember) return team
 
@@ -92,19 +81,9 @@ export class MatchService {
         createdById: userId,
       },
       include: {
-        team: {
-          include: { club: true },
-        },
-        callups: {
-          include: {
-            player: true,
-          },
-        },
-        playerStats: {
-          include: {
-            player: true,
-          },
-        },
+        team: { include: { club: true } },
+        callups: { include: { user: { select: USER_SELECT } } },
+        playerStats: { include: { user: { select: USER_SELECT } } },
       },
     })
   }
@@ -115,14 +94,9 @@ export class MatchService {
     return this.prisma.match.findMany({
       where: { teamId },
       include: {
-        team: {
-          include: { club: true },
-        },
+        team: { include: { club: true } },
         _count: {
-          select: {
-            callups: true,
-            playerStats: true,
-          },
+          select: { callups: true, playerStats: true },
         },
       },
       orderBy: { date: 'desc' },
@@ -136,20 +110,20 @@ export class MatchService {
         team: {
           include: {
             club: true,
-            players: {
-              // ✅ NUEVO: traemos todos los jugadores activos del equipo
-              where: { isActive: true },
-              orderBy: { number: 'asc' },
+            memberships: {
+              where: { role: 'PLAYER', status: 'ACTIVE' },
+              include: { user: { select: USER_SELECT } },
+              orderBy: { user: { lastName: 'asc' } },
             },
           },
         },
         callups: {
-          include: { player: true },
-          orderBy: { player: { number: 'asc' } },
+          include: { user: { select: USER_SELECT } },
+          orderBy: { user: { lastName: 'asc' } },
         },
         playerStats: {
-          include: { player: true },
-          orderBy: { player: { number: 'asc' } },
+          include: { user: { select: USER_SELECT } },
+          orderBy: { user: { lastName: 'asc' } },
         },
         createdBy: {
           select: { id: true, name: true, lastName: true },
@@ -233,7 +207,7 @@ export class MatchService {
   // CONVOCATORIA
   // ============================================
 
-  async createCallups(userId: string, matchId: string, playerIds: string[]) {
+  async createCallups(userId: string, matchId: string, userIds: string[]) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
     })
@@ -245,18 +219,18 @@ export class MatchService {
     await this.verifyTeamAccess(userId, match.teamId)
 
     const results = []
-    for (const playerId of playerIds) {
+    for (const targetUserId of userIds) {
       try {
         const callup = await this.prisma.matchCallup.upsert({
           where: {
-            matchId_playerId: { matchId, playerId },
+            matchId_userId: { matchId, userId: targetUserId },
           },
           update: {
             calledUpStatus: 'YES',
           },
           create: {
             matchId,
-            playerId,
+            userId: targetUserId,
             availableStatus: 'PENDING',
             calledUpStatus: 'YES',
             confirmedStatus: 'PENDING',
@@ -264,7 +238,7 @@ export class MatchService {
         })
         results.push(callup)
       } catch (error) {
-        console.log(`Error con jugador ${playerId}:`, error)
+        console.log(`Error con usuario ${targetUserId}:`, error)
       }
     }
 
@@ -284,20 +258,15 @@ export class MatchService {
 
     return this.prisma.matchCallup.findMany({
       where: { matchId },
-      include: {
-        player: true,
-      },
-      orderBy: {
-        player: { number: 'asc' },
-      },
+      include: { user: { select: USER_SELECT } },
+      orderBy: { user: { lastName: 'asc' } },
     })
   }
 
-  // ✅ Actualizar los 3 estados booleanos
   async updateCallupFlags(
     userId: string,
     matchId: string,
-    playerId: string,
+    targetUserId: string,
     flags: {
       availableStatus?: 'PENDING' | 'YES' | 'NO'
       calledUpStatus?: 'PENDING' | 'YES' | 'NO'
@@ -317,7 +286,7 @@ export class MatchService {
 
     return this.prisma.matchCallup.upsert({
       where: {
-        matchId_playerId: { matchId, playerId },
+        matchId_userId: { matchId, userId: targetUserId },
       },
       update: {
         ...flags,
@@ -325,7 +294,7 @@ export class MatchService {
       },
       create: {
         matchId,
-        playerId,
+        userId: targetUserId,
         availableStatus: flags.availableStatus ?? 'PENDING',
         calledUpStatus: flags.calledUpStatus ?? 'PENDING',
         confirmedStatus: flags.confirmedStatus ?? 'PENDING',
@@ -335,7 +304,7 @@ export class MatchService {
     })
   }
 
-  async removeCallup(userId: string, matchId: string, playerId: string) {
+  async removeCallup(userId: string, matchId: string, targetUserId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
     })
@@ -348,15 +317,18 @@ export class MatchService {
 
     return this.prisma.matchCallup.delete({
       where: {
-        matchId_playerId: {
+        matchId_userId: {
           matchId,
-          playerId,
+          userId: targetUserId,
         },
       },
     })
   }
 
-  // ✅ Obtener candidatos de otros equipos del club (para convocatoria)
+  // ============================================
+  // CANDIDATOS DE OTROS EQUIPOS DEL CLUB
+  // ============================================
+
   async getCandidatesFromClub(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
@@ -369,27 +341,47 @@ export class MatchService {
 
     await this.verifyTeamAccess(userId, match.teamId)
 
-    // Jugadores activos de otros equipos del mismo club
-    const players = await this.prisma.player.findMany({
+    // ✅ Ahora buscamos TeamMembership con rol PLAYER
+    const memberships = await this.prisma.teamMembership.findMany({
       where: {
-        isActive: true,
+        role: 'PLAYER',
+        status: 'ACTIVE',
         team: {
           clubId: match.team.clubId,
           id: { not: match.teamId }, // Excluir el equipo actual
         },
       },
       include: {
+        user: { select: USER_SELECT },
         team: {
           select: { id: true, name: true, category: true, sport: true },
         },
       },
       orderBy: [
         { team: { name: 'asc' } },
-        { number: 'asc' },
+        { user: { lastName: 'asc' } },
       ],
     })
 
-    return players
+    // Formato plano para que el frontend lo use igual
+    return memberships.map((m) => ({
+      id: m.user.id,                // userId (el "id" que el frontend usa como player.id)
+      userId: m.user.id,
+      name: m.user.name,
+      lastName: m.user.lastName,
+      username: m.user.username,
+      avatar: m.user.avatar,
+      isGhost: m.user.isGhost,
+      number: m.jerseyNumber,
+      position: m.position,
+      teamId: m.team.id,
+      team: {
+        id: m.team.id,
+        name: m.team.name,
+        category: m.team.category,
+        sport: m.team.sport,
+      },
+    }))
   }
 
   // ============================================
@@ -399,7 +391,7 @@ export class MatchService {
   async upsertPlayerStats(
     userId: string,
     matchId: string,
-    playerId: string,
+    targetUserId: string,
     stats: UpdateStatsDto,
   ) {
     const match = await this.prisma.match.findUnique({
@@ -414,20 +406,18 @@ export class MatchService {
 
     return this.prisma.matchPlayerStats.upsert({
       where: {
-        matchId_playerId: {
+        matchId_userId: {
           matchId,
-          playerId,
+          userId: targetUserId,
         },
       },
       update: stats,
       create: {
         matchId,
-        playerId,
+        userId: targetUserId,
         ...stats,
       },
-      include: {
-        player: true,
-      },
+      include: { user: { select: USER_SELECT } },
     })
   }
 
@@ -444,12 +434,8 @@ export class MatchService {
 
     return this.prisma.matchPlayerStats.findMany({
       where: { matchId },
-      include: {
-        player: true,
-      },
-      orderBy: {
-        player: { number: 'asc' },
-      },
+      include: { user: { select: USER_SELECT } },
+      orderBy: { user: { lastName: 'asc' } },
     })
   }
 
@@ -503,25 +489,14 @@ export class MatchService {
     await this.verifyTeamAccess(userId, teamId)
 
     const matches = await this.prisma.match.findMany({
-      where: {
-        teamId,
-        status: 'FINISHED',
-      },
-      include: {
-        playerStats: true,
-      },
+      where: { teamId, status: 'FINISHED' },
+      include: { playerStats: true },
     })
 
     const totalMatches = matches.length
-    const wins = matches.filter(m => 
-      (m.teamScore || 0) > (m.opponentScore || 0)
-    ).length
-    const losses = matches.filter(m => 
-      (m.teamScore || 0) < (m.opponentScore || 0)
-    ).length
-    const draws = matches.filter(m => 
-      (m.teamScore || 0) === (m.opponentScore || 0)
-    ).length
+    const wins = matches.filter((m) => (m.teamScore || 0) > (m.opponentScore || 0)).length
+    const losses = matches.filter((m) => (m.teamScore || 0) < (m.opponentScore || 0)).length
+    const draws = matches.filter((m) => (m.teamScore || 0) === (m.opponentScore || 0)).length
 
     const totalPoints = matches.reduce((acc, m) => acc + (m.teamScore || 0), 0)
     const totalOpponentPoints = matches.reduce((acc, m) => acc + (m.opponentScore || 0), 0)
