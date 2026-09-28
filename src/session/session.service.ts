@@ -84,7 +84,7 @@ export class SessionService {
     });
   }
 
-  async findAllByTeam(userId: string, teamId: string) {
+    async findAllByTeam(userId: string, teamId: string) {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
     });
@@ -97,7 +97,7 @@ export class SessionService {
       throw new ForbiddenException('No tienes acceso a este equipo');
     }
 
-    return this.prisma.session.findMany({
+    const sessions = await this.prisma.session.findMany({
       where: { teamId },
       orderBy: { date: 'desc' },
       include: {
@@ -118,6 +118,24 @@ export class SessionService {
         },
       },
     });
+
+    // ✅ Obtener users con membership PLAYER activa en este equipo
+    const activeMemberships = await this.prisma.teamMembership.findMany({
+      where: {
+        teamId,
+        status: 'ACTIVE',
+        roles: { some: { role: 'PLAYER' } },
+      },
+      select: { userId: true },
+    });
+    const activeUserIds = new Set(activeMemberships.map((m) => m.userId));
+
+    // ✅ Filtrar attendances a solo users que son miembros activos PLAYER
+    // (así el listado coincide con el detalle de la sesión)
+    return sessions.map((s) => ({
+      ...s,
+      attendances: s.attendances.filter((a) => activeUserIds.has(a.userId)),
+    }));
   }
 
   async findOne(userId: string, sessionId: string) {

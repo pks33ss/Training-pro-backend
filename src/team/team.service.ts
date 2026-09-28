@@ -163,7 +163,7 @@ export class TeamService {
     })
   }
 
-  async findOne(userId: string, teamId: string) {
+    async findOne(userId: string, teamId: string) {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
       include: {
@@ -207,9 +207,30 @@ export class TeamService {
 
     const currentUser = await this.prisma.user.findUnique({
       where: { id: userId },
+      select: { role: true, deletedAt: true },
     })
 
-    if (currentUser?.role === 'SUPER_ADMIN') return teamWithRoles
+    // ✅ myMembership: estado del user actual en este equipo (aunque sea ACTIVE o PENDING)
+    const myMembership = await this.prisma.teamMembership.findUnique({
+      where: { userId_teamId: { userId, teamId } },
+      include: { roles: true },
+    })
+
+    const myMembershipPayload = myMembership
+      ? {
+          id: myMembership.id,
+          status: myMembership.status,
+          roles: myMembership.roles.map((r) => r.role),
+        }
+      : null
+
+    // Verificar acceso
+    const isSuperAdmin =
+      currentUser?.role === 'SUPER_ADMIN' && currentUser?.deletedAt === null
+
+    if (isSuperAdmin) {
+      return { ...teamWithRoles, myMembership: myMembershipPayload }
+    }
 
     const isClubAdmin = await this.prisma.clubMember.findFirst({
       where: {
@@ -220,13 +241,13 @@ export class TeamService {
       },
     })
 
-    if (isClubAdmin) return teamWithRoles
+    if (isClubAdmin) {
+      return { ...teamWithRoles, myMembership: myMembershipPayload }
+    }
 
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: { userId, teamId, status: 'ACTIVE' },
-    })
-
-    if (membership) return teamWithRoles
+    if (myMembership && myMembership.status === 'ACTIVE') {
+      return { ...teamWithRoles, myMembership: myMembershipPayload }
+    }
 
     throw new ForbiddenException('No tienes acceso a este equipo')
   }
