@@ -20,7 +20,7 @@ export class SessionService {
     })
     if (clubMember) return true
 
-        const membership = await this.prisma.teamMembership.findFirst({
+    const membership = await this.prisma.teamMembership.findFirst({
       where: { userId, teamId, status: 'ACTIVE' },
     })
     return !!membership
@@ -140,6 +140,7 @@ export class SessionService {
                     isGhost: true,
                   },
                 },
+                roles: true, // ✅ AÑADIDO
               },
               orderBy: { user: { lastName: 'asc' } },
             },
@@ -177,7 +178,18 @@ export class SessionService {
       throw new ForbiddenException('No tienes acceso a esta sesión');
     }
 
-    return session;
+    // ✅ Normalizar roles de las memberships del team
+    return {
+      ...session,
+      team: {
+        ...session.team,
+        memberships: (session.team.memberships ?? []).map((m: any) => ({
+          ...m,
+          role: m.roles?.[0]?.role ?? 'PLAYER',
+          roles: (m.roles ?? []).map((r: any) => r.role),
+        })),
+      },
+    };
   }
 
   async update(userId: string, sessionId: string, updateSessionDto: UpdateSessionDto) {

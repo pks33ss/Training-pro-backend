@@ -98,18 +98,21 @@ export class MatchService {
     })
   }
 
-  async findOne(userId: string, matchId: string) {
+    async findOne(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
         team: {
           include: {
             club: true,
-memberships: {
-  where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
-  include: { user: { select: USER_SELECT } },
-  orderBy: { user: { lastName: 'asc' } },
-},
+            memberships: {
+              where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
+              include: {
+                user: { select: USER_SELECT },
+                roles: true,
+              },
+              orderBy: { user: { lastName: 'asc' } },
+            },
           },
         },
         callups: {
@@ -132,7 +135,17 @@ memberships: {
 
     await this.verifyTeamAccess(userId, match.teamId)
 
-    return match
+    return {
+      ...match,
+      team: {
+        ...match.team,
+        memberships: (match.team.memberships ?? []).map((m: any) => ({
+          ...m,
+          role: m.roles?.[0]?.role ?? 'PLAYER',
+          roles: (m.roles ?? []).map((r: any) => r.role),
+        })),
+      },
+    }
   }
 
   async update(userId: string, matchId: string, updateMatchDto: UpdateMatchDto) {
