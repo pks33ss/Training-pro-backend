@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import * as bcrypt from 'bcrypt'
 import { CreateGhostDto } from './dto/create-ghost.dto'
 import { generateUniqueUsername } from './utils/generate-username'
-import { isSuperAdmin } from '../common/access'
+import { isSuperAdmin, canEditGhost } from '../common/access'
 
 @Injectable()
 export class UserService {
@@ -748,4 +748,80 @@ export class UserService {
       isGhost: newUser.isGhost,
     }
   }
+
+   // ============================================
+  // EDITAR PERFIL DE UN GHOST
+  // ============================================
+
+  /**
+   * Editar los datos personales de un user "fantasma" (isGhost: true).
+   * Solo SUPER_ADMIN, ADMIN_CLUB del club o COACH/ASSISTANT/ADMIN_TEAM del equipo.
+   */
+  async updateGhostProfile(
+    actorId: string,
+    targetUserId: string,
+    data: {
+      name?: string
+      lastName?: string
+      phone?: string | null
+      email?: string | null
+      bio?: string | null
+    },
+  ) {
+    // 1) Verificar permisos
+    if (!(await canEditGhost(this.prisma, actorId, targetUserId))) {
+      throw new ForbiddenException(
+        'No tienes permisos para editar este usuario (o no es un jugador sin cuenta)',
+      )
+    }
+
+    // 2) Verificar que el target es ghost (por defensa en profundidad)
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, isGhost: true },
+    })
+    if (!target) {
+      throw new NotFoundException('Usuario no encontrado')
+    }
+    if (!target.isGhost) {
+      throw new ForbiddenException(
+        'Este usuario ya tiene cuenta. Solo se pueden editar los datos de jugadores sin cuenta.',
+      )
+    }
+
+    // 3) Validar email si viene
+    if (data.email !== undefined && data.email !== null && data.email !== '') {
+      const existing = await this.prisma.user.findFirst({
+        where: { email: data.email, NOT: { id: targetUserId } },
+        select: { id: true },
+      })
+      if (existing) {
+        throw new ConflictException('Ya existe otro usuario con ese email')
+      }
+    }
+
+    // 4) Actualizar
+    return this.prisma.user.update({
+      where: { id: targetUserId },
+      data: {
+        ...(data.name !== undefined && { name: data.name }),
+        ...(data.lastName !== undefined && { lastName: data.lastName }),
+        ...(data.phone !== undefined && { phone: data.phone || null }),
+        ...(data.email !== undefined && { email: data.email || null }),
+        ...(data.bio !== undefined && { bio: data.bio || null }),
+      },
+      select: {
+        id: true,
+        name: true,
+        lastName: true,
+        phone: true,
+        email: true,
+        bio: true,
+        isGhost: true,
+        username: true,
+      },
+    })
+  } 
+
+
 }

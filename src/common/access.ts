@@ -200,7 +200,6 @@ export async function canDeleteTeam(
  *   - PLAYER:                   ninguno
  *
  * Nota: además, un user siempre puede gestionarse sus propios roles.
- * Esa regla se evalúa en canAddRole/canRemoveRole, no aquí.
  */
 export async function getAddableRoles(
   prisma: PrismaLike,
@@ -234,7 +233,7 @@ export async function getAddableRoles(
 
 /**
  * Roles que este actor puede QUITAR a un miembro del equipo.
- * Misma matriz que getAddableRoles (añadir/quitar comparten permisos).
+ * Misma matriz que getAddableRoles.
  */
 export async function getRemovableRoles(
   prisma: PrismaLike,
@@ -246,8 +245,6 @@ export async function getRemovableRoles(
 
 /**
  * ¿Puede el actor añadir este rol a este target?
- *  - Auto-gestión: siempre permitido (el user se gestiona sus propios roles).
- *  - Resto: el rol debe estar en getAddableRoles(actor).
  */
 export async function canAddRole(
   prisma: PrismaLike,
@@ -263,8 +260,6 @@ export async function canAddRole(
 
 /**
  * ¿Puede el actor quitar este rol a este target?
- *  - Auto-gestión: siempre permitido.
- *  - Resto: el rol debe estar en getRemovableRoles(actor).
  */
 export async function canRemoveRole(
   prisma: PrismaLike,
@@ -280,9 +275,6 @@ export async function canRemoveRole(
 
 /**
  * Quitar miembro de un equipo (leave / status LEFT).
- * Regla (relajada): cualquier actor con getRemovableRoles no vacío
- * o el propio user puede sacar a alguien del equipo.
- * NOTA: la regla del último COACH ya NO se aplica aquí (decisión P A).
  */
 export async function canRemoveMember(
   prisma: PrismaLike,
@@ -474,4 +466,66 @@ export async function assertCanDeleteUser(
   if (!(await canDeleteUser(prisma, actorId, targetUserId))) {
     throw new ForbiddenException('No tienes permisos para eliminar este usuario')
   }
+}
+
+// ─────────────────────────────────────────────
+// GHOSTS
+// ─────────────────────────────────────────────
+
+/**
+ * ¿Puede el actor editar los datos personales de este ghost?
+ *
+ * Reglas:
+ *   - El target debe ser ghost (isGhost: true).
+ *   - SUPER_ADMIN: siempre.
+ *   - ADMIN_CLUB: si el ghost es miembro activo de su club.
+ *   - COACH/ASSISTANT/ADMIN_TEAM: si el ghost es miembro activo de uno de sus equipos.
+ */
+export async function canEditGhost(
+  prisma: PrismaLike,
+  actorId: string,
+  targetUserId: string,
+): Promise<boolean> {
+  // 1) El target debe ser ghost
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { isGhost: true, deletedAt: true },
+  })
+  if (!target || !target.isGhost || target.deletedAt) return false
+
+  // 2) SUPER_ADMIN
+  if (await isSuperAdmin(prisma, actorId)) return true
+
+  // 3) Equipos donde el target es miembro activo
+  const targetMemberships = await prisma.teamMembership.findMany({
+    where: { userId: targetUserId, status: 'ACTIVE' },
+    select: { teamId: true, team: { select: { clubId: true } } },
+  })
+  if (targetMemberships.length === 0) return false
+  const teamIds = targetMemberships.map((m) => m.teamId)
+  const clubIds = Array.from(new Set(targetMemberships.map((m) => m.team.clubId)))
+
+  // 3a) ADMIN_CLUB de alguno de esos clubes
+  const clubAdmin = await prisma.clubMember.findFirst({
+    where: {
+      userId: actorId,
+      clubId: { in: clubIds },
+      role: 'ADMIN_CLUB',
+      isActive: true,
+    },
+    select: { id: true },
+  })
+  if (clubAdmin) return true
+
+  // 3b) COACH/ASSISTANT/ADMIN_TEAM en alguno de esos equipos
+  const actorStaff = await prisma.teamMembership.findFirst({
+    where: {
+      userId: actorId,
+      teamId: { in: teamIds },
+      status: 'ACTIVE',
+      roles: { some: { role: { in: STAFF_TEAM_ROLES } } },
+    },
+    select: { id: true },
+  })
+  return !!actorStaff
 }

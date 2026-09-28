@@ -121,6 +121,8 @@ export class MembershipsService {
             avatar: true,
             email: true,
             isGhost: true,
+            phone: true,   
+            bio: true, 
           },
         },
         season: true,

@@ -99,6 +99,21 @@ export class UserController {
     return this.userService.updateRole(id, role)
   }
 
+    @Put(':id/ghost-profile')
+  async updateGhostProfile(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() data: {
+      name?: string
+      lastName?: string
+      phone?: string | null
+      email?: string | null
+      bio?: string | null
+    },
+  ) {
+    return this.userService.updateGhostProfile(req.user.id, id, data)
+  }
+
  // ✅ DESPUÉS
   @Delete(':id')
   async remove(@Request() req, @Param('id') id: string) {

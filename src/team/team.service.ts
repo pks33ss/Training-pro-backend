@@ -20,18 +20,30 @@ export class TeamService {
   // CRUD EQUIPOS
   // ============================================
 
-  async create(userId: string, createTeamDto: CreateTeamDto) {
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: createTeamDto.clubId,
-        isActive: true,
-      },
+ async create(userId: string, createTeamDto: CreateTeamDto) {
+    // ✅ SUPER_ADMIN puede crear equipos en cualquier club
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
     })
 
-    if (!member) {
-      throw new ForbiddenException('No tienes acceso a este club')
+    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
+    if (!isSuperAdmin) {
+      const member = await this.prisma.clubMember.findFirst({
+        where: {
+          userId: userId,
+          clubId: createTeamDto.clubId,
+          isActive: true,
+        },
+      })
+
+      if (!member) {
+        throw new ForbiddenException('No tienes acceso a este club')
+      }
     }
+
+   
 
     return this.prisma.team.create({
       data: {
@@ -271,26 +283,36 @@ export class TeamService {
       throw new NotFoundException('Equipo no encontrado')
     }
 
-    const isAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId,
-        clubId: team.clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
+    // ✅ SUPER_ADMIN puede editar cualquier equipo
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
     })
 
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: {
-        userId,
-        teamId,
-        status: 'ACTIVE',
-        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
-      },
-    })
+    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
 
-    if (!isAdmin && !membership) {
-      throw new ForbiddenException('No tienes permisos para editar este equipo')
+    if (!isSuperAdmin) {
+      const isAdmin = await this.prisma.clubMember.findFirst({
+        where: {
+          userId,
+          clubId: team.clubId,
+          role: 'ADMIN_CLUB',
+          isActive: true,
+        },
+      })
+
+      const membership = await this.prisma.teamMembership.findFirst({
+        where: {
+          userId,
+          teamId,
+          status: 'ACTIVE',
+          roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
+        },
+      })
+
+      if (!isAdmin && !membership) {
+        throw new ForbiddenException('No tienes permisos para editar este equipo')
+      }
     }
 
     return this.prisma.team.update({
@@ -308,17 +330,27 @@ export class TeamService {
       throw new NotFoundException('Equipo no encontrado')
     }
 
-    const isAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: team.clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
+    // ✅ SUPER_ADMIN puede eliminar cualquier equipo
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
     })
 
-    if (!isAdmin) {
-      throw new ForbiddenException('No tienes permisos para eliminar este equipo')
+    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
+
+    if (!isSuperAdmin) {
+      const isAdmin = await this.prisma.clubMember.findFirst({
+        where: {
+          userId: userId,
+          clubId: team.clubId,
+          role: 'ADMIN_CLUB',
+          isActive: true,
+        },
+      })
+
+      if (!isAdmin) {
+        throw new ForbiddenException('No tienes permisos para eliminar este equipo')
+      }
     }
 
     return this.prisma.team.delete({

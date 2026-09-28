@@ -125,17 +125,26 @@ export class ClubService {
   }
 
   async findOne(userId: string, clubId: string) {
-    const member = await this.prisma.clubMember.findFirst({
-      where: { userId: userId, clubId: clubId, isActive: true },
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
     });
 
-    if (!member) {
-      const hasMembership = await this.prisma.teamMembership.findFirst({
-        where: { userId, status: 'ACTIVE', team: { clubId } },
+    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+
+    if (!isSuperAdmin) {
+      const member = await this.prisma.clubMember.findFirst({
+        where: { userId: userId, clubId: clubId, isActive: true },
       });
 
-      if (!hasMembership) {
-        throw new ForbiddenException('No tienes acceso a este club');
+      if (!member) {
+        const hasMembership = await this.prisma.teamMembership.findFirst({
+          where: { userId, status: 'ACTIVE', team: { clubId } },
+        });
+
+        if (!hasMembership) {
+          throw new ForbiddenException('No tienes acceso a este club');
+        }
       }
     }
 
@@ -145,11 +154,26 @@ export class ClubService {
         members: {
           include: {
             user: {
-              select: { id: true, name: true, lastName: true, email: true },
+              select: {
+                id: true,
+                name: true,
+                lastName: true,
+                email: true,
+              },
             },
           },
         },
-        teams: true,
+        teams: {
+          include: {
+            memberships: {
+              where: {
+                status: 'ACTIVE',
+                roles: { some: { role: 'PLAYER' } },
+              },
+              select: { id: true },
+            },
+          },
+        },
       },
     });
 
@@ -161,17 +185,26 @@ export class ClubService {
   }
 
   async update(userId: string, clubId: string, updateClubDto: UpdateClubDto) {
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
     });
 
-    if (!member) {
-      throw new ForbiddenException('No tienes permisos para editar este club');
+    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+
+    if (!isSuperAdmin) {
+      const member = await this.prisma.clubMember.findFirst({
+        where: {
+          userId: userId,
+          clubId: clubId,
+          role: 'ADMIN_CLUB',
+          isActive: true,
+        },
+      });
+
+      if (!member) {
+        throw new ForbiddenException('No tienes permisos para editar este club');
+      }
     }
 
     return this.prisma.club.update({
@@ -181,17 +214,26 @@ export class ClubService {
   }
 
   async remove(userId: string, clubId: string) {
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
     });
 
-    if (!member) {
-      throw new ForbiddenException('No tienes permisos para eliminar este club');
+    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+
+    if (!isSuperAdmin) {
+      const member = await this.prisma.clubMember.findFirst({
+        where: {
+          userId: userId,
+          clubId: clubId,
+          role: 'ADMIN_CLUB',
+          isActive: true,
+        },
+      });
+
+      if (!member) {
+        throw new ForbiddenException('No tienes permisos para eliminar este club');
+      }
     }
 
     return this.prisma.club.delete({
@@ -343,11 +385,16 @@ export class ClubService {
       where: { id: memberId },
     })
 
-    if (memberToDelete?.userId === userId) {
+    if (!memberToDelete) {
+      throw new NotFoundException('Miembro no encontrado')
+    }
+
+    if (memberToDelete.userId === userId) {
       throw new ForbiddenException('No puedes eliminarte a ti mismo del club')
     }
 
-    if (memberToDelete?.role === 'ADMIN_CLUB') {
+    // Regla: no se puede eliminar al último ADMIN_CLUB
+    if (memberToDelete.role === 'ADMIN_CLUB') {
       const adminCount = await this.prisma.clubMember.count({
         where: {
           clubId: clubId,
@@ -361,10 +408,26 @@ export class ClubService {
       }
     }
 
+    // ✅ Expulsar del club: poner TODAS las memberships activas del user
+    //    en este club a LEFT.
+    await this.prisma.teamMembership.updateMany({
+      where: {
+        userId: memberToDelete.userId,
+        status: 'ACTIVE',
+        team: { clubId },
+      },
+      data: {
+        status: 'LEFT',
+        leftAt: new Date(),
+      },
+    })
+
+    // ✅ Borrar el ClubMember
     const deletedMember = await this.prisma.clubMember.delete({
       where: { id: memberId },
     })
 
+    // Regla: si solo queda un miembro, ese debe ser ADMIN_CLUB
     const remainingMembers = await this.prisma.clubMember.findMany({
       where: { clubId, isActive: true },
     })
@@ -469,7 +532,6 @@ export class ClubService {
       orderBy: { name: 'asc' },
     })
 
-    // ✅ Ahora buscamos TeamMembership activas (no TeamMember legacy)
     const memberMemberships = await this.prisma.teamMembership.findMany({
       where: {
         userId: member.userId,
@@ -534,7 +596,6 @@ export class ClubService {
       throw new NotFoundException('Miembro no encontrado')
     }
 
-    // ✅ Buscar membership (activa o LEFT)
     const existing = await this.prisma.teamMembership.findFirst({
       where: { userId: member.userId, teamId },
     })
@@ -543,7 +604,6 @@ export class ClubService {
       if (existing.status === 'ACTIVE') {
         throw new ForbiddenException('El miembro ya está asignado a este equipo')
       }
-      // Reactivar
       return this.prisma.teamMembership.update({
         where: { id: existing.id },
         data: {
@@ -558,7 +618,6 @@ export class ClubService {
       })
     }
 
-    // ✅ Crear nueva membership con rol COACH
     return this.prisma.teamMembership.create({
       data: {
         userId: member.userId,
@@ -597,7 +656,6 @@ export class ClubService {
       throw new NotFoundException('Miembro no encontrado')
     }
 
-    // ✅ Buscar membership activa
     const membership = await this.prisma.teamMembership.findFirst({
       where: { userId: member.userId, teamId, status: 'ACTIVE' },
     })
@@ -606,7 +664,6 @@ export class ClubService {
       throw new NotFoundException('El miembro no está asignado a este equipo')
     }
 
-    // ✅ Soft leave
     return this.prisma.teamMembership.update({
       where: { id: membership.id },
       data: {
@@ -621,17 +678,26 @@ export class ClubService {
   // ============================================
 
   async uploadLogo(userId: string, clubId: string, base64Image: string) {
-    const member = await this.prisma.clubMember.findFirst({
-      where: {
-        userId,
-        clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
 
-    if (!member) {
-      throw new ForbiddenException('No tienes permisos para editar este club')
+    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+
+    if (!isSuperAdmin) {
+      const member = await this.prisma.clubMember.findFirst({
+        where: {
+          userId,
+          clubId,
+          role: 'ADMIN_CLUB',
+          isActive: true,
+        },
+      })
+
+      if (!member) {
+        throw new ForbiddenException('No tienes permisos para editar este club')
+      }
     }
 
     const club = await this.prisma.club.findUnique({
@@ -654,11 +720,20 @@ export class ClubService {
   }
 
   async removeLogo(userId: string, clubId: string) {
-    const member = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId, role: 'ADMIN_CLUB', isActive: true },
-    })
-    if (!member) {
-      throw new ForbiddenException('No tienes permisos para editar este club')
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { role: true },
+    });
+
+    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+
+    if (!isSuperAdmin) {
+      const member = await this.prisma.clubMember.findFirst({
+        where: { userId, clubId, role: 'ADMIN_CLUB', isActive: true },
+      })
+      if (!member) {
+        throw new ForbiddenException('No tienes permisos para editar este club')
+      }
     }
 
     return this.prisma.club.update({
