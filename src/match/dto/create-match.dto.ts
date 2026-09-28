@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEnum } from 'class-validator'
+import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEnum, IsInt, Min, Max } from 'class-validator'
 
 export enum MatchType {
   LEAGUE = 'LEAGUE',
@@ -46,4 +46,16 @@ export class CreateMatchDto {
   @IsString()
   @IsNotEmpty()
   teamId: string
+
+    @IsInt()
+  @Min(1)
+  @Max(20)
+  @IsOptional()
+  subMatchesCount?: number
+
+  @IsInt()
+  @Min(1)
+  @Max(7)
+  @IsOptional()
+  setsPerSubMatch?: number
 }

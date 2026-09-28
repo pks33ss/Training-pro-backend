@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common'
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { CreateMatchDto } from './dto/create-match.dto'
 import { UpdateMatchDto } from './dto/update-match.dto'
 import { UpdateResultDto } from './dto/update-result.dto'
 import { UpdateStatsDto } from './dto/update-stats.dto'
+
 
 const USER_SELECT = {
   id: true,
@@ -60,10 +61,15 @@ export class MatchService {
   // CRUD PARTIDOS
   // ============================================
 
-  async create(userId: string, createMatchDto: CreateMatchDto) {
-    await this.verifyTeamAccess(userId, createMatchDto.teamId)
+    async create(userId: string, createMatchDto: CreateMatchDto) {
+    const team = await this.verifyTeamAccess(userId, createMatchDto.teamId)
 
-    return this.prisma.match.create({
+    const isPadel = team.sport === 'PADEL'
+    const subMatchesCount = isPadel ? (createMatchDto.subMatchesCount ?? 3) : null
+    const setsPerSubMatch = isPadel ? (createMatchDto.setsPerSubMatch ?? 3) : null
+
+    // Crear el match
+    const match = await this.prisma.match.create({
       data: {
         date: new Date(createMatchDto.date),
         opponent: createMatchDto.opponent,
@@ -74,11 +80,44 @@ export class MatchService {
         notes: createMatchDto.notes,
         teamId: createMatchDto.teamId,
         createdById: userId,
+        subMatchesCount,
+        setsPerSubMatch,
       },
+    })
+
+    // Si es pádel, crear las pistas + sets
+    if (isPadel && subMatchesCount && setsPerSubMatch) {
+      for (let i = 0; i < subMatchesCount; i++) {
+        await this.prisma.padelSubMatch.create({
+          data: {
+            matchId: match.id,
+            order: i + 1,
+            sets: {
+              create: Array.from({ length: setsPerSubMatch }, (_, j) => ({
+                order: j + 1,
+                played: false,
+              })),
+            },
+          },
+        })
+      }
+    }
+
+    // Devolver con includes
+    return this.prisma.match.findUnique({
+      where: { id: match.id },
       include: {
         team: { include: { club: true } },
         callups: { include: { user: { select: USER_SELECT } } },
         playerStats: { include: { user: { select: USER_SELECT } } },
+        padelSubMatches: {
+          orderBy: { order: 'asc' },
+          include: {
+            player1: { select: USER_SELECT },
+            player2: { select: USER_SELECT },
+            sets: { orderBy: { order: 'asc' } },
+          },
+        },
       },
     })
   }
@@ -123,8 +162,13 @@ export class MatchService {
           include: { user: { select: USER_SELECT } },
           orderBy: { user: { lastName: 'asc' } },
         },
-        createdBy: {
-          select: { id: true, name: true, lastName: true },
+         padelSubMatches: {
+          orderBy: { order: 'asc' },
+          include: {
+            player1: { select: USER_SELECT },
+            player2: { select: USER_SELECT },
+            sets: { orderBy: { order: 'asc' } },
+          },
         },
       },
     })
@@ -522,5 +566,178 @@ export class MatchService {
       avgOpponentPoints: Math.round(avgOpponentPoints * 10) / 10,
       winRate: totalMatches > 0 ? Math.round((wins / totalMatches) * 100) : 0,
     }
+  }
+
+    // ============================================
+  // PÁDEL — SUBPARTIDOS (PISTAS)
+  // ============================================
+
+  /**
+   * Añade una nueva pista al final (con sus sets vacíos).
+   */
+  async addPadelSubMatch(userId: string, matchId: string) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      include: { padelSubMatches: true },
+    })
+
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    await this.verifyTeamAccess(userId, match.teamId)
+
+    if (match.subMatchesCount == null || match.setsPerSubMatch == null) {
+      throw new BadRequestException('Este partido no es de pádel')
+    }
+
+    const nextOrder = match.padelSubMatches.length + 1
+
+    return this.prisma.padelSubMatch.create({
+      data: {
+        matchId,
+        order: nextOrder,
+        sets: {
+          create: Array.from({ length: match.setsPerSubMatch }, (_, j) => ({
+            order: j + 1,
+            played: false,
+          })),
+        },
+      },
+      include: {
+        player1: { select: USER_SELECT },
+        player2: { select: USER_SELECT },
+        sets: { orderBy: { order: 'asc' } },
+      },
+    })
+  }
+
+  /**
+   * Elimina una pista (y sus sets en cascada).
+   * Reordena las pistas restantes para que 1..N sin huecos.
+   */
+  async removePadelSubMatch(userId: string, subMatchId: string) {
+    const subMatch = await this.prisma.padelSubMatch.findUnique({
+      where: { id: subMatchId },
+      include: { match: true },
+    })
+
+    if (!subMatch) throw new NotFoundException('Pista no encontrada')
+    await this.verifyTeamAccess(userId, subMatch.match.teamId)
+
+    await this.prisma.padelSubMatch.delete({ where: { id: subMatchId } })
+
+    // Reordenar las pistas restantes
+    const remaining = await this.prisma.padelSubMatch.findMany({
+      where: { matchId: subMatch.matchId },
+      orderBy: { order: 'asc' },
+    })
+
+    for (let i = 0; i < remaining.length; i++) {
+      if (remaining[i].order !== i + 1) {
+        await this.prisma.padelSubMatch.update({
+          where: { id: remaining[i].id },
+          data: { order: i + 1 },
+        })
+      }
+    }
+
+    return { ok: true }
+  }
+
+  /**
+   * Reordena las pistas de un match según el array de ids.
+   */
+  async reorderPadelSubMatches(
+    userId: string,
+    matchId: string,
+    subMatchIds: string[],
+  ) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+    })
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    await this.verifyTeamAccess(userId, match.teamId)
+
+    await this.prisma.$transaction(
+      subMatchIds.map((id, index) =>
+        this.prisma.padelSubMatch.update({
+          where: { id },
+          data: { order: index + 1 },
+        }),
+      ),
+    )
+
+    return { ok: true }
+  }
+
+  /**
+   * Asigna (o desasigna) un jugador a una pista.
+   * playerSlot = 1 (derecha) | 2 (izquierda).
+   */
+  async updatePadelSubMatchPlayer(
+    userId: string,
+    subMatchId: string,
+    playerSlot: 1 | 2,
+    targetUserId: string | null,
+  ) {
+    const subMatch = await this.prisma.padelSubMatch.findUnique({
+      where: { id: subMatchId },
+      include: { match: true },
+    })
+
+    if (!subMatch) throw new NotFoundException('Pista no encontrada')
+    await this.verifyTeamAccess(userId, subMatch.match.teamId)
+
+    // Validar que el targetUserId está convocado (si viene)
+    if (targetUserId) {
+      const callup = await this.prisma.matchCallup.findUnique({
+        where: {
+          matchId_userId: {
+            matchId: subMatch.matchId,
+            userId: targetUserId,
+          },
+        },
+      })
+      if (!callup) {
+        throw new BadRequestException('El jugador no está convocado al partido')
+      }
+    }
+
+    return this.prisma.padelSubMatch.update({
+      where: { id: subMatchId },
+      data:
+        playerSlot === 1
+          ? { player1Id: targetUserId }
+          : { player2Id: targetUserId },
+      include: {
+        player1: { select: USER_SELECT },
+        player2: { select: USER_SELECT },
+        sets: { orderBy: { order: 'asc' } },
+      },
+    })
+  }
+
+  /**
+   * Actualiza un set concreto.
+   */
+  async updatePadelSet(
+    userId: string,
+    setId: string,
+    data: { homeScore?: number; awayScore?: number; played?: boolean },
+  ) {
+    const set = await this.prisma.padelSet.findUnique({
+      where: { id: setId },
+      include: { subMatch: { include: { match: true } } },
+    })
+
+    if (!set) throw new NotFoundException('Set no encontrado')
+    await this.verifyTeamAccess(userId, set.subMatch.match.teamId)
+
+    return this.prisma.padelSet.update({
+      where: { id: setId },
+      data: {
+        ...(data.homeScore !== undefined && { homeScore: data.homeScore }),
+        ...(data.awayScore !== undefined && { awayScore: data.awayScore }),
+        ...(data.played !== undefined && { played: data.played }),
+      },
+    })
   }
 }

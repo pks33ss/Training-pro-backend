@@ -141,4 +141,52 @@ export class MatchController {
   ) {
     return this.matchService.updateGamePlan(req.user.id, id, gamePlan)
   }
+  // ============================================
+  // PÁDEL — SUBPARTIDOS (PISTAS)
+  // ============================================
+
+  @Post(':id/padel/sub-matches')
+  addPadelSubMatch(@Request() req, @Param('id') id: string) {
+    return this.matchService.addPadelSubMatch(req.user.id, id)
+  }
+
+  @Delete('padel/sub-matches/:subMatchId')
+  removePadelSubMatch(@Request() req, @Param('subMatchId') subMatchId: string) {
+    return this.matchService.removePadelSubMatch(req.user.id, subMatchId)
+  }
+
+  @Put(':id/padel/sub-matches/reorder')
+  reorderPadelSubMatches(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('subMatchIds') subMatchIds: string[],
+  ) {
+    return this.matchService.reorderPadelSubMatches(req.user.id, id, subMatchIds)
+  }
+
+  @Put('padel/sub-matches/:subMatchId/player')
+  updatePadelSubMatchPlayer(
+    @Request() req,
+    @Param('subMatchId') subMatchId: string,
+    @Body('playerSlot') playerSlot: 1 | 2,
+    @Body('userId') targetUserId: string | null,
+  ) {
+    return this.matchService.updatePadelSubMatchPlayer(
+      req.user.id,
+      subMatchId,
+      playerSlot,
+      targetUserId,
+    )
+  }
+
+  @Put('padel/sets/:setId')
+  updatePadelSet(
+    @Request() req,
+    @Param('setId') setId: string,
+    @Body() data: { homeScore?: number; awayScore?: number; played?: boolean },
+  ) {
+    return this.matchService.updatePadelSet(req.user.id, setId, data)
+  }
+
+
 }

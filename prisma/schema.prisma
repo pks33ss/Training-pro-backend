@@ -28,6 +28,9 @@ model User {
   calendarEvents      CalendarEvent[]
   calendarInvitations CalendarInvitation[]
 
+  padelSubMatchesAsPlayer1 PadelSubMatch[] @relation("PadelSubMatchPlayer1")  // ✅ NUEVA
+  padelSubMatchesAsPlayer2 PadelSubMatch[] @relation("PadelSubMatchPlayer2")  // ✅ NUEVA
+
   createdMatches      Match[] // ✅ NUEVO
   favoriteTeams       FavoriteTeam[]
   memberships         TeamMembership[]
@@ -141,7 +144,7 @@ model PendingInvitation {
   phone       String?
   userId      String?
   teamId      String
-  role        String    @default("PLAYER")
+  role        MembershipRoleType @default(PLAYER)
   channel     String    @default("LINK") // EMAIL | WHATSAPP | LINK
   status      String    @default("PENDING") // PENDING | USED | EXPIRED | REVOKED
   sentAt      DateTime  @default(now())
@@ -399,6 +402,8 @@ model Match {
   venue       String? // Pabellón/ubicación
   competition String? // Nombre de la competición
   notes       String? // Notas adicionales
+  subMatchesCount Int?
+  setsPerSubMatch Int?
 
   // ✅ NUEVOS
   gamePlan String? // Plan de partido (markdown/texto)
@@ -417,6 +422,8 @@ model Match {
 
   callups     MatchCallup[]
   playerStats MatchPlayerStats[]
+
+   padelSubMatches PadelSubMatch[]
 
   liveStream LiveStream?
 
@@ -659,4 +666,43 @@ enum CallupFlagStatus {
   PENDING
   YES
   NO
+}
+
+
+// ============================================
+// PÁDEL — SUBPARTIDOS (PISTAS)
+// ============================================
+
+model PadelSubMatch {
+  id        String   @id @default(cuid())
+  matchId   String
+  order     Int      // 1, 2, 3… (para "Pista 1", "Pista 2"…)
+  player1Id String?  // jugador nuestro (derecha)
+  player2Id String?  // jugador nuestro (izquierda)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  match   Match       @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player1 User?       @relation("PadelSubMatchPlayer1", fields: [player1Id], references: [id], onDelete: SetNull)
+  player2 User?       @relation("PadelSubMatchPlayer2", fields: [player2Id], references: [id], onDelete: SetNull)
+  sets    PadelSet[]
+
+  @@unique([matchId, order])
+  @@index([matchId])
+}
+
+model PadelSet {
+  id         String   @id @default(cuid())
+  subMatchId String
+  order      Int      // 1, 2, 3…
+  homeScore  Int      @default(0)  // nuestro equipo
+  awayScore  Int      @default(0)  // rival
+  played     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  subMatch PadelSubMatch @relation(fields: [subMatchId], references: [id], onDelete: Cascade)
+
+  @@unique([subMatchId, order])
+  @@index([subMatchId])
 }
