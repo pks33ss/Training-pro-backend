@@ -99,12 +99,13 @@ export class UserController {
     return this.userService.updateRole(id, role)
   }
 
+ // ✅ DESPUÉS
   @Delete(':id')
   async remove(@Request() req, @Param('id') id: string) {
     if (req.user.role !== 'SUPER_ADMIN') {
       throw new ForbiddenException('Solo los super administradores pueden eliminar usuarios')
     }
-    return this.userService.remove(id)
+    return this.userService.hardDelete(id, req.user.id)
   }
     @Post(':id/reset-password')
   async resetPassword(

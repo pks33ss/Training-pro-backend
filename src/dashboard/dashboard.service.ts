@@ -29,11 +29,6 @@ export class DashboardService {
     })
     if (membership) return team
 
-    const teamMember = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true },
-    })
-    if (teamMember) return team
-
     throw new ForbiddenException('No tienes acceso a este equipo')
   }
 
@@ -155,7 +150,7 @@ export class DashboardService {
       where: {
         userId: { in: userIds },
         teamId,
-        role: 'PLAYER',
+        roles: { some: { role: 'PLAYER' } },
         status: 'ACTIVE',
       },
       select: { userId: true, jerseyNumber: true },

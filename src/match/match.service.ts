@@ -53,11 +53,6 @@ export class MatchService {
     })
     if (membership) return team
 
-    const teamMember = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true },
-    })
-    if (teamMember) return team
-
     throw new ForbiddenException('No tienes acceso a este equipo')
   }
 
@@ -110,11 +105,11 @@ export class MatchService {
         team: {
           include: {
             club: true,
-            memberships: {
-              where: { role: 'PLAYER', status: 'ACTIVE' },
-              include: { user: { select: USER_SELECT } },
-              orderBy: { user: { lastName: 'asc' } },
-            },
+memberships: {
+  where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
+  include: { user: { select: USER_SELECT } },
+  orderBy: { user: { lastName: 'asc' } },
+},
           },
         },
         callups: {
@@ -344,13 +339,13 @@ export class MatchService {
     // ✅ Ahora buscamos TeamMembership con rol PLAYER
     const memberships = await this.prisma.teamMembership.findMany({
       where: {
-        role: 'PLAYER',
-        status: 'ACTIVE',
-        team: {
-          clubId: match.team.clubId,
-          id: { not: match.teamId }, // Excluir el equipo actual
-        },
-      },
+  roles: { some: { role: 'PLAYER' } },
+  status: 'ACTIVE',
+  team: {
+    clubId: match.team.clubId,
+    id: { not: match.teamId },
+  },
+},
       include: {
         user: { select: USER_SELECT },
         team: {

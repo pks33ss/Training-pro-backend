@@ -137,18 +137,17 @@ export class AuthService {
       },
     })
 
-   if (!existingMembership) {
+  if (!existingMembership) {
   await this.prisma.teamMembership.create({
     data: {
       userId: user.id,
       teamId: invitation.teamId,
-      role: invitation.role || 'PLAYER',
+      roles: { create: [{ role: (invitation.role || 'PLAYER') as any }] },
       status: 'ACTIVE',
       invitedById: invitation.invitedById,
     },
   })
 
-  // ✅ Asegurar que el user también es miembro del club
   await ensureClubMemberForTeam(this.prisma, user.id, invitation.teamId)
 }
 

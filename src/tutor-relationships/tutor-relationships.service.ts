@@ -56,13 +56,13 @@ export class TutorRelationshipsService {
   ): Promise<boolean> {
     // Buscamos los equipos del jugador
     const memberships = await this.prisma.teamMembership.findMany({
-      where: {
-        userId: playerUserId,
-        status: 'ACTIVE',
-        role: 'PLAYER',
-      },
-      select: { teamId: true },
-    })
+  where: {
+    userId: playerUserId,
+    status: 'ACTIVE',
+    roles: { some: { role: 'PLAYER' } },
+  },
+  select: { teamId: true },
+})
 
     if (memberships.length === 0) return false
 
@@ -74,7 +74,7 @@ export class TutorRelationshipsService {
         userId,
         teamId: { in: teamIds },
         status: 'ACTIVE',
-        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
       },
     })
 
@@ -145,7 +145,7 @@ export class TutorRelationshipsService {
             avatar: true,
             isGhost: true,
             memberships: {
-              where: { status: 'ACTIVE', role: 'PLAYER' },
+              where: { status: 'ACTIVE', roles: { some: { role: 'PLAYER' } } },
               include: {
                 team: {
                   select: {

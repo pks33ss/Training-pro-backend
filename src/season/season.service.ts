@@ -37,6 +37,7 @@ export class SeasonService {
     if (clubMember) return team
 
     // 3) TeamMembership activa (modelo nuevo)
+    // 3) TeamMembership activa (modelo nuevo)
     const membership = await this.prisma.teamMembership.findFirst({
       where: {
         userId,
@@ -45,12 +46,6 @@ export class SeasonService {
       },
     })
     if (membership) return team
-
-    // 4) TeamMember antiguo (compatibilidad con datos pre-migración)
-    const teamMember = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true },
-    })
-    if (teamMember) return team
 
     throw new ForbiddenException('No tienes acceso a este equipo')
   }
@@ -69,21 +64,16 @@ export class SeasonService {
     if (adminClub) return true
 
     // 2) TeamMembership con rol de gestión (modelo nuevo)
+    // 2) TeamMembership con rol de gestión (modelo nuevo)
     const membership = await this.prisma.teamMembership.findFirst({
       where: {
         userId,
         teamId,
         status: 'ACTIVE',
-        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
       },
     })
-    if (membership) return true
-
-    // 3) COACH del equipo (modelo antiguo)
-    const coach = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true, role: 'COACH' },
-    })
-    return !!coach
+    return !!membership
   }
 
   // ============================================

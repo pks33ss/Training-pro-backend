@@ -20,13 +20,18 @@ export class TeamController {
   }
 
   @Get('club/:clubId/with-members')
-async findAllByClubWithMembers(@Request() req, @Param('clubId') clubId: string) {
-  return this.teamService.findAllByClubWithMembers(req.user.id, clubId)
-}
+  async findAllByClubWithMembers(@Request() req, @Param('clubId') clubId: string) {
+    return this.teamService.findAllByClubWithMembers(req.user.id, clubId)
+  }
 
   @Get(':id')
   findOne(@Request() req, @Param('id') id: string) {
     return this.teamService.findOne(req.user.id, id);
+  }
+
+  @Get(':id/permissions/me')
+  getMyPermissions(@Request() req, @Param('id') id: string) {
+    return this.teamService.getMyPermissions(req.user.id, id);
   }
 
   @Put(':id')
@@ -38,41 +43,4 @@ async findAllByClubWithMembers(@Request() req, @Param('clubId') clubId: string) 
   remove(@Request() req, @Param('id') id: string) {
     return this.teamService.remove(req.user.id, id);
   }
-
-
-    // ============================================
-  // GESTIÓN DE MIEMBROS
-  // ============================================
-
-  
-
-  @Post(':id/invite')
-  inviteMember(
-    @Request() req,
-    @Param('id') id: string,
-    @Body('email') email: string,
-    @Body('role') role: string,
-  ) {
-    return this.teamService.inviteMember(req.user.id, id, email, role)
-  }
-
-  @Put(':teamId/members/:memberId')
-  updateMemberRole(
-    @Request() req,
-    @Param('teamId') teamId: string,
-    @Param('memberId') memberId: string,
-    @Body('role') role: string,
-  ) {
-    return this.teamService.updateMemberRole(req.user.id, teamId, memberId, role)
-  }
-
-  @Delete(':teamId/members/:memberId')
-  removeMember(
-    @Request() req,
-    @Param('teamId') teamId: string,
-    @Param('memberId') memberId: string,
-  ) {
-    return this.teamService.removeMember(req.user.id, teamId, memberId)
-  }
-
 }

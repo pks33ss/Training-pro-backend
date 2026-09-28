@@ -2,6 +2,15 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service'
 import { CreateTeamDto } from './dto/create-team.dto'
 import { UpdateTeamDto } from './dto/update-team.dto'
+import {
+  canViewTeam,
+  canEditTeam,
+  canManageMembers,
+  canDeleteTeam,
+  canInviteToClub,
+  getRemovableRoles,
+  getAddableRoles,  
+} from '../common/access'
 
 @Injectable()
 export class TeamService {
@@ -57,62 +66,33 @@ export class TeamService {
       throw new ForbiddenException('No tienes acceso a este club')
     }
 
-    // ADMIN_CLUB ve todo el club
     if (member?.role === 'ADMIN_CLUB' || isSuperAdmin) {
       return this.prisma.team.findMany({
         where: { clubId },
         include: {
-          // ✅ NUEVO: contador de jugadores reales
           memberships: {
-            where: { role: 'PLAYER', status: 'ACTIVE' },
+            where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
             select: { id: true },
-          },
-          members: {
-            include: {
-              user: {
-                select: { id: true, name: true, lastName: true, email: true },
-              },
-            },
           },
         },
       })
     }
 
-    // COACH/ASSISTANT: solo equipos donde tiene TeamMember O TeamMembership
-    const [legacyTeamMembers, newMemberships] = await Promise.all([
-      this.prisma.teamMember.findMany({
-        where: { userId, isActive: true, team: { clubId } },
-        select: { teamId: true },
-      }),
-      this.prisma.teamMembership.findMany({
-        where: { userId, status: 'ACTIVE', team: { clubId } },
-        select: { teamId: true },
-      }),
-    ])
+    const newMemberships = await this.prisma.teamMembership.findMany({
+      where: { userId, status: 'ACTIVE', team: { clubId } },
+      select: { teamId: true },
+    })
 
-    const teamIds = Array.from(
-      new Set([
-        ...legacyTeamMembers.map((tm) => tm.teamId),
-        ...newMemberships.map((m) => m.teamId),
-      ]),
-    )
+    const teamIds = Array.from(new Set(newMemberships.map((m) => m.teamId)))
 
     if (teamIds.length === 0) return []
 
     return this.prisma.team.findMany({
       where: { clubId, id: { in: teamIds } },
       include: {
-        // ✅ NUEVO: contador de jugadores reales
         memberships: {
-          where: { role: 'PLAYER', status: 'ACTIVE' },
+          where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
           select: { id: true },
-        },
-        members: {
-          include: {
-            user: {
-              select: { id: true, name: true, lastName: true, email: true },
-            },
-          },
         },
       },
     })
@@ -142,65 +122,34 @@ export class TeamService {
         where: { clubId },
         include: {
           memberships: {
-            where: { role: 'PLAYER', status: 'ACTIVE' },
+            where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
             select: { id: true },
-          },
-          members: {
-            include: {
-              user: {
-                select: { id: true, name: true, lastName: true, email: true },
-              },
-            },
           },
         },
         orderBy: { name: 'asc' },
       })
     }
 
-    // COACH/ASSISTANT
-    const [legacyTeamMembers, newMemberships] = await Promise.all([
-      this.prisma.teamMember.findMany({
-        where: { userId, isActive: true, team: { clubId } },
-        select: { teamId: true },
-      }),
-      this.prisma.teamMembership.findMany({
-        where: { userId, status: 'ACTIVE', team: { clubId } },
-        select: { teamId: true },
-      }),
-    ])
+    const newMemberships = await this.prisma.teamMembership.findMany({
+      where: { userId, status: 'ACTIVE', team: { clubId } },
+      select: { teamId: true },
+    })
 
-    const teamIds = Array.from(
-      new Set([
-        ...legacyTeamMembers.map((tm) => tm.teamId),
-        ...newMemberships.map((m) => m.teamId),
-      ]),
-    )
+    const teamIds = Array.from(new Set(newMemberships.map((m) => m.teamId)))
 
     if (teamIds.length === 0) return []
 
     return this.prisma.team.findMany({
       where: { clubId, id: { in: teamIds } },
       include: {
-        // ✅ NUEVO: contador de jugadores reales
         memberships: {
-          where: { role: 'PLAYER', status: 'ACTIVE' },
+          where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
           select: { id: true },
-        },
-        members: {
-          include: {
-            user: {
-              select: { id: true, name: true, lastName: true, email: true },
-            },
-          },
         },
       },
       orderBy: { name: 'asc' },
     })
   }
-
-  // ============================================
-  // OBTENER UN EQUIPO CON SUS MIEMBROS
-  // ============================================
 
   async findOne(userId: string, teamId: string) {
     const team = await this.prisma.team.findUnique({
@@ -224,15 +173,9 @@ export class TeamService {
             season: {
               select: { id: true, name: true, color: true },
             },
+            roles: true,
           },
-          orderBy: [{ role: 'asc' }, { jerseyNumber: 'asc' }],
-        },
-        members: {
-          include: {
-            user: {
-              select: { id: true, name: true, lastName: true, email: true },
-            },
-          },
+          orderBy: [{ jerseyNumber: 'asc' }],
         },
       },
     })
@@ -241,11 +184,20 @@ export class TeamService {
       throw new NotFoundException('Equipo no encontrado')
     }
 
+    const teamWithRoles = {
+      ...team,
+      memberships: team.memberships.map((m: any) => ({
+        ...m,
+        role: m.roles?.[0]?.role ?? 'PLAYER',
+        roles: (m.roles ?? []).map((r: any) => r.role),
+      })),
+    }
+
     const currentUser = await this.prisma.user.findUnique({
       where: { id: userId },
     })
 
-    if (currentUser?.role === 'SUPER_ADMIN') return team
+    if (currentUser?.role === 'SUPER_ADMIN') return teamWithRoles
 
     const isClubAdmin = await this.prisma.clubMember.findFirst({
       where: {
@@ -256,22 +208,59 @@ export class TeamService {
       },
     })
 
-    if (isClubAdmin) return team
+    if (isClubAdmin) return teamWithRoles
 
     const membership = await this.prisma.teamMembership.findFirst({
       where: { userId, teamId, status: 'ACTIVE' },
     })
 
-    if (membership) return team
-
-    const legacyMember = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true },
-    })
-
-    if (legacyMember) return team
+    if (membership) return teamWithRoles
 
     throw new ForbiddenException('No tienes acceso a este equipo')
   }
+
+  // ============================================
+  // PERMISOS DEL USER ACTUAL SOBRE ESTE EQUIPO
+  // ============================================
+
+    async getMyPermissions(userId: string, teamId: string) {
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      select: { id: true, clubId: true },
+    })
+    if (!team) throw new NotFoundException('Equipo no encontrado')
+
+    const canView = await canViewTeam(this.prisma, userId, teamId)
+    if (!canView) {
+      throw new ForbiddenException('No tienes acceso a este equipo')
+    }
+
+    const [canEdit, canManage, canDelete, canInvite, removableRoles, addableRoles] =
+      await Promise.all([
+        canEditTeam(this.prisma, userId, teamId),
+        canManageMembers(this.prisma, userId, teamId),
+        canDeleteTeam(this.prisma, userId, teamId),
+        canInviteToClub(this.prisma, userId, team.clubId),
+        getRemovableRoles(this.prisma, userId, teamId),
+        getAddableRoles(this.prisma, userId, teamId),
+      ])
+
+    return {
+      teamId,
+      clubId: team.clubId,
+      canView,
+      canEdit,
+      canManage,
+      canDelete,
+      canInvite,
+      removableRoles,
+      addableRoles,
+    }
+  }
+
+  // ============================================
+  // UPDATE / REMOVE
+  // ============================================
 
   async update(userId: string, teamId: string, updateTeamDto: UpdateTeamDto) {
     const team = await this.prisma.team.findUnique({
@@ -296,20 +285,11 @@ export class TeamService {
         userId,
         teamId,
         status: 'ACTIVE',
-        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
       },
     })
 
-    const legacyCoach = await this.prisma.teamMember.findFirst({
-      where: {
-        userId,
-        teamId,
-        role: 'COACH',
-        isActive: true,
-      },
-    })
-
-    if (!isAdmin && !membership && !legacyCoach) {
+    if (!isAdmin && !membership) {
       throw new ForbiddenException('No tienes permisos para editar este equipo')
     }
 
@@ -344,300 +324,5 @@ export class TeamService {
     return this.prisma.team.delete({
       where: { id: teamId },
     })
-  }
-
-  // ============================================
-  // GESTIÓN DE MIEMBROS (legacy — sigue usando TeamMember antiguo)
-  // ============================================
-  // ⚠️ Estos métodos se eliminarán cuando TeamMember desaparezca.
-  // La gestión nueva de miembros vive en memberships.service.ts.
-
-  async inviteMember(userId: string, teamId: string, email: string, role: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-    })
-
-    if (!team) {
-      throw new NotFoundException('Equipo no encontrado')
-    }
-
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: team.clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    const isTeamCoach = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: userId,
-        teamId: teamId,
-        role: 'COACH',
-        isActive: true,
-      },
-    })
-
-    if (!isClubAdmin && !isTeamCoach && !isSuperAdmin) {
-      throw new ForbiddenException('No tienes permisos para invitar miembros a este equipo')
-    }
-
-    const userToInvite = await this.prisma.user.findUnique({
-      where: { email },
-    })
-
-    if (!userToInvite) {
-      throw new NotFoundException('Usuario no encontrado. Primero debe registrarse en la app.')
-    }
-
-    const existingClubMember = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userToInvite.id,
-        clubId: team.clubId,
-      },
-    })
-
-    if (!existingClubMember) {
-      await this.prisma.clubMember.create({
-        data: {
-          userId: userToInvite.id,
-          clubId: team.clubId,
-          role: 'COACH',
-        },
-      })
-    } else if (!existingClubMember.isActive) {
-      await this.prisma.clubMember.update({
-        where: { id: existingClubMember.id },
-        data: { isActive: true },
-      })
-    }
-
-    const existingMember = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: userToInvite.id,
-        teamId: teamId,
-      },
-    })
-
-    if (existingMember) {
-      if (!existingMember.isActive) {
-        return this.prisma.teamMember.update({
-          where: { id: existingMember.id },
-          data: { isActive: true, role: role as any },
-          include: {
-            user: {
-              select: { id: true, email: true, name: true, lastName: true },
-            },
-          },
-        })
-      }
-      throw new ForbiddenException('El usuario ya es miembro del equipo')
-    }
-
-    return this.prisma.teamMember.create({
-      data: {
-        userId: userToInvite.id,
-        teamId: teamId,
-        role: role as any,
-      },
-      include: {
-        user: {
-          select: { id: true, email: true, name: true, lastName: true },
-        },
-      },
-    })
-  }
-
-  async updateMemberRole(userId: string, teamId: string, memberId: string, newRole: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-    })
-
-    if (!team) {
-      throw new NotFoundException('Equipo no encontrado')
-    }
-
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: team.clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    const isTeamCoach = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: userId,
-        teamId: teamId,
-        role: 'COACH',
-        isActive: true,
-      },
-    })
-
-    if (!isClubAdmin && !isTeamCoach && !isSuperAdmin) {
-      throw new ForbiddenException('No tienes permisos para cambiar roles en este equipo')
-    }
-
-    return this.prisma.teamMember.update({
-      where: { id: memberId },
-      data: { role: newRole as any },
-      include: {
-        user: {
-          select: { id: true, email: true, name: true, lastName: true },
-        },
-      },
-    })
-  }
-
-  async removeMember(userId: string, teamId: string, memberId: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-    })
-
-    if (!team) {
-      throw new NotFoundException('Equipo no encontrado')
-    }
-
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: team.clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    const isTeamCoach = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: userId,
-        teamId: teamId,
-        role: 'COACH',
-        isActive: true,
-      },
-    })
-
-    if (!isClubAdmin && !isTeamCoach && !isSuperAdmin) {
-      throw new ForbiddenException('No tienes permisos para eliminar miembros de este equipo')
-    }
-
-    const memberToDelete = await this.prisma.teamMember.findUnique({
-      where: { id: memberId },
-    })
-
-    if (memberToDelete?.userId === userId) {
-      throw new ForbiddenException('No puedes eliminarte a ti mismo del equipo')
-    }
-
-    if (memberToDelete?.role === 'COACH') {
-      const coachCount = await this.prisma.teamMember.count({
-        where: {
-          teamId: teamId,
-          role: 'COACH',
-          isActive: true,
-        },
-      })
-
-      if (coachCount <= 1) {
-        throw new ForbiddenException('No puedes eliminar al último entrenador del equipo. Promueve a otro miembro primero.')
-      }
-    }
-
-    const deletedMember = await this.prisma.teamMember.delete({
-      where: { id: memberId },
-    })
-
-    const remainingMembers = await this.prisma.teamMember.findMany({
-      where: { teamId, isActive: true },
-    })
-
-    if (remainingMembers.length === 1 && remainingMembers[0].role !== 'COACH') {
-      await this.prisma.teamMember.update({
-        where: { id: remainingMembers[0].id },
-        data: { role: 'COACH' },
-      })
-    }
-
-    return deletedMember
-  }
-
-  async resetMemberPassword(userId: string, teamId: string, memberId: string, newPassword: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-    })
-
-    if (!team) {
-      throw new NotFoundException('Equipo no encontrado')
-    }
-
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: team.clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    const isTeamCoach = await this.prisma.teamMember.findFirst({
-      where: {
-        userId: userId,
-        teamId: teamId,
-        role: 'COACH',
-        isActive: true,
-      },
-    })
-
-    if (!isClubAdmin && !isTeamCoach && !isSuperAdmin) {
-      throw new ForbiddenException('No tienes permisos para resetear contraseñas en este equipo')
-    }
-
-    const member = await this.prisma.teamMember.findUnique({
-      where: { id: memberId },
-    })
-
-    if (!member) {
-      throw new NotFoundException('Miembro no encontrado')
-    }
-
-    const bcrypt = require('bcrypt')
-    const hashedPassword = await bcrypt.hash(newPassword, 10)
-
-    await this.prisma.user.update({
-      where: { id: member.userId },
-      data: { password: hashedPassword },
-    })
-
-    await this.prisma.refreshToken.updateMany({
-      where: { userId: member.userId },
-      data: { isRevoked: true },
-    })
-
-    return { message: 'Contraseña reseteada correctamente' }
   }
 }

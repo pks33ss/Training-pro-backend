@@ -18,27 +18,15 @@ import { CreateMembershipDto, UpdateMembershipDto, AddMemberDto } from './dto'
 export class MembershipsController {
   constructor(private readonly membershipsService: MembershipsService) {}
 
-  // ============================================
-  // MIS MEMBERSHIPS
-  // ============================================
-
   @Get('users/me/memberships')
   findMine(@Request() req) {
     return this.membershipsService.findMine(req.user.id)
   }
 
-  // ============================================
-  // MIEMBROS DE UN EQUIPO
-  // ============================================
-
   @Get('teams/:teamId/members')
   findByTeam(@Request() req, @Param('teamId') teamId: string) {
     return this.membershipsService.findByTeam(req.user.id, teamId)
   }
-
-    // ============================================
-  // AÑADIR MIEMBRO EXISTENTE (directo, sin invitación)
-  // ============================================
 
   @Post('teams/:teamId/members')
   addMember(
@@ -49,18 +37,10 @@ export class MembershipsController {
     return this.membershipsService.addMember(req.user.id, teamId, dto)
   }
 
-  // ============================================
-  // SOLICITAR UNIRSE A UN EQUIPO
-  // ============================================
-
   @Post('memberships')
   requestJoin(@Request() req, @Body() dto: CreateMembershipDto) {
     return this.membershipsService.requestJoin(req.user.id, dto)
   }
-
-  // ============================================
-  // ACEPTAR / RECHAZAR SOLICITUD
-  // ============================================
 
   @Post('memberships/:id/accept')
   accept(@Request() req, @Param('id') id: string) {
@@ -72,31 +52,19 @@ export class MembershipsController {
     return this.membershipsService.reject(req.user.id, id)
   }
 
-  // ============================================
-  // SALIR DEL EQUIPO
-  // ============================================
-
   @Delete('memberships/:id')
   leave(@Request() req, @Param('id') id: string) {
     return this.membershipsService.leave(req.user.id, id)
   }
 
-  // ============================================
-// QUITAR MIEMBRO DEL EQUIPO (coach/admin echa a alguien)
-// ============================================
-
-@Delete('teams/:teamId/members/:membershipId')
-remove(
-  @Request() req,
-  @Param('teamId') teamId: string,
-  @Param('membershipId') membershipId: string,
-) {
-  return this.membershipsService.leave(req.user.id, membershipId)
-}
-
-  // ============================================
-  // ACTUALIZAR MEMBERSHIP
-  // ============================================
+  @Delete('teams/:teamId/members/:membershipId')
+  remove(
+    @Request() req,
+    @Param('teamId') teamId: string,
+    @Param('membershipId') membershipId: string,
+  ) {
+    return this.membershipsService.leave(req.user.id, membershipId)
+  }
 
   @Put('memberships/:id')
   update(
@@ -105,5 +73,25 @@ remove(
     @Body() dto: UpdateMembershipDto,
   ) {
     return this.membershipsService.update(req.user.id, id, dto)
+  }
+
+  // ✅ NUEVO: añadir rol individual
+  @Post('memberships/:id/roles')
+  addRole(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('role') role: string,
+  ) {
+    return this.membershipsService.addRole(req.user.id, id, role as any)
+  }
+
+  // ✅ NUEVO: quitar rol individual
+  @Delete('memberships/:id/roles/:role')
+  removeRole(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('role') role: string,
+  ) {
+    return this.membershipsService.removeRole(req.user.id, id, role as any)
   }
 }

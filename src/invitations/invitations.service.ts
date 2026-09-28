@@ -40,7 +40,7 @@ export class InvitationsService {
         userId,
         teamId,
         status: 'ACTIVE',
-        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
       },
     })
 
@@ -195,13 +195,12 @@ export class InvitationsService {
     data: {
       userId,
       teamId: invitation.teamId,
-      role: invitation.role,
+      roles: { create: [{ role: invitation.role as any }] },
       status: 'ACTIVE',
       invitedById: invitation.invitedById,
     },
   })
 
-  // ✅ Asegurar que el user también es miembro del club
   await ensureClubMemberForTeam(this.prisma, userId, invitation.teamId)
 }
     // Marcar la invitación como usada

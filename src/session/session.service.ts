@@ -20,15 +20,10 @@ export class SessionService {
     })
     if (clubMember) return true
 
-    const membership = await this.prisma.teamMembership.findFirst({
+        const membership = await this.prisma.teamMembership.findFirst({
       where: { userId, teamId, status: 'ACTIVE' },
     })
-    if (membership) return true
-
-    const teamMember = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true },
-    })
-    return !!teamMember
+    return !!membership
   }
 
   private async canManageTeam(userId: string, teamId: string): Promise<boolean> {
@@ -48,15 +43,10 @@ export class SessionService {
         userId,
         teamId,
         status: 'ACTIVE',
-        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
       },
     })
-    if (membership) return true
-
-    const coach = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true, role: 'COACH' },
-    })
-    return !!coach
+    return !!membership
   }
 
   async create(userId: string, createSessionDto: CreateSessionDto) {
@@ -138,7 +128,7 @@ export class SessionService {
           include: {
             club: true,
             memberships: {
-              where: { role: 'PLAYER', status: 'ACTIVE' },
+              where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
               include: {
                 user: {
                   select: {

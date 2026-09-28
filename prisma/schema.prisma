@@ -20,9 +20,9 @@ model User {
   updatedAt DateTime   @updatedAt
   username  String?    @unique
   isGhost   Boolean    @default(false)
+  deletedAt DateTime?
 
   clubs               ClubMember[]
-  teams               TeamMember[]
   refreshTokens       RefreshToken[]
   sessions            Session[]
   calendarEvents      CalendarEvent[]
@@ -44,6 +44,8 @@ model User {
   grantedPermissions StreamPermission[] @relation("GrantedBy")
   attendances        Attendance[]
   matchCallups       MatchCallup[]
+  
+  @@index([deletedAt])
 }
 
 model Club {
@@ -91,7 +93,7 @@ model Team {
   updatedAt      DateTime @updatedAt
 
   club    Club         @relation(fields: [clubId], references: [id], onDelete: Cascade)
-  members TeamMember[]
+  
 
   sessions           Session[]
   calendarEvents     CalendarEvent[] // ✅ Relación inversa para eventos
@@ -102,25 +104,13 @@ model Team {
   pendingInvitations PendingInvitation[]
 }
 
-model TeamMember {
-  id       String   @id @default(cuid())
-  userId   String
-  teamId   String
-  role     TeamRole @default(COACH) // ✅ Rol específico de equipo
-  isActive Boolean  @default(true)
-  joinedAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, teamId])
-}
 
 model TeamMembership {
   id           String    @id @default(cuid())
   userId       String
   teamId       String
-  role         String // PLAYER | COACH | ASSISTANT | ADMIN_TEAM
+  
   jerseyNumber Int?
   position     String?
   status       String    @default("ACTIVE") // ACTIVE | PENDING | INACTIVE | LEFT
@@ -136,7 +126,9 @@ model TeamMembership {
   season    Season? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
   invitedBy User?   @relation("MembershipInviter", fields: [invitedById], references: [id], onDelete: SetNull)
 
-  @@unique([userId, teamId, seasonId])
+  roles MembershipRole[] 
+
+  @@unique([userId, teamId]) 
   @@index([userId])
   @@index([teamId])
   @@index([status])
@@ -213,12 +205,12 @@ model Session {
   duration    Int
   location    String?
   teamId      String
-  createdById String
+  createdById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  createdBy   User         @relation(fields: [createdById], references: [id])
+  createdBy   User?        @relation(fields: [createdById], references: [id], onDelete: SetNull) 
   exercises   Exercise[]
   attendances Attendance[]
 
@@ -294,13 +286,13 @@ model CalendarEvent {
   location    String?
   clubId      String
   teamId      String?
-  createdById String
+  createdById String? 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   club        Club                 @relation(fields: [clubId], references: [id], onDelete: Cascade)
   team        Team?                @relation(fields: [teamId], references: [id], onDelete: SetNull)
-  createdBy   User                 @relation(fields: [createdById], references: [id])
+  createdBy   User?                @relation(fields: [createdById], references: [id], onDelete: SetNull)
   invitations CalendarInvitation[]
 
   @@index([clubId])
@@ -345,9 +337,25 @@ enum ClubRole {
   MEMBER
 }
 
-enum TeamRole {
+
+enum MembershipRoleType {
+  PLAYER
   COACH
   ASSISTANT
+  ADMIN_TEAM
+}
+
+model MembershipRole {
+  id           String             @id @default(cuid())
+  membershipId String
+  role         MembershipRoleType
+  createdAt    DateTime           @default(now())
+
+  membership TeamMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, role])
+  @@index([membershipId])
+  @@index([role])
 }
 
 enum GlobalRole {
@@ -404,8 +412,8 @@ model Match {
   teamId String
   team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
-  createdById String
-  createdBy   User   @relation(fields: [createdById], references: [id])
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
   callups     MatchCallup[]
   playerStats MatchPlayerStats[]

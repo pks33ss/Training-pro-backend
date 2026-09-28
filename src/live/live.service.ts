@@ -40,13 +40,7 @@ export class LiveService {
     })
     if (membership) return match
 
-    // 3) TeamMember antiguo (compatibilidad)
-    const teamMember = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId: match.teamId, isActive: true },
-    })
-    if (teamMember) return match
-
-    // 4) Tutor de un jugador del equipo
+    // 3) Tutor de un jugador del equipo
     const isTutorNew = await this.prisma.tutorRelationship.findFirst({
       where: {
         tutorUserId: userId,
@@ -87,16 +81,10 @@ export class LiveService {
         userId,
         teamId: match.teamId,
         status: 'ACTIVE',
-        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
       },
     })
-    if (membership) return true
-
-    // 3) COACH del equipo (modelo antiguo)
-    const coach = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId: match.teamId, isActive: true, role: 'COACH' },
-    })
-    return !!coach
+    return !!membership
   }
 
   private async canUserStream(userId: string, matchId: string, liveStreamId: string) {
@@ -141,15 +129,14 @@ export class LiveService {
 
     // 2) TeamMembers (nuevo modelo)
     const teamMemberships = await this.prisma.teamMembership.findMany({
-      where: { teamId: match.teamId, status: 'ACTIVE' },
-      include: { user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } } },
-    })
+  where: { teamId: match.teamId, status: 'ACTIVE' },
+  include: {
+    user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } },
+    roles: true,
+  },
+})
 
-    // 3) TeamMembers (modelo antiguo)
-    const legacyTeamMembers = await this.prisma.teamMember.findMany({
-      where: { teamId: match.teamId, isActive: true },
-      include: { user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } } },
-    })
+
 
     // 4) Tutores (modelo NUEVO: TutorRelationship)
     const tutorRelationships = await this.prisma.tutorRelationship.findMany({
@@ -183,34 +170,21 @@ export class LiveService {
 
     // TeamMemberships nuevas
     for (const m of teamMemberships) {
+      const roleLabel = `Equipo · ${m.roles.map((r) => r.role).join(', ')}`
       if (map.has(m.user.id)) {
-        // Si ya está por club, solo sobrescribimos si NO es ADMIN_CLUB
         const existing = map.get(m.user.id)
         if (!existing.role.startsWith('Club · ADMIN')) {
-          existing.role = `Equipo · ${m.role}`
+          existing.role = roleLabel
         }
       } else {
         map.set(m.user.id, {
           userId: m.user.id, name: m.user.name, lastName: m.user.lastName,
-          email: m.user.email, avatar: m.user.avatar, role: `Equipo · ${m.role}`,
+          email: m.user.email, avatar: m.user.avatar, role: roleLabel,
         })
       }
     }
 
-    // TeamMembers legacy
-    for (const m of legacyTeamMembers) {
-      if (map.has(m.user.id)) {
-        const existing = map.get(m.user.id)
-        if (!existing.role.startsWith('Club · ADMIN')) {
-          existing.role = `Equipo · ${m.role}`
-        }
-      } else {
-        map.set(m.user.id, {
-          userId: m.user.id, name: m.user.name, lastName: m.user.lastName,
-          email: m.user.email, avatar: m.user.avatar, role: `Equipo · ${m.role}`,
-        })
-      }
-    }
+
 
     // Tutores nuevos
     for (const t of tutorRelationships) {

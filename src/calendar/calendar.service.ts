@@ -42,11 +42,6 @@ export class CalendarService {
     if (membership) return team
 
     // 3) TeamMember antiguo (compatibilidad con datos pre-migración)
-    const teamMember = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true },
-    })
-    if (teamMember) return team
-
     throw new ForbiddenException('No tienes acceso a este equipo')
   }
 

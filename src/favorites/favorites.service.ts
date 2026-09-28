@@ -28,11 +28,8 @@ export class FavoritesService {
     })
     if (membership) return true
 
-    // 3) TeamMember antiguo (compatibilidad)
-    const teamMember = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true },
-    })
-    return !!teamMember
+   
+    return false
   }
 
   // ============================================

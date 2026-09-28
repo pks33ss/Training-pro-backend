@@ -25,12 +25,7 @@ export class AttendanceService {
     const membership = await this.prisma.teamMembership.findFirst({
       where: { userId, teamId, status: 'ACTIVE' },
     })
-    if (membership) return true
-
-    const teamMember = await this.prisma.teamMember.findFirst({
-      where: { userId, teamId, isActive: true },
-    })
-    return !!teamMember
+    return !!membership
   }
 
   // ============================================
@@ -53,11 +48,11 @@ export class AttendanceService {
 
     // ✅ Ahora buscamos Users con TeamMembership PLAYER activo
     const memberships = await this.prisma.teamMembership.findMany({
-      where: {
-        teamId: session.teamId,
-        role: 'PLAYER',
-        status: 'ACTIVE',
-      },
+where: {
+  teamId: session.teamId,
+  roles: { some: { role: 'PLAYER' } },
+  status: 'ACTIVE',
+},
       include: {
         user: {
           select: {
@@ -287,10 +282,10 @@ export class AttendanceService {
     // ✅ Miembros con rol PLAYER activo
     const memberships = await this.prisma.teamMembership.findMany({
       where: {
-        teamId,
-        role: 'PLAYER',
-        status: 'ACTIVE',
-      },
+  teamId,
+  roles: { some: { role: 'PLAYER' } },
+  status: 'ACTIVE',
+},
       include: {
         user: {
           select: {
@@ -404,12 +399,12 @@ export class AttendanceService {
     }
 
     const totalPlayers = await this.prisma.teamMembership.count({
-      where: {
-        teamId: session.teamId,
-        role: 'PLAYER',
-        status: 'ACTIVE',
-      },
-    });
+  where: {
+    teamId: session.teamId,
+    roles: { some: { role: 'PLAYER' } },
+    status: 'ACTIVE',
+  },
+});
 
     const present = session.attendances.filter(a => a.status === 'PRESENT').length;
     const absent = session.attendances.filter(a => a.status === 'ABSENT').length;

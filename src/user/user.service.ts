@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import * as bcrypt from 'bcrypt'
 import { CreateGhostDto } from './dto/create-ghost.dto'
 import { generateUniqueUsername } from './utils/generate-username'
+import { isSuperAdmin } from '../common/access'
 
 @Injectable()
 export class UserService {
@@ -27,16 +28,7 @@ export class UserService {
             },
           },
         },
-        teams: {
-          include: {
-            team: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        },
+        
       },
       orderBy: {
         createdAt: 'desc',
@@ -64,16 +56,7 @@ export class UserService {
             },
           },
         },
-        teams: {
-          include: {
-            team: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
-          },
-        },
+        
       },
     })
 
@@ -122,18 +105,111 @@ export class UserService {
     })
   }
 
-  async remove(id: string) {
+  // ============================================
+  // HARD DELETE (solo SUPER_ADMIN)
+  // ============================================
+
+  /**
+   * Borra un user de la BD por completo (cascade).
+   *
+   * - Solo SUPER_ADMIN.
+   * - Antes de borrar, notifica a los COACH activos de los equipos
+   *   donde el user tiene memberships (excluyendo al propio user).
+   * - Cascada: ClubMember, TeamMembership, MembershipRole, RefreshToken,
+   *   Attendance, MatchPlayerStats, MatchCallup, FavoriteTeam,
+   *   TutorRelationship, PendingInvitation, StreamPermission, LiveViewer...
+   * - Las entidades creadas por él (Session, CalendarEvent, Match) quedan
+   *   con `createdById = NULL` (no se borran).
+   * - LiveStream.hostId → NULL.
+   */
+  async hardDelete(id: string, actorId: string) {
+    // 1) Verificar actor
+    if (!(await isSuperAdmin(this.prisma, actorId))) {
+      throw new ForbiddenException('Solo los super administradores pueden eliminar usuarios')
+    }
+
+    // 2) Verificar que el user existe
     const user = await this.prisma.user.findUnique({
       where: { id },
+      select: { id: true, name: true, lastName: true, email: true },
     })
-
     if (!user) {
       throw new NotFoundException('Usuario no encontrado')
     }
 
-    return this.prisma.user.delete({
+    // 3) Notificar a coaches de los equipos donde tiene membership
+    await this.notifyCoachesOfDeparture(id)
+
+    // 4) Hard delete (cascade)
+    await this.prisma.user.delete({
       where: { id },
     })
+
+    return {
+      deleted: true,
+      mode: 'hard',
+      userId: id,
+    }
+  }
+
+  // ============================================
+  // NOTIFICAR A COACHES
+  // ============================================
+
+  /**
+   * Notifica (console.log por ahora) a los COACH activos de los equipos
+   * donde el user tiene memberships (activas o no), excluyendo al propio user.
+   */
+  private async notifyCoachesOfDeparture(userId: string): Promise<void> {
+    // 1) Equipos donde el user tiene alguna membership
+    const memberships = await this.prisma.teamMembership.findMany({
+      where: { userId },
+      select: {
+        teamId: true,
+        team: {
+          select: {
+            id: true,
+            name: true,
+            memberships: {
+              where: {
+                status: 'ACTIVE',
+                roles: { some: { role: 'COACH' } },
+                NOT: { userId }, // excluye al propio user
+              },
+              select: {
+                user: {
+                  select: {
+                    id: true,
+                    email: true,
+                    name: true,
+                    lastName: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    })
+
+    // 2) Deduplicar coaches por (coach.id, team.id)
+    const seen = new Set<string>()
+    const notifiedAt = new Date()
+
+    for (const m of memberships) {
+      for (const coachMembership of m.team.memberships) {
+        const coach = coachMembership.user
+        const key = `${coach.id}::${m.team.id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+
+        console.log(
+          `📧 [PENDIENTE SMTP] Aviso a ${coach.email ?? coach.id}: ` +
+            `el usuario ${userId} ha sido eliminado y ya no forma parte del equipo "${m.team.name}". ` +
+            `Fecha: ${notifiedAt.toLocaleDateString('es-ES')}`,
+        )
+      }
+    }
   }
 
   // ✅ NUEVO: Crear usuario desde el admin
@@ -169,7 +245,7 @@ export class UserService {
     })
   }
 
-    // ============================================
+  // ============================================
   // PERFIL DEL USUARIO
   // ============================================
 
@@ -266,7 +342,8 @@ export class UserService {
 
     return { message: 'Contraseña actualizada correctamente' }
   }
-    // ============================================
+
+  // ============================================
   // RESETEO DE CONTRASEÑA
   // ============================================
 
@@ -296,7 +373,8 @@ export class UserService {
 
     return { message: 'Contraseña reseteada correctamente' }
   }
-    // ============================================
+
+  // ============================================
   // NUEVOS MÉTODOS (Fase 3 - User refactor)
   // ============================================
 
@@ -438,7 +516,7 @@ export class UserService {
 
     // 2) Buscar usuarios en esos clubes
     const users = await this.prisma.user.findMany({
-            where: {
+      where: {
         AND: [
           { id: { not: userId } },
           // ✅ Ya no filtramos por isGhost: queremos incluir también jugadores
@@ -481,7 +559,7 @@ export class UserService {
         avatar: true,
         bio: true,
         role: true,
-        isGhost: true, 
+        isGhost: true,
         memberships: {
           where: { status: 'ACTIVE' },
           include: {
@@ -546,6 +624,7 @@ export class UserService {
 
     return user
   }
+
   // ============================================
   // CREAR USUARIO FANTASMA Y AÑADIRLO A UN EQUIPO
   // ============================================
@@ -575,7 +654,7 @@ export class UserService {
     })
     if (!requester) throw new NotFoundException('Usuario no encontrado')
 
-    const isSuperAdmin = requester.role === 'SUPER_ADMIN'
+    const isSuperAdminUser = requester.role === 'SUPER_ADMIN'
 
     const isClubAdmin = await this.prisma.clubMember.findFirst({
       where: {
@@ -591,11 +670,11 @@ export class UserService {
         userId: requesterId,
         teamId: dto.teamId,
         status: 'ACTIVE',
-        role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
       },
     })
 
-    if (!isSuperAdmin && !isClubAdmin && !isTeamManager) {
+    if (!isSuperAdminUser && !isClubAdmin && !isTeamManager) {
       throw new ForbiddenException(
         'No tienes permisos para añadir jugadores a este equipo',
       )
@@ -639,7 +718,7 @@ export class UserService {
         data: {
           userId: user.id,
           teamId: dto.teamId,
-          role: dto.role ?? 'PLAYER',
+          roles: { create: [{ role: (dto.role ?? 'PLAYER') as any }] },
           status: 'ACTIVE',
           jerseyNumber: dto.jerseyNumber ?? null,
           position: dto.position ?? null,
@@ -669,8 +748,4 @@ export class UserService {
       isGhost: newUser.isGhost,
     }
   }
-
-
 }
-
-
