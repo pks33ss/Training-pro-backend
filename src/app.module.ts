@@ -18,6 +18,7 @@ import { FavoritesModule } from './favorites/favorites.module';
 import { InvitationsModule } from './invitations/invitations.module'
 import { MembershipsModule } from './memberships/memberships.module'
 import { TutorRelationshipsModule } from './tutor-relationships/tutor-relationships.module'
+import { StatsModule } from './stats/stats.module'; 
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { TutorRelationshipsModule } from './tutor-relationships/tutor-relationsh
     InvitationsModule,
     MembershipsModule,
     TutorRelationshipsModule,
+    StatsModule, 
   ],
 })
 export class AppModule {}

@@ -5,6 +5,7 @@ import { UpdateMatchDto } from './dto/update-match.dto'
 import { UpdateResultDto } from './dto/update-result.dto'
 import { UpdateStatsDto } from './dto/update-stats.dto'
 import { getTeamForViewer } from '../common/access'
+import { computePadelStatsFromMatch } from '../stats/padel-stats.helper'
 
 
 const USER_SELECT = {
@@ -759,5 +760,57 @@ export class MatchService {
     await this.prisma.padelSet.delete({ where: { id: lastSet.id } })
 
     return { ok: true, deletedSetOrder: lastSet.order }
+  }
+
+   // ============================================
+  // ESTADÍSTICAS DE PÁDEL POR PARTIDO
+  // ============================================
+
+  async getPadelStats(userId: string, matchId: string) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      include: {
+        padelSubMatches: {
+          orderBy: { order: 'asc' },
+          include: {
+            player1: { select: USER_SELECT },
+            player2: { select: USER_SELECT },
+            sets: { orderBy: { order: 'asc' } },
+          },
+        },
+        callups: {
+          include: { user: { select: USER_SELECT } },
+        },
+      },
+    })
+
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    await getTeamForViewer(this.prisma, userId, match.teamId)
+
+    return computePadelStatsFromMatch({
+      id: match.id,
+      teamId: match.teamId,
+      date: match.date,
+      opponent: match.opponent,
+      teamScore: match.teamScore,
+      opponentScore: match.opponentScore,
+      padelSubMatches: match.padelSubMatches.map((sm) => ({
+        id: sm.id,
+        order: sm.order,
+        player1: sm.player1
+          ? { id: sm.player1.id, name: sm.player1.name, lastName: sm.player1.lastName }
+          : null,
+        player2: sm.player2
+          ? { id: sm.player2.id, name: sm.player2.name, lastName: sm.player2.lastName }
+          : null,
+        sets: sm.sets.map((s) => ({
+          id: s.id,
+          order: s.order,
+          homeScore: s.homeScore,
+          awayScore: s.awayScore,
+          played: s.played,
+        })),
+      })),
+    })
   }
 }

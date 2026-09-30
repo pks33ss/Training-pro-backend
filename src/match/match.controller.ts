@@ -26,6 +26,11 @@ export class MatchController {
     return this.matchService.getTeamStats(req.user.id, teamId)
   }
 
+    @Get(':id/padel-stats')
+  getPadelStats(@Request() req, @Param('id') id: string) {
+    return this.matchService.getPadelStats(req.user.id, id)
+  }
+
   @Get(':id')
   findOne(@Request() req, @Param('id') id: string) {
     return this.matchService.findOne(req.user.id, id)
