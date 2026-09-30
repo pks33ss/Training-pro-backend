@@ -4,6 +4,12 @@ import { CreateClubDto } from './dto/create-club.dto';
 import { UpdateClubDto } from './dto/update-club.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service'
 import * as bcrypt from 'bcrypt'
+import {
+  isSuperAdmin,
+  isClubAdmin,
+  isActiveClubMember,
+  canInviteToClub,
+} from '../common/access'
 
 @Injectable()
 export class ClubService {
@@ -47,13 +53,7 @@ export class ClubService {
   }
 
   async findAll(userId: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    if (isSuperAdmin) {
+    if (await isSuperAdmin(this.prisma, userId)) {
       return this.prisma.club.findMany({
         include: {
           members: {
@@ -125,23 +125,12 @@ export class ClubService {
   }
 
   async findOne(userId: string, clubId: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { role: true },
-    });
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
-
-    if (!isSuperAdmin) {
-      const member = await this.prisma.clubMember.findFirst({
-        where: { userId: userId, clubId: clubId, isActive: true },
-      });
-
-      if (!member) {
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      const isActive = await isActiveClubMember(this.prisma, userId, clubId)
+      if (!isActive) {
         const hasMembership = await this.prisma.teamMembership.findFirst({
           where: { userId, status: 'ACTIVE', team: { clubId } },
-        });
-
+        })
         if (!hasMembership) {
           throw new ForbiddenException('No tienes acceso a este club');
         }
@@ -185,24 +174,8 @@ export class ClubService {
   }
 
   async update(userId: string, clubId: string, updateClubDto: UpdateClubDto) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { role: true },
-    });
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
-
-    if (!isSuperAdmin) {
-      const member = await this.prisma.clubMember.findFirst({
-        where: {
-          userId: userId,
-          clubId: clubId,
-          role: 'ADMIN_CLUB',
-          isActive: true,
-        },
-      });
-
-      if (!member) {
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      if (!(await isClubAdmin(this.prisma, userId, clubId))) {
         throw new ForbiddenException('No tienes permisos para editar este club');
       }
     }
@@ -214,24 +187,8 @@ export class ClubService {
   }
 
   async remove(userId: string, clubId: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { role: true },
-    });
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
-
-    if (!isSuperAdmin) {
-      const member = await this.prisma.clubMember.findFirst({
-        where: {
-          userId: userId,
-          clubId: clubId,
-          role: 'ADMIN_CLUB',
-          isActive: true,
-        },
-      });
-
-      if (!member) {
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      if (!(await isClubAdmin(this.prisma, userId, clubId))) {
         throw new ForbiddenException('No tienes permisos para eliminar este club');
       }
     }
@@ -246,16 +203,10 @@ export class ClubService {
   // ============================================
 
   async getMembers(userId: string, clubId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
+    const isSuper = await isSuperAdmin(this.prisma, userId)
+    const isActive = await isActiveClubMember(this.prisma, userId, clubId)
 
-    const isSuperAdmin = user?.role === 'SUPER_ADMIN'
-    const member = await this.prisma.clubMember.findFirst({
-      where: { userId: userId, clubId: clubId, isActive: true },
-    })
-
-    if (!member && !isSuperAdmin) {
+    if (!isActive && !isSuper) {
       throw new ForbiddenException('No tienes acceso a este club')
     }
 
@@ -271,22 +222,7 @@ export class ClubService {
   }
 
   async inviteMember(userId: string, clubId: string, email: string, role: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    const admin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    if (!admin && !isSuperAdmin) {
+    if (!(await canInviteToClub(this.prisma, userId, clubId))) {
       throw new ForbiddenException('Solo los administradores del club pueden invitar miembros')
     }
 
@@ -332,23 +268,10 @@ export class ClubService {
   }
 
   async updateMemberRole(userId: string, clubId: string, memberId: string, newRole: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = user?.role === 'SUPER_ADMIN'
-
-    const admin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    if (!admin && !isSuperAdmin) {
-      throw new ForbiddenException('Solo los administradores del club pueden cambiar roles')
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      if (!(await isClubAdmin(this.prisma, userId, clubId))) {
+        throw new ForbiddenException('Solo los administradores del club pueden cambiar roles')
+      }
     }
 
     return this.prisma.clubMember.update({
@@ -363,22 +286,10 @@ export class ClubService {
   }
 
   async removeMember(userId: string, clubId: string, memberId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = user?.role === 'SUPER_ADMIN'
-    const admin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    if (!admin && !isSuperAdmin) {
-      throw new ForbiddenException('Solo los administradores del club pueden eliminar miembros')
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      if (!(await isClubAdmin(this.prisma, userId, clubId))) {
+        throw new ForbiddenException('Solo los administradores del club pueden eliminar miembros')
+      }
     }
 
     const memberToDelete = await this.prisma.clubMember.findUnique({
@@ -393,7 +304,6 @@ export class ClubService {
       throw new ForbiddenException('No puedes eliminarte a ti mismo del club')
     }
 
-    // Regla: no se puede eliminar al último ADMIN_CLUB
     if (memberToDelete.role === 'ADMIN_CLUB') {
       const adminCount = await this.prisma.clubMember.count({
         where: {
@@ -408,8 +318,6 @@ export class ClubService {
       }
     }
 
-    // ✅ Expulsar del club: poner TODAS las memberships activas del user
-    //    en este club a LEFT.
     await this.prisma.teamMembership.updateMany({
       where: {
         userId: memberToDelete.userId,
@@ -422,12 +330,10 @@ export class ClubService {
       },
     })
 
-    // ✅ Borrar el ClubMember
     const deletedMember = await this.prisma.clubMember.delete({
       where: { id: memberId },
     })
 
-    // Regla: si solo queda un miembro, ese debe ser ADMIN_CLUB
     const remainingMembers = await this.prisma.clubMember.findMany({
       where: { clubId, isActive: true },
     })
@@ -448,23 +354,10 @@ export class ClubService {
     memberId: string,
     newPassword: string,
   ) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    if (!isClubAdmin && !isSuperAdmin) {
-      throw new ForbiddenException('Solo los administradores del club pueden resetear contraseñas')
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      if (!(await isClubAdmin(this.prisma, userId, clubId))) {
+        throw new ForbiddenException('Solo los administradores del club pueden resetear contraseñas')
+      }
     }
 
     const member = await this.prisma.clubMember.findUnique({
@@ -500,23 +393,10 @@ export class ClubService {
   // ============================================
 
   async getMemberTeams(userId: string, clubId: string, memberId: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    if (!isClubAdmin && !isSuperAdmin) {
-      throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      if (!(await isClubAdmin(this.prisma, userId, clubId))) {
+        throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+      }
     }
 
     const member = await this.prisma.clubMember.findUnique({
@@ -561,23 +441,10 @@ export class ClubService {
   }
 
   async addMemberToTeam(userId: string, clubId: string, memberId: string, teamId: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    if (!isClubAdmin && !isSuperAdmin) {
-      throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      if (!(await isClubAdmin(this.prisma, userId, clubId))) {
+        throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+      }
     }
 
     const team = await this.prisma.team.findFirst({
@@ -629,23 +496,10 @@ export class ClubService {
   }
 
   async removeMemberFromTeam(userId: string, clubId: string, memberId: string, teamId: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: userId,
-        clubId: clubId,
-        role: 'ADMIN_CLUB',
-        isActive: true,
-      },
-    })
-
-    if (!isClubAdmin && !isSuperAdmin) {
-      throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      if (!(await isClubAdmin(this.prisma, userId, clubId))) {
+        throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+      }
     }
 
     const member = await this.prisma.clubMember.findUnique({
@@ -678,24 +532,8 @@ export class ClubService {
   // ============================================
 
   async uploadLogo(userId: string, clubId: string, base64Image: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { role: true },
-    });
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
-
-    if (!isSuperAdmin) {
-      const member = await this.prisma.clubMember.findFirst({
-        where: {
-          userId,
-          clubId,
-          role: 'ADMIN_CLUB',
-          isActive: true,
-        },
-      })
-
-      if (!member) {
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      if (!(await isClubAdmin(this.prisma, userId, clubId))) {
         throw new ForbiddenException('No tienes permisos para editar este club')
       }
     }
@@ -720,18 +558,8 @@ export class ClubService {
   }
 
   async removeLogo(userId: string, clubId: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { role: true },
-    });
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
-
-    if (!isSuperAdmin) {
-      const member = await this.prisma.clubMember.findFirst({
-        where: { userId, clubId, role: 'ADMIN_CLUB', isActive: true },
-      })
-      if (!member) {
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      if (!(await isClubAdmin(this.prisma, userId, clubId))) {
         throw new ForbiddenException('No tienes permisos para editar este club')
       }
     }
@@ -747,18 +575,9 @@ export class ClubService {
   // ============================================
 
   async findClubPlayers(userId: string, clubId: string) {
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-
-    if (!isSuperAdmin) {
-      const member = await this.prisma.clubMember.findFirst({
-        where: { userId, clubId, isActive: true },
-      })
-
-      if (!member) {
+    if (!(await isSuperAdmin(this.prisma, userId))) {
+      const isActive = await isActiveClubMember(this.prisma, userId, clubId)
+      if (!isActive) {
         throw new ForbiddenException('No tienes acceso a este club')
       }
     }

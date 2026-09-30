@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { randomUUID } from 'crypto'
+import { canViewTeam, canEditTeam, isClubAdmin, isSuperAdmin } from '../common/access'
 
 @Injectable()
 export class LiveService {
@@ -24,72 +25,26 @@ export class LiveService {
   }
 
   private async verifyMatchAccess(userId: string, matchId: string) {
-    const { match, user } = await this.getMatchAndUser(userId, matchId)
+    const { match } = await this.getMatchAndUser(userId, matchId)
 
-    if (user.role === 'SUPER_ADMIN') return match
+    if (!(await canViewTeam(this.prisma, userId, match.teamId))) {
+      throw new ForbiddenException('No tienes acceso a este partido')
+    }
 
-    // 1) ClubMember (cualquiera con acceso al club)
-    const clubMember = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: match.team.clubId, isActive: true },
-    })
-    if (clubMember) return match
-
-    // 2) TeamMembership activa (modelo nuevo)
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: { userId, teamId: match.teamId, status: 'ACTIVE' },
-    })
-    if (membership) return match
-
-    // 3) Tutor de un jugador del equipo
-    const isTutorNew = await this.prisma.tutorRelationship.findFirst({
-      where: {
-        tutorUserId: userId,
-        status: 'ACTIVE',
-        playerUser: {
-          memberships: {
-            some: {
-              teamId: match.teamId,
-              status: 'ACTIVE',
-            },
-          },
-        },
-      },
-    })
-    if (isTutorNew) return match
-
-    throw new ForbiddenException('No tienes acceso a este partido')
+    return match
   }
 
   private async canManagePermissions(userId: string, matchId: string) {
-    const { match, user } = await this.getMatchAndUser(userId, matchId)
-    if (user.role === 'SUPER_ADMIN') return true
+    const { match } = await this.getMatchAndUser(userId, matchId)
 
-    // 1) ADMIN_CLUB del club
-    const adminClub = await this.prisma.clubMember.findFirst({
-      where: {
-        userId,
-        clubId: match.team.clubId,
-        isActive: true,
-        role: 'ADMIN_CLUB',
-      },
-    })
-    if (adminClub) return true
+    if (await isSuperAdmin(this.prisma, userId)) return true
+    if (await isClubAdmin(this.prisma, userId, match.team.clubId)) return true
 
-    // 2) TeamMembership con rol de gestión (modelo nuevo)
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: {
-        userId,
-        teamId: match.teamId,
-        status: 'ACTIVE',
-        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
-      },
-    })
-    return !!membership
+    return canEditTeam(this.prisma, userId, match.teamId)
   }
 
   private async canUserStream(userId: string, matchId: string, liveStreamId: string) {
-    const { user } = await this.getMatchAndUser(userId, matchId)
-    if (user.role === 'SUPER_ADMIN') return true
+    if (await isSuperAdmin(this.prisma, userId)) return true
 
     const permission = await this.prisma.streamPermission.findUnique({
       where: { liveStreamId_userId: { liveStreamId, userId } },
@@ -97,7 +52,6 @@ export class LiveService {
     return permission?.canStream === true
   }
 
-  // ✅ FIX 1: upsert en lugar de find+create (evita race condition)
   private async getOrCreateStream(matchId: string) {
     return this.prisma.liveStream.upsert({
       where: { matchId },
@@ -121,24 +75,19 @@ export class LiveService {
 
     const { match } = await this.getMatchAndUser(userId, matchId)
 
-    // 1) ClubMembers
     const clubMembers = await this.prisma.clubMember.findMany({
       where: { clubId: match.team.clubId, isActive: true },
       include: { user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } } },
     })
 
-    // 2) TeamMembers (nuevo modelo)
     const teamMemberships = await this.prisma.teamMembership.findMany({
-  where: { teamId: match.teamId, status: 'ACTIVE' },
-  include: {
-    user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } },
-    roles: true,
-  },
-})
+      where: { teamId: match.teamId, status: 'ACTIVE' },
+      include: {
+        user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } },
+        roles: true,
+      },
+    })
 
-
-
-    // 4) Tutores (modelo NUEVO: TutorRelationship)
     const tutorRelationships = await this.prisma.tutorRelationship.findMany({
       where: {
         status: 'ACTIVE',
@@ -156,11 +105,8 @@ export class LiveService {
       },
     })
 
-
-
     const map = new Map<string, any>()
 
-    // Club members (rol más alto → no sobrescribir)
     for (const m of clubMembers) {
       map.set(m.user.id, {
         userId: m.user.id, name: m.user.name, lastName: m.user.lastName,
@@ -168,7 +114,6 @@ export class LiveService {
       })
     }
 
-    // TeamMemberships nuevas
     for (const m of teamMemberships) {
       const roleLabel = `Equipo · ${m.roles.map((r) => r.role).join(', ')}`
       if (map.has(m.user.id)) {
@@ -184,9 +129,6 @@ export class LiveService {
       }
     }
 
-
-
-    // Tutores nuevos
     for (const t of tutorRelationships) {
       if (!map.has(t.tutorUser.id)) {
         map.set(t.tutorUser.id, {
@@ -195,8 +137,6 @@ export class LiveService {
         })
       }
     }
-
-
 
     return Array.from(map.values()).sort((a, b) => a.lastName.localeCompare(b.lastName))
   }
@@ -354,8 +294,8 @@ export class LiveService {
     const stream = await this.prisma.liveStream.findUnique({ where: { matchId } })
     if (!stream) throw new NotFoundException('No hay emisión activa')
 
-    const { user } = await this.getMatchAndUser(userId, matchId)
-    if (stream.hostId !== userId && user.role !== 'SUPER_ADMIN') {
+    const isSuper = await isSuperAdmin(this.prisma, userId)
+    if (stream.hostId !== userId && !isSuper) {
       throw new ForbiddenException('Solo el emisor puede parar la emisión')
     }
 

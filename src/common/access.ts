@@ -146,6 +146,29 @@ export async function canViewTeam(
   return false
 }
 
+/**
+ * Recupera el team (con su club) tras verificar que el user tiene acceso.
+ * Lanza NotFoundException si el team no existe, ForbiddenException si no
+ * tiene acceso.
+ */
+export async function getTeamForViewer(
+  prisma: PrismaLike,
+  userId: string,
+  teamId: string,
+) {
+  const team = await prisma.team.findUnique({
+    where: { id: teamId },
+    include: { club: true },
+  })
+  if (!team) throw new NotFoundException('Equipo no encontrado')
+
+  if (!(await canViewTeam(prisma, userId, teamId))) {
+    throw new ForbiddenException('No tienes acceso a este equipo')
+  }
+
+  return team
+}
+
 export async function canEditTeam(
   prisma: PrismaLike,
   userId: string,

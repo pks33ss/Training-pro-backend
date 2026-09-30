@@ -4,6 +4,7 @@ import { CreateMatchDto } from './dto/create-match.dto'
 import { UpdateMatchDto } from './dto/update-match.dto'
 import { UpdateResultDto } from './dto/update-result.dto'
 import { UpdateStatsDto } from './dto/update-stats.dto'
+import { getTeamForViewer } from '../common/access'
 
 
 const USER_SELECT = {
@@ -21,54 +22,16 @@ export class MatchService {
   constructor(private prisma: PrismaService) {}
 
   // ============================================
-  // VERIFICAR ACCESO
-  // ============================================
-  private async verifyTeamAccess(userId: string, teamId: string) {
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-    })
-
-    if (!team) {
-      throw new NotFoundException('Equipo no encontrado')
-    }
-
-    const currentUser = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-
-    const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN'
-    if (isSuperAdmin) return team
-
-    const clubAdmin = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: team.clubId, isActive: true, role: 'ADMIN_CLUB' },
-    })
-    if (clubAdmin) return team
-
-    const clubMember = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: team.clubId, isActive: true },
-    })
-    if (clubMember) return team
-
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: { userId, teamId, status: 'ACTIVE' },
-    })
-    if (membership) return team
-
-    throw new ForbiddenException('No tienes acceso a este equipo')
-  }
-
-  // ============================================
   // CRUD PARTIDOS
   // ============================================
 
-    async create(userId: string, createMatchDto: CreateMatchDto) {
-    const team = await this.verifyTeamAccess(userId, createMatchDto.teamId)
+  async create(userId: string, createMatchDto: CreateMatchDto) {
+    const team = await getTeamForViewer(this.prisma, userId, createMatchDto.teamId)
 
     const isPadel = team.sport === 'PADEL'
     const subMatchesCount = isPadel ? (createMatchDto.subMatchesCount ?? 3) : null
     const setsPerSubMatch = isPadel ? (createMatchDto.setsPerSubMatch ?? 3) : null
 
-    // Crear el match
     const match = await this.prisma.match.create({
       data: {
         date: new Date(createMatchDto.date),
@@ -85,7 +48,6 @@ export class MatchService {
       },
     })
 
-    // Si es pádel, crear las pistas + sets
     if (isPadel && subMatchesCount && setsPerSubMatch) {
       for (let i = 0; i < subMatchesCount; i++) {
         await this.prisma.padelSubMatch.create({
@@ -103,7 +65,6 @@ export class MatchService {
       }
     }
 
-    // Devolver con includes
     return this.prisma.match.findUnique({
       where: { id: match.id },
       include: {
@@ -123,7 +84,7 @@ export class MatchService {
   }
 
   async findAllByTeam(userId: string, teamId: string) {
-    await this.verifyTeamAccess(userId, teamId)
+    await getTeamForViewer(this.prisma, userId, teamId)
 
     return this.prisma.match.findMany({
       where: { teamId },
@@ -137,7 +98,7 @@ export class MatchService {
     })
   }
 
-    async findOne(userId: string, matchId: string) {
+  async findOne(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
@@ -162,7 +123,7 @@ export class MatchService {
           include: { user: { select: USER_SELECT } },
           orderBy: { user: { lastName: 'asc' } },
         },
-         padelSubMatches: {
+        padelSubMatches: {
           orderBy: { order: 'asc' },
           include: {
             player1: { select: USER_SELECT },
@@ -177,7 +138,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     return {
       ...match,
@@ -201,7 +162,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     const data: any = { ...updateMatchDto }
     if (data.date) {
@@ -223,7 +184,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     return this.prisma.match.delete({
       where: { id: matchId },
@@ -243,7 +204,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     return this.prisma.match.update({
       where: { id: matchId },
@@ -268,7 +229,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     const results = []
     for (const targetUserId of userIds) {
@@ -306,7 +267,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     return this.prisma.matchCallup.findMany({
       where: { matchId },
@@ -334,7 +295,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     return this.prisma.matchCallup.upsert({
       where: {
@@ -365,7 +326,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     return this.prisma.matchCallup.delete({
       where: {
@@ -391,18 +352,17 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
-    // ✅ Ahora buscamos TeamMembership con rol PLAYER
     const memberships = await this.prisma.teamMembership.findMany({
       where: {
-  roles: { some: { role: 'PLAYER' } },
-  status: 'ACTIVE',
-  team: {
-    clubId: match.team.clubId,
-    id: { not: match.teamId },
-  },
-},
+        roles: { some: { role: 'PLAYER' } },
+        status: 'ACTIVE',
+        team: {
+          clubId: match.team.clubId,
+          id: { not: match.teamId },
+        },
+      },
       include: {
         user: { select: USER_SELECT },
         team: {
@@ -415,9 +375,8 @@ export class MatchService {
       ],
     })
 
-    // Formato plano para que el frontend lo use igual
     return memberships.map((m) => ({
-      id: m.user.id,                // userId (el "id" que el frontend usa como player.id)
+      id: m.user.id,
       userId: m.user.id,
       name: m.user.name,
       lastName: m.user.lastName,
@@ -454,7 +413,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     return this.prisma.matchPlayerStats.upsert({
       where: {
@@ -482,7 +441,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     return this.prisma.matchPlayerStats.findMany({
       where: { matchId },
@@ -504,7 +463,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     return this.prisma.match.update({
       where: { id: matchId },
@@ -525,7 +484,7 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     return this.prisma.match.update({
       where: { id: matchId },
@@ -538,7 +497,7 @@ export class MatchService {
   // ============================================
 
   async getTeamStats(userId: string, teamId: string) {
-    await this.verifyTeamAccess(userId, teamId)
+    await getTeamForViewer(this.prisma, userId, teamId)
 
     const matches = await this.prisma.match.findMany({
       where: { teamId, status: 'FINISHED' },
@@ -568,23 +527,36 @@ export class MatchService {
     }
   }
 
-    // ============================================
+  // ============================================
   // PÁDEL — SUBPARTIDOS (PISTAS)
   // ============================================
 
-  /**
-   * Añade una nueva pista al final (con sus sets vacíos).
-   */
   async addPadelSubMatch(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
-      include: { padelSubMatches: true },
+      include: { padelSubMatches: true, team: true },
     })
 
     if (!match) throw new NotFoundException('Partido no encontrado')
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
-    if (match.subMatchesCount == null || match.setsPerSubMatch == null) {
+    let setsPerSubMatch = match.setsPerSubMatch
+    let subMatchesCount = match.subMatchesCount
+
+    if (
+      (subMatchesCount == null || setsPerSubMatch == null) &&
+      match.team.sport === 'PADEL'
+    ) {
+      subMatchesCount = subMatchesCount ?? 3
+      setsPerSubMatch = setsPerSubMatch ?? 2
+
+      await this.prisma.match.update({
+        where: { id: matchId },
+        data: { subMatchesCount, setsPerSubMatch },
+      })
+    }
+
+    if (setsPerSubMatch == null) {
       throw new BadRequestException('Este partido no es de pádel')
     }
 
@@ -595,7 +567,7 @@ export class MatchService {
         matchId,
         order: nextOrder,
         sets: {
-          create: Array.from({ length: match.setsPerSubMatch }, (_, j) => ({
+          create: Array.from({ length: setsPerSubMatch }, (_, j) => ({
             order: j + 1,
             played: false,
           })),
@@ -609,10 +581,6 @@ export class MatchService {
     })
   }
 
-  /**
-   * Elimina una pista (y sus sets en cascada).
-   * Reordena las pistas restantes para que 1..N sin huecos.
-   */
   async removePadelSubMatch(userId: string, subMatchId: string) {
     const subMatch = await this.prisma.padelSubMatch.findUnique({
       where: { id: subMatchId },
@@ -620,11 +588,10 @@ export class MatchService {
     })
 
     if (!subMatch) throw new NotFoundException('Pista no encontrada')
-    await this.verifyTeamAccess(userId, subMatch.match.teamId)
+    await getTeamForViewer(this.prisma, userId, subMatch.match.teamId)
 
     await this.prisma.padelSubMatch.delete({ where: { id: subMatchId } })
 
-    // Reordenar las pistas restantes
     const remaining = await this.prisma.padelSubMatch.findMany({
       where: { matchId: subMatch.matchId },
       orderBy: { order: 'asc' },
@@ -642,9 +609,6 @@ export class MatchService {
     return { ok: true }
   }
 
-  /**
-   * Reordena las pistas de un match según el array de ids.
-   */
   async reorderPadelSubMatches(
     userId: string,
     matchId: string,
@@ -654,7 +618,7 @@ export class MatchService {
       where: { id: matchId },
     })
     if (!match) throw new NotFoundException('Partido no encontrado')
-    await this.verifyTeamAccess(userId, match.teamId)
+    await getTeamForViewer(this.prisma, userId, match.teamId)
 
     await this.prisma.$transaction(
       subMatchIds.map((id, index) =>
@@ -668,10 +632,6 @@ export class MatchService {
     return { ok: true }
   }
 
-  /**
-   * Asigna (o desasigna) un jugador a una pista.
-   * playerSlot = 1 (derecha) | 2 (izquierda).
-   */
   async updatePadelSubMatchPlayer(
     userId: string,
     subMatchId: string,
@@ -684,9 +644,8 @@ export class MatchService {
     })
 
     if (!subMatch) throw new NotFoundException('Pista no encontrada')
-    await this.verifyTeamAccess(userId, subMatch.match.teamId)
+    await getTeamForViewer(this.prisma, userId, subMatch.match.teamId)
 
-    // Validar que el targetUserId está convocado (si viene)
     if (targetUserId) {
       const callup = await this.prisma.matchCallup.findUnique({
         where: {
@@ -715,9 +674,6 @@ export class MatchService {
     })
   }
 
-  /**
-   * Actualiza un set concreto.
-   */
   async updatePadelSet(
     userId: string,
     setId: string,
@@ -729,7 +685,7 @@ export class MatchService {
     })
 
     if (!set) throw new NotFoundException('Set no encontrado')
-    await this.verifyTeamAccess(userId, set.subMatch.match.teamId)
+    await getTeamForViewer(this.prisma, userId, set.subMatch.match.teamId)
 
     return this.prisma.padelSet.update({
       where: { id: setId },
@@ -741,9 +697,6 @@ export class MatchService {
     })
   }
 
-    /**
-   * Añade un set vacío al final de una pista concreta.
-   */
   async addSetToSubMatch(userId: string, subMatchId: string) {
     const subMatch = await this.prisma.padelSubMatch.findUnique({
       where: { id: subMatchId },
@@ -754,7 +707,7 @@ export class MatchService {
     })
 
     if (!subMatch) throw new NotFoundException('Pista no encontrada')
-    await this.verifyTeamAccess(userId, subMatch.match.teamId)
+    await getTeamForViewer(this.prisma, userId, subMatch.match.teamId)
 
     const nextOrder = (subMatch.sets[0]?.order ?? 0) + 1
 
@@ -769,11 +722,6 @@ export class MatchService {
     })
   }
 
-  /**
-   * Elimina el último set de una pista.
-   * Si el set tiene datos (played, homeScore > 0 o awayScore > 0) y no se
-   * pasa `force: true`, lanza 409 para que el frontend pida confirmación.
-   */
   async removeLastSetFromSubMatch(
     userId: string,
     subMatchId: string,
@@ -788,7 +736,7 @@ export class MatchService {
     })
 
     if (!subMatch) throw new NotFoundException('Pista no encontrada')
-    await this.verifyTeamAccess(userId, subMatch.match.teamId)
+    await getTeamForViewer(this.prisma, userId, subMatch.match.teamId)
 
     const lastSet = subMatch.sets[0]
     if (!lastSet) {

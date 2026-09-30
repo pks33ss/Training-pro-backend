@@ -9,8 +9,9 @@ import { isSuperAdmin, canEditGhost, assertCanManageMembers } from '../common/ac
 export class UserService {
   constructor(private prisma: PrismaService) {}
 
-  async findAll() {
+ async findAll(includeDeleted = false) {
     return this.prisma.user.findMany({
+      where: includeDeleted ? {} : { deletedAt: null },
       select: {
         id: true,
         email: true,
@@ -28,7 +29,6 @@ export class UserService {
             },
           },
         },
-        
       },
       orderBy: {
         createdAt: 'desc',
@@ -56,7 +56,6 @@ export class UserService {
             },
           },
         },
-        
       },
     })
 
@@ -106,29 +105,134 @@ export class UserService {
   }
 
   // ============================================
-  // HARD DELETE (solo SUPER_ADMIN)
+  // SOFT DELETE (solo SUPER_ADMIN)
   // ============================================
 
   /**
-   * Borra un user de la BD por completo (cascade).
+   * Marca un user como eliminado (soft delete).
    *
    * - Solo SUPER_ADMIN.
-   * - Antes de borrar, notifica a los COACH activos de los equipos
-   *   donde el user tiene memberships (excluyendo al propio user).
-   * - Cascada: ClubMember, TeamMembership, MembershipRole, RefreshToken,
-   *   Attendance, MatchPlayerStats, MatchCallup, FavoriteTeam,
-   *   TutorRelationship, PendingInvitation, StreamPermission, LiveViewer...
-   * - Las entidades creadas por él (Session, CalendarEvent, Match) quedan
-   *   con `createdById = NULL` (no se borran).
-   * - LiveStream.hostId → NULL.
+   * - User.deletedAt = now() → no puede login ni refresh.
+   * - Todas las TeamMembership activas → LEFT.
+   * - RefreshTokens revocados.
+   * - ClubMember desactivado.
+   * - Aviso a coaches de los equipos.
    */
-  async hardDelete(id: string, actorId: string) {
-    // 1) Verificar actor
+  async softDelete(id: string, actorId: string) {
     if (!(await isSuperAdmin(this.prisma, actorId))) {
       throw new ForbiddenException('Solo los super administradores pueden eliminar usuarios')
     }
 
-    // 2) Verificar que el user existe
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { id: true, name: true, lastName: true, email: true, deletedAt: true },
+    })
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado')
+    }
+    if (user.deletedAt) {
+      throw new ConflictException('El usuario ya estaba eliminado')
+    }
+
+    // Avisar a coaches antes de desvincular
+    await this.notifyCoachesOfDeparture(id)
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1) Soft delete
+      await tx.user.update({
+        where: { id },
+        data: { deletedAt: new Date() },
+      })
+
+      // 2) Memberships activas → LEFT
+      await tx.teamMembership.updateMany({
+        where: { userId: id, status: 'ACTIVE' },
+        data: { status: 'LEFT', leftAt: new Date() },
+      })
+
+      // 3) ClubMembers → inactivos
+      await tx.clubMember.updateMany({
+        where: { userId: id, isActive: true },
+        data: { isActive: false },
+      })
+
+      // 4) RefreshTokens revocados
+      await tx.refreshToken.updateMany({
+        where: { userId: id, isRevoked: false },
+        data: { isRevoked: true },
+      })
+    })
+
+    return {
+      deleted: true,
+      mode: 'soft',
+      userId: id,
+    }
+  }
+
+    // ============================================
+  // DELETE ME (borrar mi propia cuenta)
+  // ============================================
+
+  /**
+   * Permite a un usuario eliminar su propia cuenta (soft delete).
+   * No hay hard delete self-service.
+   * Avisa a los coaches de los equipos donde estaba.
+   */
+  async deleteMe(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, lastName: true, email: true, deletedAt: true },
+    })
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado')
+    }
+    if (user.deletedAt) {
+      throw new ConflictException('Tu cuenta ya estaba eliminada')
+    }
+
+    // Avisar a coaches antes de desvincular
+    await this.notifyCoachesOfDeparture(userId)
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: { deletedAt: new Date() },
+      })
+
+      await tx.teamMembership.updateMany({
+        where: { userId, status: 'ACTIVE' },
+        data: { status: 'LEFT', leftAt: new Date() },
+      })
+
+      await tx.clubMember.updateMany({
+        where: { userId, isActive: true },
+        data: { isActive: false },
+      })
+
+      await tx.refreshToken.updateMany({
+        where: { userId, isRevoked: false },
+        data: { isRevoked: true },
+      })
+    })
+
+    return {
+      deleted: true,
+      mode: 'soft',
+      userId,
+    }
+  }
+
+
+  // ============================================
+  // HARD DELETE (solo SUPER_ADMIN)
+  // ============================================
+
+  async hardDelete(id: string, actorId: string) {
+    if (!(await isSuperAdmin(this.prisma, actorId))) {
+      throw new ForbiddenException('Solo los super administradores pueden eliminar usuarios')
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id },
       select: { id: true, name: true, lastName: true, email: true },
@@ -137,10 +241,8 @@ export class UserService {
       throw new NotFoundException('Usuario no encontrado')
     }
 
-    // 3) Notificar a coaches de los equipos donde tiene membership
     await this.notifyCoachesOfDeparture(id)
 
-    // 4) Hard delete (cascade)
     await this.prisma.user.delete({
       where: { id },
     })
@@ -156,12 +258,7 @@ export class UserService {
   // NOTIFICAR A COACHES
   // ============================================
 
-  /**
-   * Notifica (console.log por ahora) a los COACH activos de los equipos
-   * donde el user tiene memberships (activas o no), excluyendo al propio user.
-   */
   private async notifyCoachesOfDeparture(userId: string): Promise<void> {
-    // 1) Equipos donde el user tiene alguna membership
     const memberships = await this.prisma.teamMembership.findMany({
       where: { userId },
       select: {
@@ -174,7 +271,7 @@ export class UserService {
               where: {
                 status: 'ACTIVE',
                 roles: { some: { role: 'COACH' } },
-                NOT: { userId }, // excluye al propio user
+                NOT: { userId },
               },
               select: {
                 user: {
@@ -192,7 +289,6 @@ export class UserService {
       },
     })
 
-    // 2) Deduplicar coaches por (coach.id, team.id)
     const seen = new Set<string>()
     const notifiedAt = new Date()
 
@@ -212,9 +308,11 @@ export class UserService {
     }
   }
 
-  // ✅ NUEVO: Crear usuario desde el admin
+  // ============================================
+  // CREAR USUARIO DESDE ADMIN
+  // ============================================
+
   async create(data: { email: string; password: string; name: string; lastName: string; role?: string }) {
-    // Verificar si el email ya existe
     const existingUser = await this.prisma.user.findUnique({
       where: { email: data.email },
     })
@@ -223,7 +321,6 @@ export class UserService {
       throw new ConflictException('Ya existe un usuario con este email')
     }
 
-    // Hashear la contraseña
     const hashedPassword = await bcrypt.hash(data.password, 10)
 
     return this.prisma.user.create({
@@ -273,7 +370,6 @@ export class UserService {
   }
 
   async updateProfile(userId: string, data: any) {
-    // Verificar si el email ya está en uso por otro usuario
     if (data.email) {
       const existingUser = await this.prisma.user.findFirst({
         where: {
@@ -319,22 +415,18 @@ export class UserService {
       throw new NotFoundException('Usuario no encontrado')
     }
 
-    // Verificar contraseña actual
     const isPasswordValid = await bcrypt.compare(currentPassword, user.password)
     if (!isPasswordValid) {
       throw new UnauthorizedException('La contraseña actual es incorrecta')
     }
 
-    // Hashear nueva contraseña
     const hashedPassword = await bcrypt.hash(newPassword, 10)
 
-    // Actualizar
     await this.prisma.user.update({
       where: { id: userId },
       data: { password: hashedPassword },
     })
 
-    // Revocar todos los refresh tokens (por seguridad)
     await this.prisma.refreshToken.updateMany({
       where: { userId },
       data: { isRevoked: true },
@@ -356,16 +448,13 @@ export class UserService {
       throw new NotFoundException('Usuario no encontrado')
     }
 
-    // Hashear la nueva contraseña
     const hashedPassword = await bcrypt.hash(newPassword, 10)
 
-    // Actualizar contraseña
     await this.prisma.user.update({
       where: { id: userId },
       data: { password: hashedPassword },
     })
 
-    // Revocar todos los refresh tokens (el usuario deberá volver a iniciar sesión)
     await this.prisma.refreshToken.updateMany({
       where: { userId },
       data: { isRevoked: true },
@@ -375,12 +464,9 @@ export class UserService {
   }
 
   // ============================================
-  // NUEVOS MÉTODOS (Fase 3 - User refactor)
+  // PERFIL PROPIO (getMe / updateMe)
   // ============================================
 
-  /**
-   * Mi perfil completo: incluye memberships, tutores, jugadores a cargo.
-   */
   async getMe(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -444,14 +530,9 @@ export class UserService {
 
     if (!user) throw new NotFoundException('Usuario no encontrado')
 
-    // Calculamos la edad si tenemos birthDate (aunque no lo seleccionamos arriba, lo dejamos preparado)
     return user
   }
 
-  /**
-   * Actualizar mi perfil (campos editables: name, lastName, phone, bio, avatar).
-   * NO permite cambiar email, username ni role desde aquí.
-   */
   async updateMe(
     userId: string,
     data: {
@@ -489,10 +570,10 @@ export class UserService {
     })
   }
 
-  /**
-   * Buscar usuarios limitado a los clubes del user que busca.
-   * Excluye usuarios fantasma (isGhost: true) y el propio user.
-   */
+  // ============================================
+  // BÚSQUEDA DE USUARIOS
+  // ============================================
+
   async searchUsers(userId: string, query: string) {
     if (!query || query.trim().length < 2) {
       throw new NotFoundException(
@@ -502,7 +583,6 @@ export class UserService {
 
     const q = query.trim().toLowerCase().replace(/^@/, '')
 
-    // 1) Obtener los clubes del user
     const myClubs = await this.prisma.clubMember.findMany({
       where: { userId, isActive: true },
       select: { clubId: true },
@@ -514,13 +594,11 @@ export class UserService {
       return []
     }
 
-    // 2) Buscar usuarios en esos clubes
     const users = await this.prisma.user.findMany({
       where: {
         AND: [
           { id: { not: userId } },
-          // ✅ Ya no filtramos por isGhost: queremos incluir también jugadores
-          // migrados sin cuenta (fantasmas) porque son reutilizables.
+          { deletedAt: null },
           {
             OR: [
               { username: { contains: q, mode: 'insensitive' } },
@@ -582,10 +660,6 @@ export class UserService {
     return users
   }
 
-  /**
-   * Ficha pública de un usuario por username (sin @).
-   * Devuelve solo información pública.
-   */
   async findByUsername(username: string) {
     const cleanUsername = username.startsWith('@') ? username : `@${username}`
 
@@ -625,13 +699,6 @@ export class UserService {
     return user
   }
 
-  /**
-   * Buscar un usuario registrado (no fantasma) por email o username exacto
-   * para invitarlo a un equipo. Devuelve solo datos públicos.
-   *
-   * Restricción: solo SUPER_ADMIN, miembros activos de algún club,
-   * o staff de algún equipo pueden usar este endpoint.
-   */
   async lookupUserForInvite(
     actorId: string,
     query: { email?: string; username?: string },
@@ -673,7 +740,6 @@ export class UserService {
       })
     }
 
-    // Restricción de acceso: solo si el actor tiene algún rol de gestión
     const isSuper = await isSuperAdmin(this.prisma, actorId)
     if (!isSuper) {
       const isClubMember = await this.prisma.clubMember.findFirst({
@@ -702,84 +768,64 @@ export class UserService {
     return user
   }
 
-
-
   // ============================================
   // CREAR USUARIO FANTASMA Y AÑADIRLO A UN EQUIPO
   // ============================================
 
-  /**
-   * Crea un User "fantasma" (isGhost: true, sin password) y lo vincula a un equipo.
-   * Útil cuando un coach quiere añadir a un jugador que todavía no se ha registrado.
-   *
-   * - Genera username autogenerado.
-   * - Crea TeamMembership con status ACTIVE.
-   * - Crea ClubMember con rol MEMBER (auto-vinculación al club).
-   *
-   * Cuando el jugador se registre con el mismo email, su cuenta se "reclamará"
-   * (auth.service → register detecta isGhost y lo convierte en real).
-   */
   async createGhost(requesterId: string, dto: CreateGhostDto) {
-    // 1) Verificar equipo
     const team = await this.prisma.team.findUnique({
       where: { id: dto.teamId },
       include: { club: true },
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
-// 2) Verificar permisos del requester
-await assertCanManageMembers(this.prisma, requesterId, dto.teamId)
+    await assertCanManageMembers(this.prisma, requesterId, dto.teamId)
 
-    // 3) Verificar email si lo dan
-if (dto.email) {
-  const existing = await this.prisma.user.findUnique({
-    where: { email: dto.email },
-    select: { id: true, isGhost: true, deletedAt: true },
-  })
+    if (dto.email) {
+      const existing = await this.prisma.user.findUnique({
+        where: { email: dto.email },
+        select: { id: true, isGhost: true, deletedAt: true },
+      })
 
-  if (existing?.deletedAt) {
-    throw new ConflictException({
-      code: 'USER_DELETED',
-      message: 'Ese email pertenece a una cuenta eliminada.',
-    })
-  }
+      if (existing?.deletedAt) {
+        throw new ConflictException({
+          code: 'USER_DELETED',
+          message: 'Ese email pertenece a una cuenta eliminada.',
+        })
+      }
 
-  if (existing?.isGhost) {
-    // 3a) Fantasma existente → añadirlo al equipo (no crear nuevo)
-    await this.addExistingGhostToTeam(existing.id, dto, requesterId)
+      if (existing?.isGhost) {
+        await this.addExistingGhostToTeam(existing.id, dto, requesterId)
 
-    const ghost = await this.prisma.user.findUnique({
-      where: { id: existing.id },
-      select: {
-        id: true,
-        username: true,
-        name: true,
-        lastName: true,
-        email: true,
-        isGhost: true,
-      },
-    })
-    return ghost
-  }
+        const ghost = await this.prisma.user.findUnique({
+          where: { id: existing.id },
+          select: {
+            id: true,
+            username: true,
+            name: true,
+            lastName: true,
+            email: true,
+            isGhost: true,
+          },
+        })
+        return ghost
+      }
 
-  if (existing && !existing.isGhost) {
-    // 3b) Usuario real → redirigir a "Usuario Registrado" (Tarea 2)
-    throw new ConflictException({
-      code: 'USER_ALREADY_EXISTS_USE_EMAIL_INVITE',
-      message:
-        'Ya existe un usuario registrado con ese email. Usa "Usuario Registrado" para invitarlo.',
-    })
-  }
-}
+      if (existing && !existing.isGhost) {
+        throw new ConflictException({
+          code: 'USER_ALREADY_EXISTS_USE_EMAIL_INVITE',
+          message:
+            'Ya existe un usuario registrado con ese email. Usa "Usuario Registrado" para invitarlo.',
+        })
+      }
+    }
 
-    // 4) Generar username único
     const username = await generateUniqueUsername(
       this.prisma,
       dto.name,
       dto.lastName,
     )
 
-    // 5) Crear User + TeamMembership + ClubMember en una transacción
     const newUser = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -818,7 +864,6 @@ if (dto.email) {
       return user
     })
 
-    // 6) Devolver con la forma que espera el frontend
     return {
       id: newUser.id,
       username: newUser.username,
@@ -829,14 +874,10 @@ if (dto.email) {
     }
   }
 
-   // ============================================
+  // ============================================
   // EDITAR PERFIL DE UN GHOST
   // ============================================
 
-  /**
-   * Editar los datos personales de un user "fantasma" (isGhost: true).
-   * Solo SUPER_ADMIN, ADMIN_CLUB del club o COACH/ASSISTANT/ADMIN_TEAM del equipo.
-   */
   async updateGhostProfile(
     actorId: string,
     targetUserId: string,
@@ -848,14 +889,12 @@ if (dto.email) {
       bio?: string | null
     },
   ) {
-    // 1) Verificar permisos
     if (!(await canEditGhost(this.prisma, actorId, targetUserId))) {
       throw new ForbiddenException(
         'No tienes permisos para editar este usuario (o no es un jugador sin cuenta)',
       )
     }
 
-    // 2) Verificar que el target es ghost (por defensa en profundidad)
     const target = await this.prisma.user.findUnique({
       where: { id: targetUserId },
       select: { id: true, isGhost: true },
@@ -869,7 +908,6 @@ if (dto.email) {
       )
     }
 
-    // 3) Validar email si viene
     if (data.email !== undefined && data.email !== null && data.email !== '') {
       const existing = await this.prisma.user.findFirst({
         where: { email: data.email, NOT: { id: targetUserId } },
@@ -880,7 +918,6 @@ if (dto.email) {
       }
     }
 
-    // 4) Actualizar
     return this.prisma.user.update({
       where: { id: targetUserId },
       data: {
@@ -901,48 +938,47 @@ if (dto.email) {
         username: true,
       },
     })
-  } 
+  }
 
   private async addExistingGhostToTeam(
-  ghostId: string,
-  dto: CreateGhostDto,
-  requesterId: string,
-) {
-  const team = await this.prisma.team.findUnique({
-    where: { id: dto.teamId },
-    select: { clubId: true },
-  })
-  if (!team) throw new NotFoundException('Equipo no encontrado')
+    ghostId: string,
+    dto: CreateGhostDto,
+    requesterId: string,
+  ) {
+    const team = await this.prisma.team.findUnique({
+      where: { id: dto.teamId },
+      select: { clubId: true },
+    })
+    if (!team) throw new NotFoundException('Equipo no encontrado')
 
-  await this.prisma.teamMembership.upsert({
-    where: { userId_teamId: { userId: ghostId, teamId: dto.teamId } },
-    create: {
-      userId: ghostId,
-      teamId: dto.teamId,
-      status: 'ACTIVE',
-      invitedById: requesterId,
-      jerseyNumber: dto.jerseyNumber ?? null,
-      position: dto.position ?? null,
-      roles: { create: [{ role: (dto.role ?? 'PLAYER') as any }] },
-    },
-    update: {
-      status: 'ACTIVE',
-      leftAt: null,
-      ...(dto.jerseyNumber !== undefined && { jerseyNumber: dto.jerseyNumber }),
-      ...(dto.position !== undefined && { position: dto.position }),
-    },
-  })
+    await this.prisma.teamMembership.upsert({
+      where: { userId_teamId: { userId: ghostId, teamId: dto.teamId } },
+      create: {
+        userId: ghostId,
+        teamId: dto.teamId,
+        status: 'ACTIVE',
+        invitedById: requesterId,
+        jerseyNumber: dto.jerseyNumber ?? null,
+        position: dto.position ?? null,
+        roles: { create: [{ role: (dto.role ?? 'PLAYER') as any }] },
+      },
+      update: {
+        status: 'ACTIVE',
+        leftAt: null,
+        ...(dto.jerseyNumber !== undefined && { jerseyNumber: dto.jerseyNumber }),
+        ...(dto.position !== undefined && { position: dto.position }),
+      },
+    })
 
-  await this.prisma.clubMember.upsert({
-    where: { userId_clubId: { userId: ghostId, clubId: team.clubId } },
-    create: {
-      userId: ghostId,
-      clubId: team.clubId,
-      role: 'MEMBER',
-      isActive: true,
-    },
-    update: { isActive: true },
-  })
-}
-
+    await this.prisma.clubMember.upsert({
+      where: { userId_clubId: { userId: ghostId, clubId: team.clubId } },
+      create: {
+        userId: ghostId,
+        clubId: team.clubId,
+        role: 'MEMBER',
+        isActive: true,
+      },
+      update: { isActive: true },
+    })
+  }
 }

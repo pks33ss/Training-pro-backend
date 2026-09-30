@@ -14,57 +14,18 @@ import { notifyClubAdminOfDeparture } from './utils/notify-club-admin'
 import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member'
 import {
   assertCanRemoveMember,
+  assertCanManageMembers,
   canAddRole,
   canRemoveRole,
   getAddableRoles,
   getRemovableRoles,
+  canViewTeam,
   MembershipRoleValue,
 } from '../common/access'
 
 @Injectable()
 export class MembershipsService {
   constructor(private prisma: PrismaService) {}
-
-  // ============================================
-  // HELPERS DE PERMISOS
-  // ============================================
-
-  private async verifyCanManageTeam(userId: string, teamId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    })
-    if (!user) throw new NotFoundException('Usuario no encontrado')
-    if (user.role === 'SUPER_ADMIN') return
-
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: {
-        userId,
-        teamId,
-        status: 'ACTIVE',
-        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
-      },
-    })
-    if (membership) return
-
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-    })
-    if (!team) throw new NotFoundException('Equipo no encontrado')
-
-    const clubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId,
-        clubId: team.clubId,
-        isActive: true,
-        role: 'ADMIN_CLUB',
-      },
-    })
-    if (clubAdmin) return
-
-    throw new ForbiddenException(
-      'No tienes permisos para gestionar este equipo',
-    )
-  }
 
   // ============================================
   // MIS MEMBERSHIPS
@@ -92,21 +53,8 @@ export class MembershipsService {
   // ============================================
 
   async findByTeam(userId: string, teamId: string) {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    if (!user) throw new NotFoundException('Usuario no encontrado')
-
-    if (user.role !== 'SUPER_ADMIN') {
-      const team = await this.prisma.team.findUnique({
-        where: { id: teamId },
-      })
-      if (!team) throw new NotFoundException('Equipo no encontrado')
-
-      const clubMember = await this.prisma.clubMember.findFirst({
-        where: { userId, clubId: team.clubId, isActive: true },
-      })
-      if (!clubMember) {
-        throw new ForbiddenException('No tienes acceso a este equipo')
-      }
+    if (!(await canViewTeam(this.prisma, userId, teamId))) {
+      throw new ForbiddenException('No tienes acceso a este equipo')
     }
 
     const memberships = await this.prisma.teamMembership.findMany({
@@ -121,8 +69,8 @@ export class MembershipsService {
             avatar: true,
             email: true,
             isGhost: true,
-            phone: true,   
-            bio: true, 
+            phone: true,
+            bio: true,
           },
         },
         season: true,
@@ -201,7 +149,7 @@ export class MembershipsService {
     })
     if (!membership) throw new NotFoundException('Solicitud no encontrada')
 
-    await this.verifyCanManageTeam(userId, membership.teamId)
+    await assertCanManageMembers(this.prisma, userId, membership.teamId)
 
     if (membership.status !== 'PENDING') {
       throw new BadRequestException('La solicitud no está pendiente')
@@ -228,7 +176,7 @@ export class MembershipsService {
     })
     if (!membership) throw new NotFoundException('Solicitud no encontrada')
 
-    await this.verifyCanManageTeam(userId, membership.teamId)
+    await assertCanManageMembers(this.prisma, userId, membership.teamId)
 
     if (membership.status !== 'PENDING') {
       throw new BadRequestException('La solicitud no está pendiente')
@@ -243,12 +191,6 @@ export class MembershipsService {
   // SALIR / QUITAR DEL EQUIPO
   // ============================================
 
-  /**
-   * Saca a un miembro del equipo (status LEFT).
-   *
-   * Regla relajada: se permite aunque sea el último COACH.
-   * Se notifica a ADMIN_TEAM del equipo (y si no hay, a ADMIN_CLUB).
-   */
   async leave(userId: string, membershipId: string) {
     const membership = await this.prisma.teamMembership.findUnique({
       where: { id: membershipId },
@@ -273,7 +215,6 @@ export class MembershipsService {
 
     const targetRoles = membership.roles.map((r) => r.role)
 
-    // Notificar a club admin si el que sale era staff
     const memberName = membership.user
       ? `${membership.user.name ?? ''} ${membership.user.lastName ?? ''}`.trim() ||
         'Usuario desconocido'
@@ -305,7 +246,6 @@ export class MembershipsService {
       },
     })
 
-    // Si era COACH y ya no quedan COACH en el equipo, notificar
     if (targetRoles.includes('COACH')) {
       await this.notifyIfNoCoachesLeft(membership.teamId)
     }
@@ -322,10 +262,6 @@ export class MembershipsService {
   // AÑADIR / QUITAR ROLES INDIVIDUALES
   // ============================================
 
-  /**
-   * Añade un rol a una membership existente.
-   * No hace nada si ya lo tenía.
-   */
   async addRole(
     actorId: string,
     membershipId: string,
@@ -341,7 +277,6 @@ export class MembershipsService {
       throw new BadRequestException('La membership no está activa')
     }
 
-    // Permiso
     if (
       !(await canAddRole(
         this.prisma,
@@ -354,7 +289,6 @@ export class MembershipsService {
       throw new ForbiddenException('No tienes permisos para añadir este rol')
     }
 
-    // ¿Ya lo tiene?
     if (membership.roles.some((r) => r.role === role)) {
       throw new BadRequestException('Este miembro ya tiene ese rol')
     }
@@ -373,11 +307,6 @@ export class MembershipsService {
     })
   }
 
-  /**
-   * Quita un rol de una membership.
-   * Si al quitarlo la membership se queda sin roles → status LEFT.
-   * Si el rol era COACH y ya no quedan COACH → notificar.
-   */
   async removeRole(
     actorId: string,
     membershipId: string,
@@ -393,7 +322,6 @@ export class MembershipsService {
       throw new BadRequestException('La membership no está activa')
     }
 
-    // Permiso
     if (
       !(await canRemoveRole(
         this.prisma,
@@ -406,16 +334,13 @@ export class MembershipsService {
       throw new ForbiddenException('No tienes permisos para quitar este rol')
     }
 
-    // ¿Lo tiene?
     if (!membership.roles.some((r) => r.role === role)) {
       throw new BadRequestException('Este miembro no tiene ese rol')
     }
 
-    // ¿Era el último rol?
     const remainingRoles = membership.roles.filter((r) => r.role !== role)
 
     if (remainingRoles.length === 0) {
-      // Dejar la membership en LEFT (equivale a leave)
       const updated = await this.prisma.teamMembership.update({
         where: { id: membershipId },
         data: {
@@ -443,7 +368,6 @@ export class MembershipsService {
       return updated
     }
 
-    // Todavía tiene otros roles: solo quitar este
     const updated = await this.prisma.teamMembership.update({
       where: { id: membershipId },
       data: {
@@ -465,7 +389,7 @@ export class MembershipsService {
   }
 
   // ============================================
-  // ACTUALIZAR MEMBERSHIP (roles, dorsal, posición)
+  // ACTUALIZAR MEMBERSHIP
   // ============================================
 
   async update(userId: string, membershipId: string, dto: UpdateMembershipDto & { roles?: MembershipRoleValue[] }) {
@@ -475,9 +399,8 @@ export class MembershipsService {
     })
     if (!membership) throw new NotFoundException('Membership no encontrado')
 
-    await this.verifyCanManageTeam(userId, membership.teamId)
+    await assertCanManageMembers(this.prisma, userId, membership.teamId)
 
-    // Compat: si viene `role` (singular), se convierte en `roles: [role]`
     const { role, roles, ...rest } = dto as any
 
     const nextRoles: MembershipRoleValue[] | undefined = roles ?? (role ? [role] : undefined)
@@ -515,7 +438,7 @@ export class MembershipsService {
     teamId: string,
     dto: { userId: string; role?: string; jerseyNumber?: number; position?: string },
   ) {
-    await this.verifyCanManageTeam(requesterId, teamId)
+    await assertCanManageMembers(this.prisma, requesterId, teamId)
 
     const targetUser = await this.prisma.user.findUnique({
       where: { id: dto.userId },
@@ -639,11 +562,6 @@ export class MembershipsService {
     }
   }
 
-  /**
-   * Si ya no quedan COACH activos en el equipo, notifica a los ADMIN_TEAM.
-   * Si no hay ADMIN_TEAM, notifica a los ADMIN_CLUB del club.
-   * Solo console.log por ahora.
-   */
   private async notifyIfNoCoachesLeft(teamId: string): Promise<void> {
     const coachCount = await this.prisma.teamMembership.count({
       where: {
@@ -653,15 +571,13 @@ export class MembershipsService {
       },
     })
 
-    if (coachCount > 0) return
-
+    if (coachCount > 0) return    
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
       select: { id: true, name: true, clubId: true },
     })
     if (!team) return
 
-    // 1) ADMIN_TEAM del equipo
     const adminTeams = await this.prisma.teamMembership.findMany({
       where: {
         teamId,
@@ -684,7 +600,6 @@ export class MembershipsService {
       return
     }
 
-    // 2) Fallback: ADMIN_CLUB del club
     const clubAdmins = await this.prisma.clubMember.findMany({
       where: { clubId: team.clubId, role: 'ADMIN_CLUB', isActive: true },
       include: {

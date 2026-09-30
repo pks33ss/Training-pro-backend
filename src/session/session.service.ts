@@ -3,51 +3,11 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateSessionDto } from './dto/create-session.dto';
 import { UpdateSessionDto } from './dto/update-session.dto';
 import { AddExerciseDto } from './dto/add-exercise.dto';
+import { canViewTeam, canEditTeam } from '../common/access';
 
 @Injectable()
 export class SessionService {
   constructor(private prisma: PrismaService) {}
-
-  private async canAccessTeam(userId: string, teamId: string): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    if (user?.role === 'SUPER_ADMIN') return true
-
-    const team = await this.prisma.team.findUnique({ where: { id: teamId } })
-    if (!team) return false
-
-    const clubMember = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: team.clubId, isActive: true },
-    })
-    if (clubMember) return true
-
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: { userId, teamId, status: 'ACTIVE' },
-    })
-    return !!membership
-  }
-
-  private async canManageTeam(userId: string, teamId: string): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    if (user?.role === 'SUPER_ADMIN') return true
-
-    const team = await this.prisma.team.findUnique({ where: { id: teamId } })
-    if (!team) return false
-
-    const clubAdmin = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: team.clubId, isActive: true, role: 'ADMIN_CLUB' },
-    })
-    if (clubAdmin) return true
-
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: {
-        userId,
-        teamId,
-        status: 'ACTIVE',
-        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
-      },
-    })
-    return !!membership
-  }
 
   async create(userId: string, createSessionDto: CreateSessionDto) {
     const date = new Date(createSessionDto.date);
@@ -63,7 +23,7 @@ export class SessionService {
       throw new NotFoundException('Equipo no encontrado');
     }
 
-    if (!(await this.canManageTeam(userId, team.id))) {
+    if (!(await canEditTeam(this.prisma, userId, team.id))) {
       throw new ForbiddenException('No tienes permisos para crear sesiones en este equipo');
     }
 
@@ -84,7 +44,7 @@ export class SessionService {
     });
   }
 
-    async findAllByTeam(userId: string, teamId: string) {
+  async findAllByTeam(userId: string, teamId: string) {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
     });
@@ -93,7 +53,7 @@ export class SessionService {
       throw new NotFoundException('Equipo no encontrado');
     }
 
-    if (!(await this.canAccessTeam(userId, teamId))) {
+    if (!(await canViewTeam(this.prisma, userId, teamId))) {
       throw new ForbiddenException('No tienes acceso a este equipo');
     }
 
@@ -119,7 +79,6 @@ export class SessionService {
       },
     });
 
-    // ✅ Obtener users con membership PLAYER activa en este equipo
     const activeMemberships = await this.prisma.teamMembership.findMany({
       where: {
         teamId,
@@ -130,8 +89,6 @@ export class SessionService {
     });
     const activeUserIds = new Set(activeMemberships.map((m) => m.userId));
 
-    // ✅ Filtrar attendances a solo users que son miembros activos PLAYER
-    // (así el listado coincide con el detalle de la sesión)
     return sessions.map((s) => ({
       ...s,
       attendances: s.attendances.filter((a) => activeUserIds.has(a.userId)),
@@ -158,7 +115,7 @@ export class SessionService {
                     isGhost: true,
                   },
                 },
-                roles: true, // ✅ AÑADIDO
+                roles: true,
               },
               orderBy: { user: { lastName: 'asc' } },
             },
@@ -192,11 +149,10 @@ export class SessionService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    if (!(await this.canAccessTeam(userId, session.teamId))) {
+    if (!(await canViewTeam(this.prisma, userId, session.teamId))) {
       throw new ForbiddenException('No tienes acceso a esta sesión');
     }
 
-    // ✅ Normalizar roles de las memberships del team
     return {
       ...session,
       team: {
@@ -220,7 +176,7 @@ export class SessionService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    if (!(await this.canManageTeam(userId, session.teamId))) {
+    if (!(await canEditTeam(this.prisma, userId, session.teamId))) {
       throw new ForbiddenException('No tienes permisos para editar esta sesión');
     }
 
@@ -246,7 +202,7 @@ export class SessionService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    if (!(await this.canManageTeam(userId, session.teamId))) {
+    if (!(await canEditTeam(this.prisma, userId, session.teamId))) {
       throw new ForbiddenException('No tienes permisos para eliminar esta sesión');
     }
 
@@ -265,7 +221,7 @@ export class SessionService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    if (!(await this.canManageTeam(userId, session.teamId))) {
+    if (!(await canEditTeam(this.prisma, userId, session.teamId))) {
       throw new ForbiddenException('No tienes permisos para añadir ejercicios');
     }
 
@@ -292,7 +248,7 @@ export class SessionService {
       throw new NotFoundException('Ejercicio no encontrado');
     }
 
-    if (!(await this.canManageTeam(userId, exercise.session.teamId))) {
+    if (!(await canEditTeam(this.prisma, userId, exercise.session.teamId))) {
       throw new ForbiddenException('No tienes permisos para editar este ejercicio');
     }
 
@@ -319,7 +275,7 @@ export class SessionService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    if (!(await this.canManageTeam(userId, session.teamId))) {
+    if (!(await canEditTeam(this.prisma, userId, session.teamId))) {
       throw new ForbiddenException('No tienes permisos para reordenar ejercicios');
     }
 
@@ -345,7 +301,7 @@ export class SessionService {
       throw new NotFoundException('Ejercicio no encontrado');
     }
 
-    if (!(await this.canManageTeam(userId, exercise.session.teamId))) {
+    if (!(await canEditTeam(this.prisma, userId, exercise.session.teamId))) {
       throw new ForbiddenException('No tienes permisos para eliminar este ejercicio');
     }
 
@@ -370,7 +326,7 @@ export class SessionService {
       throw new NotFoundException('Ejercicio no encontrado');
     }
 
-    if (!(await this.canManageTeam(userId, exercise.session.teamId))) {
+    if (!(await canEditTeam(this.prisma, userId, exercise.session.teamId))) {
       throw new ForbiddenException('No tienes permisos');
     }
 
@@ -395,7 +351,7 @@ export class SessionService {
       throw new NotFoundException('Media no encontrada');
     }
 
-    if (!(await this.canManageTeam(userId, media.exercise.session.teamId))) {
+    if (!(await canEditTeam(this.prisma, userId, media.exercise.session.teamId))) {
       throw new ForbiddenException('No tienes permisos');
     }
 

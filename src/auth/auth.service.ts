@@ -22,9 +22,6 @@ export class AuthService {
     let user: any
     let invitation: any = null
 
-    // ─────────────────────────────────────────────
-    // 1) Buscar invitación ANTES de tocar User
-    // ─────────────────────────────────────────────
     if (registerDto.invitationCode) {
       invitation = await this.prisma.pendingInvitation.findUnique({
         where: { code: registerDto.invitationCode },
@@ -55,9 +52,6 @@ export class AuthService {
       if (invitation?.user?.deletedAt) invitation = null
     }
 
-    // ─────────────────────────────────────────────
-    // 2) Caso A: invitación apunta a FANTASMA → reclamarlo
-    // ─────────────────────────────────────────────
     if (invitation?.user?.isGhost) {
       const ghost = invitation.user
 
@@ -81,11 +75,7 @@ export class AuthService {
           username: finalUsername,
         },
       })
-    }
-    // ─────────────────────────────────────────────
-    // 3) Caso B: buscar por email (comportamiento actual)
-    // ─────────────────────────────────────────────
-    else {
+    } else {
       const existingUser = await this.prisma.user.findUnique({
         where: { email: registerDto.email },
       })
@@ -132,9 +122,6 @@ export class AuthService {
       }
     }
 
-    // ─────────────────────────────────────────────
-    // 4) Aplicar invitación (idempotente)
-    // ─────────────────────────────────────────────
     if (invitation) {
       try {
         await this.applyInvitation(invitation, user)
@@ -153,10 +140,6 @@ export class AuthService {
     }
   }
 
-  /**
-   * Aplica una invitación a un usuario recién registrado (o recién reclamado).
-   * Idempotente: si el membership ya existía (caso fantasma reclamado), no duplica.
-   */
   private async applyInvitation(
     invitation: {
       id: string
@@ -168,12 +151,10 @@ export class AuthService {
     },
     user: { id: string; email: string | null },
   ) {
-    // 1) Validar email SOLO si la invitación lo trae y NO coincide
     if (invitation.email && invitation.email !== user.email) {
       throw new Error('El email no coincide con el de la invitación')
     }
 
-    // 2) Upsert membership (idempotente)
     const membership = await this.prisma.teamMembership.upsert({
       where: {
         userId_teamId: { userId: user.id, teamId: invitation.teamId },
@@ -192,7 +173,6 @@ export class AuthService {
       include: { roles: true },
     })
 
-    // 3) Asegurar rol
     if (!membership.roles.some((r) => r.role === invitation.role)) {
       await this.prisma.membershipRole.upsert({
         where: {
@@ -209,10 +189,8 @@ export class AuthService {
       })
     }
 
-    // 4) Asegurar ClubMember
     await ensureClubMemberForTeam(this.prisma, user.id, invitation.teamId)
 
-    // 5) Marcar USED
     await this.prisma.pendingInvitation.update({
       where: { id: invitation.id },
       data: {
@@ -232,6 +210,15 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
+    // ✅ Bloquear login de usuarios soft-deleted
+    if (user.deletedAt) {
+      throw new UnauthorizedException('Esta cuenta ha sido eliminada');
+    }
+
+    if (!user.password) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+
     const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciales inválidas');
@@ -247,9 +234,9 @@ export class AuthService {
 
   async refreshToken(refreshToken: string) {
     const tokenData = await this.refreshTokenService.validateRefreshToken(refreshToken);
-    
+
     await this.refreshTokenService.revokeRefreshToken(refreshToken);
-    
+
     const user = await this.prisma.user.findUnique({
       where: { id: tokenData.userId },
     });
@@ -258,8 +245,13 @@ export class AuthService {
       throw new UnauthorizedException('Usuario no encontrado');
     }
 
+    // ✅ Bloquear refresh de usuarios soft-deleted
+    if (user.deletedAt) {
+      throw new UnauthorizedException('Esta cuenta ha sido eliminada');
+    }
+
     const tokens = await this.generateTokens(user);
-    
+
     return tokens;
   }
 
@@ -275,7 +267,7 @@ export class AuthService {
 
   private async generateTokens(user: any) {
     const accessToken = this.jwtService.sign(
-      { 
+      {
         sub: user.id,
         email: user.email,
         role: user.role,

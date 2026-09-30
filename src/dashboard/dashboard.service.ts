@@ -1,39 +1,13 @@
-import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common'
+import { Injectable } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import { getTeamForViewer } from '../common/access'
 
 @Injectable()
 export class DashboardService {
   constructor(private prisma: PrismaService) {}
 
-  private async assertTeamAccess(userId: string, teamId: string) {
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-      include: { club: true },
-    })
-
-    if (!team) {
-      throw new NotFoundException('Equipo no encontrado')
-    }
-
-    const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    const isSuperAdmin = user?.role === 'SUPER_ADMIN'
-    if (isSuperAdmin) return team
-
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: team.clubId, role: 'ADMIN_CLUB', isActive: true },
-    })
-    if (isClubAdmin) return team
-
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: { userId, teamId, status: 'ACTIVE' },
-    })
-    if (membership) return team
-
-    throw new ForbiddenException('No tienes acceso a este equipo')
-  }
-
   async getTeamSummary(userId: string, teamId: string) {
-    const team = await this.assertTeamAccess(userId, teamId)
+    const team = await getTeamForViewer(this.prisma, userId, teamId)
     const now = new Date()
 
     const [
@@ -76,7 +50,7 @@ export class DashboardService {
       // 4) Total de entrenamientos
       this.prisma.session.count({ where: { teamId } }),
 
-      // 5) Top jugadores — ✅ ahora agrupamos por userId
+      // 5) Top jugadores — agrupamos por userId
       this.prisma.matchPlayerStats.groupBy({
         by: ['userId'],
         where: {
@@ -114,7 +88,7 @@ export class DashboardService {
       excused: 0,
     }
     for (const row of attendanceStats) {
-      const key = row.status.toLowerCase() as keyof typeof attendanceCounts
+      const key = row.status.toLowerCase() as keyof typeof attendanceCounts      
       attendanceCounts[key] = row._count._all
     }
     const totalAttendance =
@@ -131,7 +105,6 @@ export class DashboardService {
         : 0
 
     // --- Procesar top jugadores ---
-    // ✅ Ahora buscamos Users en lugar de Players
     const userIds = topPlayersRaw.map((p) => p.userId)
     const users = await this.prisma.user.findMany({
       where: { id: { in: userIds } },
@@ -145,7 +118,7 @@ export class DashboardService {
     })
     const usersMap = new Map(users.map((u) => [u.id, u]))
 
-    // ✅ Necesitamos el jersey number del membership activo en este equipo
+    // Necesitamos el jersey number del membership activo en este equipo
     const memberships = await this.prisma.teamMembership.findMany({
       where: {
         userId: { in: userIds },

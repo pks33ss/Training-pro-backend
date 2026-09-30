@@ -1,32 +1,11 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BulkAttendanceDto } from './dto/update-attendance.dto';
+import { canViewTeam } from '../common/access';
 
 @Injectable()
 export class AttendanceService {
   constructor(private prisma: PrismaService) {}
-
-  // ============================================
-  // HELPER: verificar acceso al equipo
-  // ============================================
-
-  private async canAccessTeam(userId: string, teamId: string): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    if (user?.role === 'SUPER_ADMIN') return true
-
-    const team = await this.prisma.team.findUnique({ where: { id: teamId } })
-    if (!team) return false
-
-    const clubMember = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: team.clubId, isActive: true },
-    })
-    if (clubMember) return true
-
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: { userId, teamId, status: 'ACTIVE' },
-    })
-    return !!membership
-  }
 
   // ============================================
   // ASISTENCIA POR SESIÓN
@@ -42,17 +21,16 @@ export class AttendanceService {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    if (!(await this.canAccessTeam(userId, session.teamId))) {
+    if (!(await canViewTeam(this.prisma, userId, session.teamId))) {
       throw new ForbiddenException('No tienes acceso a esta sesión');
     }
 
-    // ✅ Ahora buscamos Users con TeamMembership PLAYER activo
     const memberships = await this.prisma.teamMembership.findMany({
-where: {
-  teamId: session.teamId,
-  roles: { some: { role: 'PLAYER' } },
-  status: 'ACTIVE',
-},
+      where: {
+        teamId: session.teamId,
+        roles: { some: { role: 'PLAYER' } },
+        status: 'ACTIVE',
+      },
       include: {
         user: {
           select: {
@@ -109,7 +87,7 @@ where: {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    if (!(await this.canAccessTeam(userId, session.teamId))) {
+    if (!(await canViewTeam(this.prisma, userId, session.teamId))) {
       throw new ForbiddenException('No tienes permisos para gestionar asistencias');
     }
 
@@ -143,7 +121,7 @@ where: {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    if (!(await this.canAccessTeam(userId, session.teamId))) {
+    if (!(await canViewTeam(this.prisma, userId, session.teamId))) {
       throw new ForbiddenException('No tienes permisos para gestionar asistencias');
     }
 
@@ -184,7 +162,7 @@ where: {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    if (!(await this.canAccessTeam(userId, session.teamId))) {
+    if (!(await canViewTeam(this.prisma, userId, session.teamId))) {
       throw new ForbiddenException('No tienes permisos para gestionar asistencias');
     }
 
@@ -212,7 +190,6 @@ where: {
   // ============================================
 
   async getUserAttendance(userId: string, targetUserId: string) {
-    // Verificar que el targetUserId existe
     const targetUser = await this.prisma.user.findUnique({
       where: { id: targetUserId },
       select: { id: true },
@@ -222,8 +199,6 @@ where: {
       throw new NotFoundException('Usuario no encontrado');
     }
 
-    // Verificar que quien consulta tiene acceso a algún equipo donde el target está
-    // (simplificado: solo verificamos que el requester es miembro activo de algún club común)
     const attendances = await this.prisma.attendance.findMany({
       where: { userId: targetUserId },
       include: { session: true },
@@ -275,17 +250,16 @@ where: {
       throw new NotFoundException('Equipo no encontrado');
     }
 
-    if (!(await this.canAccessTeam(userId, teamId))) {
+    if (!(await canViewTeam(this.prisma, userId, teamId))) {
       throw new ForbiddenException('No tienes acceso a este equipo');
     }
 
-    // ✅ Miembros con rol PLAYER activo
     const memberships = await this.prisma.teamMembership.findMany({
       where: {
-  teamId,
-  roles: { some: { role: 'PLAYER' } },
-  status: 'ACTIVE',
-},
+        teamId,
+        roles: { some: { role: 'PLAYER' } },
+        status: 'ACTIVE',
+      },
       include: {
         user: {
           select: {
@@ -394,17 +368,17 @@ where: {
       throw new NotFoundException('Sesión no encontrada');
     }
 
-    if (!(await this.canAccessTeam(userId, session.teamId))) {
+    if (!(await canViewTeam(this.prisma, userId, session.teamId))) {
       throw new ForbiddenException('No tienes acceso a esta sesión');
     }
 
     const totalPlayers = await this.prisma.teamMembership.count({
-  where: {
-    teamId: session.teamId,
-    roles: { some: { role: 'PLAYER' } },
-    status: 'ACTIVE',
-  },
-});
+      where: {
+        teamId: session.teamId,
+        roles: { some: { role: 'PLAYER' } },
+        status: 'ACTIVE',
+      },
+    });
 
     const present = session.attendances.filter(a => a.status === 'PRESENT').length;
     const absent = session.attendances.filter(a => a.status === 'ABSENT').length;

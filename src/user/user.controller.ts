@@ -30,9 +30,6 @@ export class UserController {
       data.newPassword,
     )
   }
-  // ============================================
-  // NUEVOS ENDPOINTS (Fase 3 - User refactor)
-  // ============================================
 
   @Get('me')
   getMe(@Request() req) {
@@ -42,6 +39,11 @@ export class UserController {
   @Put('me')
   updateMe(@Request() req, @Body() data: any) {
     return this.userService.updateMe(req.user.id, data)
+  }
+
+  @Delete('me')
+  deleteMe(@Request() req) {
+    return this.userService.deleteMe(req.user.id)
   }
 
   @Get('search')
@@ -54,7 +56,7 @@ export class UserController {
     return this.userService.findByUsername(username)
   }
 
-    @Get('lookup')
+  @Get('lookup')
   lookup(
     @Request() req,
     @Query('email') email?: string,
@@ -63,8 +65,7 @@ export class UserController {
     return this.userService.lookupUserForInvite(req.user.id, { email, username })
   }
 
-
-    @Post('ghost')
+  @Post('ghost')
   createGhost(@Request() req, @Body() dto: CreateGhostDto) {
     return this.userService.createGhost(req.user.id, dto)
   }
@@ -74,12 +75,12 @@ export class UserController {
   // ============================================
 
   @Get()
-  async findAll(@Request() req) {
-    if (req.user.role !== 'SUPER_ADMIN') {
-      throw new ForbiddenException('Solo los super administradores pueden ver todos los usuarios')
-    }
-    return this.userService.findAll()
+async findAll(@Request() req, @Query('includeDeleted') includeDeleted?: string) {
+  if (req.user.role !== 'SUPER_ADMIN') {
+    throw new ForbiddenException('Solo los super administradores pueden ver todos los usuarios')
   }
+  return this.userService.findAll(includeDeleted === 'true')
+}
 
   @Get(':id')
   async findOne(@Request() req, @Param('id') id: string) {
@@ -109,7 +110,7 @@ export class UserController {
     return this.userService.updateRole(id, role)
   }
 
-    @Put(':id/ghost-profile')
+  @Put(':id/ghost-profile')
   async updateGhostProfile(
     @Request() req,
     @Param('id') id: string,
@@ -124,15 +125,27 @@ export class UserController {
     return this.userService.updateGhostProfile(req.user.id, id, data)
   }
 
- // ✅ DESPUÉS
+  // ✅ DELETE /users/:id — soft o hard (solo SUPER_ADMIN)
   @Delete(':id')
-  async remove(@Request() req, @Param('id') id: string) {
+  async remove(
+    @Request() req,
+    @Param('id') id: string,
+    @Query('mode') mode?: string,
+  ) {
     if (req.user.role !== 'SUPER_ADMIN') {
       throw new ForbiddenException('Solo los super administradores pueden eliminar usuarios')
     }
-    return this.userService.hardDelete(id, req.user.id)
+
+    const resolvedMode = mode === 'hard' ? 'hard' : 'soft'
+
+    if (resolvedMode === 'hard') {
+      return this.userService.hardDelete(id, req.user.id)
+    }
+
+    return this.userService.softDelete(id, req.user.id)
   }
-    @Post(':id/reset-password')
+
+  @Post(':id/reset-password')
   async resetPassword(
     @Request() req,
     @Param('id') id: string,

@@ -1,56 +1,21 @@
-
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import {
+  getTeamForViewer,
+  isActiveClubMember,
+  isSuperAdmin,
+} from '../common/access'
 
 @Injectable()
 export class CalendarService {
   constructor(private prisma: PrismaService) {}
 
   // ============================================
-  // HELPERS
-  // ============================================
-
-  private async verifyTeamAccess(userId: string, teamId: string) {
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-      include: { club: true },
-    })
-    if (!team) throw new NotFoundException('Equipo no encontrado')
-
-    const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    if (user?.role === 'SUPER_ADMIN') return team
-
-    // 1) Admin del club (acceso global al club)
-    const clubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId,
-        clubId: team.clubId,
-        isActive: true,
-        role: 'ADMIN_CLUB',
-      },
-    })
-    if (clubAdmin) return team
-
-    // 2) TeamMembership activa (modelo nuevo)
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: {
-        userId,
-        teamId,
-        status: 'ACTIVE',
-      },
-    })
-    if (membership) return team
-
-    // 3) TeamMember antiguo (compatibilidad con datos pre-migración)
-    throw new ForbiddenException('No tienes acceso a este equipo')
-  }
-
-  // ============================================
   // OBTENER EVENTOS DE UN RANGO DE FECHAS
   // ============================================
 
   async getEvents(userId: string, teamId: string, from: Date, to: Date) {
-    await this.verifyTeamAccess(userId, teamId)
+    await getTeamForViewer(this.prisma, userId, teamId)
 
     // Ejecutamos en paralelo
     const [sessions, matches, calendarEvents] = await Promise.all([
@@ -172,7 +137,9 @@ export class CalendarService {
     if (!teamIds || teamIds.length === 0) return []
 
     // Verificar acceso a todos los equipos
-    await Promise.all(teamIds.map((id) => this.verifyTeamAccess(userId, id)))
+    await Promise.all(
+      teamIds.map((id) => getTeamForViewer(this.prisma, userId, id)),
+    )
 
     // Cargar eventos de todos los equipos en paralelo
     const [sessions, matches, calendarEvents] = await Promise.all([
@@ -297,7 +264,7 @@ export class CalendarService {
     type?: string
     location?: string
   }) {
-    const team = await this.verifyTeamAccess(userId, teamId)
+    const team = await getTeamForViewer(this.prisma, userId, teamId)
 
     return this.prisma.calendarEvent.create({
       data: {
@@ -332,15 +299,14 @@ export class CalendarService {
     if (!event) throw new NotFoundException('Evento no encontrado')
 
     if (event.teamId) {
-      await this.verifyTeamAccess(userId, event.teamId)
+      await getTeamForViewer(this.prisma, userId, event.teamId)
     } else {
-      // Evento del club sin equipo específico → verificar acceso al club
-      const user = await this.prisma.user.findUnique({ where: { id: userId } })
-      if (user?.role !== 'SUPER_ADMIN') {
-        const member = await this.prisma.clubMember.findFirst({
-          where: { userId, clubId: event.clubId, isActive: true },
-        })
-        if (!member) throw new ForbiddenException('No tienes acceso a este evento')
+      // Evento del club sin equipo específico
+      if (
+        !(await isSuperAdmin(this.prisma, userId)) &&
+        !(await isActiveClubMember(this.prisma, userId, event.clubId))
+      ) {
+        throw new ForbiddenException('No tienes acceso a este evento')
       }
     }
 
@@ -365,14 +331,13 @@ export class CalendarService {
     if (!event) throw new NotFoundException('Evento no encontrado')
 
     if (event.teamId) {
-      await this.verifyTeamAccess(userId, event.teamId)
+      await getTeamForViewer(this.prisma, userId, event.teamId)
     } else {
-      const user = await this.prisma.user.findUnique({ where: { id: userId } })
-      if (user?.role !== 'SUPER_ADMIN') {
-        const member = await this.prisma.clubMember.findFirst({
-          where: { userId, clubId: event.clubId, isActive: true },
-        })
-        if (!member) throw new ForbiddenException('No tienes acceso a este evento')
+      if (
+        !(await isSuperAdmin(this.prisma, userId)) &&
+        !(await isActiveClubMember(this.prisma, userId, event.clubId))
+      ) {
+        throw new ForbiddenException('No tienes acceso a este evento')
       }
     }
 

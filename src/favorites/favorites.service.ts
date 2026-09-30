@@ -1,36 +1,10 @@
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import { canViewTeam } from '../common/access'
 
 @Injectable()
 export class FavoritesService {
   constructor(private prisma: PrismaService) {}
-
-  // ============================================
-  // HELPER: verificar acceso al equipo
-  // ============================================
-
-  private async canAccessTeam(userId: string, teamId: string): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    if (user?.role === 'SUPER_ADMIN') return true
-
-    const team = await this.prisma.team.findUnique({ where: { id: teamId } })
-    if (!team) return false
-
-    // 1) ClubMember (ADMIN_CLUB o cualquier ClubMember con acceso)
-    const clubMember = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: team.clubId, isActive: true },
-    })
-    if (clubMember) return true
-
-    // 2) TeamMembership activa (modelo nuevo)
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: { userId, teamId, status: 'ACTIVE' },
-    })
-    if (membership) return true
-
-   
-    return false
-  }
 
   // ============================================
   // LISTAR FAVORITOS
@@ -86,8 +60,7 @@ export class FavoritesService {
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
     // Verificar acceso con la lógica unificada
-    const hasAccess = await this.canAccessTeam(userId, teamId)
-    if (!hasAccess) {
+    if (!(await canViewTeam(this.prisma, userId, teamId))) {
       throw new ForbiddenException('No tienes acceso a este equipo')
     }
 
