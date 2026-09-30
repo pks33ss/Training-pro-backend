@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards } from '@nestjs/common'
+import { Controller, Get, Post, Put, Delete, Body, Param, Query, Request, UseGuards } from '@nestjs/common'
 import { MatchService } from './match.service'
 import { CreateMatchDto } from './dto/create-match.dto'
 import { UpdateMatchDto } from './dto/update-match.dto'
@@ -178,7 +178,26 @@ export class MatchController {
       targetUserId,
     )
   }
+  @Post('padel/sub-matches/:subMatchId/sets')
+  addSetToSubMatch(
+    @Request() req,
+    @Param('subMatchId') subMatchId: string,
+  ) {
+    return this.matchService.addSetToSubMatch(req.user.id, subMatchId)
+  }
 
+  @Delete('padel/sub-matches/:subMatchId/sets/last')
+  removeLastSetFromSubMatch(
+    @Request() req,
+    @Param('subMatchId') subMatchId: string,
+    @Query('force') force?: string,
+  ) {
+    return this.matchService.removeLastSetFromSubMatch(
+      req.user.id,
+      subMatchId,
+      force === 'true',
+    )
+  }
   @Put('padel/sets/:setId')
   updatePadelSet(
     @Request() req,

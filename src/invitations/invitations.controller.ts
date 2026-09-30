@@ -27,10 +27,40 @@ export class InvitationsController {
   }
 
   // ============================================
-  // OBTENER INVITACIÓN POR CÓDIGO (público, sin auth)
-  // Nota: si necesitas que sea público, hay que quitar el AuthGuard
-  // y añadir @Public() con un decorador custom. Por ahora lo dejamos
-  // protegido para simplificar.
+  // MIS INVITACIONES PENDIENTES
+  // IMPORTANTE: debe ir ANTES de `:code`
+  // ============================================
+
+  @Get('invitations/mine')
+  getMine(@Request() req) {
+    return this.invitationsService.findMineForUser(req.user.id)
+  }
+
+  // ============================================
+  // PREVIEW PÚBLICA POR CÓDIGO
+  // ============================================
+
+  @Get('invitations/:code/preview')
+  preview(@Param('code') code: string) {
+    return this.invitationsService.previewByCode(code)
+  }
+
+  // ============================================
+  // ACEPTAR / RECHAZAR INVITACIÓN
+  // ============================================
+
+  @Post('invitations/:code/accept')
+  accept(@Request() req, @Param('code') code: string) {
+    return this.invitationsService.acceptInvitation(code, req.user.id)
+  }
+
+  @Post('invitations/:code/reject')
+  reject(@Request() req, @Param('code') code: string) {
+    return this.invitationsService.rejectInvitation(code, req.user.id)
+  }
+
+  // ============================================
+  // OBTENER INVITACIÓN POR CÓDIGO
   // ============================================
 
   @Get('invitations/:code')
@@ -39,7 +69,7 @@ export class InvitationsController {
   }
 
   // ============================================
-  // MARCAR COMO USADA
+  // MARCAR COMO USADA (legacy)
   // ============================================
 
   @Post('invitations/:code/use')

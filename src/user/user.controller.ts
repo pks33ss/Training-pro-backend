@@ -54,6 +54,16 @@ export class UserController {
     return this.userService.findByUsername(username)
   }
 
+    @Get('lookup')
+  lookup(
+    @Request() req,
+    @Query('email') email?: string,
+    @Query('username') username?: string,
+  ) {
+    return this.userService.lookupUserForInvite(req.user.id, { email, username })
+  }
+
+
     @Post('ghost')
   createGhost(@Request() req, @Body() dto: CreateGhostDto) {
     return this.userService.createGhost(req.user.id, dto)

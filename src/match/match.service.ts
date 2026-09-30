@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException, } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { CreateMatchDto } from './dto/create-match.dto'
 import { UpdateMatchDto } from './dto/update-match.dto'
@@ -739,5 +739,77 @@ export class MatchService {
         ...(data.played !== undefined && { played: data.played }),
       },
     })
+  }
+
+    /**
+   * Añade un set vacío al final de una pista concreta.
+   */
+  async addSetToSubMatch(userId: string, subMatchId: string) {
+    const subMatch = await this.prisma.padelSubMatch.findUnique({
+      where: { id: subMatchId },
+      include: {
+        match: true,
+        sets: { orderBy: { order: 'desc' }, take: 1 },
+      },
+    })
+
+    if (!subMatch) throw new NotFoundException('Pista no encontrada')
+    await this.verifyTeamAccess(userId, subMatch.match.teamId)
+
+    const nextOrder = (subMatch.sets[0]?.order ?? 0) + 1
+
+    return this.prisma.padelSet.create({
+      data: {
+        subMatchId,
+        order: nextOrder,
+        played: false,
+        homeScore: 0,
+        awayScore: 0,
+      },
+    })
+  }
+
+  /**
+   * Elimina el último set de una pista.
+   * Si el set tiene datos (played, homeScore > 0 o awayScore > 0) y no se
+   * pasa `force: true`, lanza 409 para que el frontend pida confirmación.
+   */
+  async removeLastSetFromSubMatch(
+    userId: string,
+    subMatchId: string,
+    force = false,
+  ) {
+    const subMatch = await this.prisma.padelSubMatch.findUnique({
+      where: { id: subMatchId },
+      include: {
+        match: true,
+        sets: { orderBy: { order: 'desc' }, take: 1 },
+      },
+    })
+
+    if (!subMatch) throw new NotFoundException('Pista no encontrada')
+    await this.verifyTeamAccess(userId, subMatch.match.teamId)
+
+    const lastSet = subMatch.sets[0]
+    if (!lastSet) {
+      throw new BadRequestException({
+        code: 'NO_SETS',
+        message: 'Esta pista no tiene sets que eliminar',
+      })
+    }
+
+    const hasData =
+      lastSet.played || lastSet.homeScore > 0 || lastSet.awayScore > 0
+
+    if (hasData && !force) {
+      throw new ConflictException({
+        code: 'SET_HAS_DATA',
+        message: `El Set ${lastSet.order} tiene datos (${lastSet.homeScore}-${lastSet.awayScore}). Confirma para eliminarlo.`,
+      })
+    }
+
+    await this.prisma.padelSet.delete({ where: { id: lastSet.id } })
+
+    return { ok: true, deletedSetOrder: lastSet.order }
   }
 }

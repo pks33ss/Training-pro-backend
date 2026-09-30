@@ -10,6 +10,7 @@ export enum InvitationChannel {
   EMAIL = 'EMAIL',
   WHATSAPP = 'WHATSAPP',
   LINK = 'LINK',
+  IN_APP = 'IN_APP',
 }
 
 export enum MembershipRole {

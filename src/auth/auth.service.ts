@@ -5,8 +5,8 @@ import { RefreshTokenService } from './refresh-token.service';
 import * as bcrypt from 'bcrypt';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
-import { generateUniqueUsername } from '../user/utils/generate-username'; // ✅ NUEVO
-import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member'
+import { generateUniqueUsername } from '../user/utils/generate-username';
+import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member';
 
 @Injectable()
 export class AuthService {
@@ -17,19 +17,80 @@ export class AuthService {
   ) {}
 
   async register(registerDto: RegisterDto) {
-    // 1) Buscar si ya existe un User con ese email
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: registerDto.email },
-    })
-
     const hashedPassword = await bcrypt.hash(registerDto.password, 10)
 
     let user: any
+    let invitation: any = null
 
-    if (existingUser) {
-      // ✅ Si existe y es un fantasma, lo "reclamamos" (no creamos uno nuevo)
-      if (existingUser.isGhost) {
-        // ✅ NUEVO: si el fantasma no tiene username, se lo generamos ahora
+    // ─────────────────────────────────────────────
+    // 1) Buscar invitación ANTES de tocar User
+    // ─────────────────────────────────────────────
+    if (registerDto.invitationCode) {
+      invitation = await this.prisma.pendingInvitation.findUnique({
+        where: { code: registerDto.invitationCode },
+        include: {
+          user: {
+            select: {
+              id: true,
+              isGhost: true,
+              deletedAt: true,
+              username: true,
+              name: true,
+              lastName: true,
+            },
+          },
+        },
+      })
+
+      if (invitation && invitation.status !== 'PENDING') invitation = null
+
+      if (invitation && invitation.expiresAt < new Date()) {
+        await this.prisma.pendingInvitation.update({
+          where: { id: invitation.id },
+          data: { status: 'EXPIRED' },
+        })
+        invitation = null
+      }
+
+      if (invitation?.user?.deletedAt) invitation = null
+    }
+
+    // ─────────────────────────────────────────────
+    // 2) Caso A: invitación apunta a FANTASMA → reclamarlo
+    // ─────────────────────────────────────────────
+    if (invitation?.user?.isGhost) {
+      const ghost = invitation.user
+
+      const finalUsername = ghost.username
+        ? ghost.username
+        : await generateUniqueUsername(
+            this.prisma,
+            registerDto.name || ghost.name,
+            registerDto.lastName || ghost.lastName,
+            ghost.id,
+          )
+
+      user = await this.prisma.user.update({
+        where: { id: ghost.id },
+        data: {
+          email: registerDto.email,
+          password: hashedPassword,
+          name: registerDto.name || ghost.name,
+          lastName: registerDto.lastName || ghost.lastName,
+          isGhost: false,
+          username: finalUsername,
+        },
+      })
+    }
+    // ─────────────────────────────────────────────
+    // 3) Caso B: buscar por email (comportamiento actual)
+    // ─────────────────────────────────────────────
+    else {
+      const existingUser = await this.prisma.user.findUnique({
+        where: { email: registerDto.email },
+      })
+
+      if (existingUser?.isGhost) {
         const finalUsername = existingUser.username
           ? existingUser.username
           : await generateUniqueUsername(
@@ -46,42 +107,40 @@ export class AuthService {
             name: registerDto.name || existingUser.name,
             lastName: registerDto.lastName || existingUser.lastName,
             isGhost: false,
-            username: finalUsername, // ✅ NUEVO
+            username: finalUsername,
           },
         })
-      } else {
-        // Si ya existe un user real con ese email, error
+      } else if (existingUser) {
         throw new ConflictException('El usuario ya existe')
-      }
-    } else {
-      // ✅ NUEVO: generar username único para el nuevo user
-      const username = await generateUniqueUsername(
-        this.prisma,
-        registerDto.name,
-        registerDto.lastName,
-      )
+      } else {
+        const username = await generateUniqueUsername(
+          this.prisma,
+          registerDto.name,
+          registerDto.lastName,
+        )
 
-      // ✅ Crear user nuevo
-      user = await this.prisma.user.create({
-        data: {
-          email: registerDto.email,
-          password: hashedPassword,
-          name: registerDto.name,
-          lastName: registerDto.lastName,
-          isGhost: false,
-          username, // ✅ NUEVO
-        },
-      })
+        user = await this.prisma.user.create({
+          data: {
+            email: registerDto.email,
+            password: hashedPassword,
+            name: registerDto.name,
+            lastName: registerDto.lastName,
+            isGhost: false,
+            username,
+          },
+        })
+      }
     }
 
-    // 2) Si viene con código de invitación, usarlo
-    if (registerDto.invitationCode) {
+    // ─────────────────────────────────────────────
+    // 4) Aplicar invitación (idempotente)
+    // ─────────────────────────────────────────────
+    if (invitation) {
       try {
-        await this.useInvitationIfPossible(registerDto.invitationCode, user)
+        await this.applyInvitation(invitation, user)
       } catch (err: any) {
-        // No fallar el registro si la invitación es inválida
         console.warn(
-          `⚠️ Invitación ${registerDto.invitationCode} no aplicable: ${err.message}`,
+          `⚠️ Invitación ${invitation.code} no aplicable: ${err.message}`,
         )
       }
     }
@@ -95,63 +154,65 @@ export class AuthService {
   }
 
   /**
-   * Aplica una invitación a un usuario recién registrado.
-   * - Valida el código.
-   * - Marca la invitación como USED.
-   * - Crea el TeamMembership si no existe.
+   * Aplica una invitación a un usuario recién registrado (o recién reclamado).
+   * Idempotente: si el membership ya existía (caso fantasma reclamado), no duplica.
    */
-  private async useInvitationIfPossible(
-    code: string,
+  private async applyInvitation(
+    invitation: {
+      id: string
+      code: string
+      teamId: string
+      role: any
+      invitedById: string
+      email: string | null
+    },
     user: { id: string; email: string | null },
   ) {
-    const invitation = await this.prisma.pendingInvitation.findUnique({
-      where: { code },
-    })
-
-    if (!invitation) {
-      throw new Error('Invitación no encontrada')
-    }
-
-    if (invitation.status !== 'PENDING') {
-      throw new Error('La invitación ya fue usada o revocada')
-    }
-
-    if (invitation.expiresAt < new Date()) {
-      await this.prisma.pendingInvitation.update({
-        where: { id: invitation.id },
-        data: { status: 'EXPIRED' },
-      })
-      throw new Error('La invitación ha caducado')
-    }
-
-    // ✅ Si la invitación tiene email, debe coincidir con el del usuario
+    // 1) Validar email SOLO si la invitación lo trae y NO coincide
     if (invitation.email && invitation.email !== user.email) {
       throw new Error('El email no coincide con el de la invitación')
     }
 
-    // ✅ Crear el TeamMembership si no existe
-    const existingMembership = await this.prisma.teamMembership.findFirst({
+    // 2) Upsert membership (idempotente)
+    const membership = await this.prisma.teamMembership.upsert({
       where: {
+        userId_teamId: { userId: user.id, teamId: invitation.teamId },
+      },
+      create: {
         userId: user.id,
         teamId: invitation.teamId,
+        status: 'ACTIVE',
+        invitedById: invitation.invitedById,
+        roles: { create: [{ role: invitation.role }] },
       },
+      update: {
+        status: 'ACTIVE',
+        leftAt: null,
+      },
+      include: { roles: true },
     })
 
-  if (!existingMembership) {
-  await this.prisma.teamMembership.create({
-    data: {
-      userId: user.id,
-      teamId: invitation.teamId,
-      roles: { create: [{ role: (invitation.role || 'PLAYER') as any }] },
-      status: 'ACTIVE',
-      invitedById: invitation.invitedById,
-    },
-  })
+    // 3) Asegurar rol
+    if (!membership.roles.some((r) => r.role === invitation.role)) {
+      await this.prisma.membershipRole.upsert({
+        where: {
+          membershipId_role: {
+            membershipId: membership.id,
+            role: invitation.role,
+          },
+        },
+        create: {
+          membershipId: membership.id,
+          role: invitation.role,
+        },
+        update: {},
+      })
+    }
 
-  await ensureClubMemberForTeam(this.prisma, user.id, invitation.teamId)
-}
+    // 4) Asegurar ClubMember
+    await ensureClubMemberForTeam(this.prisma, user.id, invitation.teamId)
 
-    // ✅ Marcar invitación como usada
+    // 5) Marcar USED
     await this.prisma.pendingInvitation.update({
       where: { id: invitation.id },
       data: {

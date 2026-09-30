@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import * as bcrypt from 'bcrypt'
 import { CreateGhostDto } from './dto/create-ghost.dto'
 import { generateUniqueUsername } from './utils/generate-username'
-import { isSuperAdmin, canEditGhost } from '../common/access'
+import { isSuperAdmin, canEditGhost, assertCanManageMembers } from '../common/access'
 
 @Injectable()
 export class UserService {
@@ -625,6 +625,85 @@ export class UserService {
     return user
   }
 
+  /**
+   * Buscar un usuario registrado (no fantasma) por email o username exacto
+   * para invitarlo a un equipo. Devuelve solo datos públicos.
+   *
+   * Restricción: solo SUPER_ADMIN, miembros activos de algún club,
+   * o staff de algún equipo pueden usar este endpoint.
+   */
+  async lookupUserForInvite(
+    actorId: string,
+    query: { email?: string; username?: string },
+  ) {
+    if (!query.email && !query.username) {
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'Usuario no encontrado',
+      })
+    }
+
+    const cleanUsername = query.username
+      ? query.username.startsWith('@')
+        ? query.username
+        : `@${query.username}`
+      : undefined
+
+    const user = await this.prisma.user.findFirst({
+      where: {
+        OR: [
+          ...(query.email ? [{ email: query.email }] : []),
+          ...(cleanUsername ? [{ username: cleanUsername }] : []),
+        ],
+        isGhost: false,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        name: true,
+        lastName: true,
+        username: true,
+      },
+    })
+
+    if (!user) {
+      throw new NotFoundException({
+        code: 'USER_NOT_FOUND',
+        message: 'Usuario no encontrado',
+      })
+    }
+
+    // Restricción de acceso: solo si el actor tiene algún rol de gestión
+    const isSuper = await isSuperAdmin(this.prisma, actorId)
+    if (!isSuper) {
+      const isClubMember = await this.prisma.clubMember.findFirst({
+        where: { userId: actorId, isActive: true },
+        select: { id: true },
+      })
+      const isTeamStaff = await this.prisma.teamMembership.findFirst({
+        where: {
+          userId: actorId,
+          status: 'ACTIVE',
+          roles: {
+            some: {
+              role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+            },
+          },
+        },
+        select: { id: true },
+      })
+      if (!isClubMember && !isTeamStaff) {
+        throw new ForbiddenException(
+          'No tienes permisos para buscar usuarios',
+        )
+      }
+    }
+
+    return user
+  }
+
+
+
   // ============================================
   // CREAR USUARIO FANTASMA Y AÑADIRLO A UN EQUIPO
   // ============================================
@@ -648,49 +727,50 @@ export class UserService {
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
-    // 2) Verificar permisos del requester
-    const requester = await this.prisma.user.findUnique({
-      where: { id: requesterId },
-    })
-    if (!requester) throw new NotFoundException('Usuario no encontrado')
-
-    const isSuperAdminUser = requester.role === 'SUPER_ADMIN'
-
-    const isClubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId: requesterId,
-        clubId: team.clubId,
-        isActive: true,
-        role: 'ADMIN_CLUB',
-      },
-    })
-
-    const isTeamManager = await this.prisma.teamMembership.findFirst({
-      where: {
-        userId: requesterId,
-        teamId: dto.teamId,
-        status: 'ACTIVE',
-        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
-      },
-    })
-
-    if (!isSuperAdminUser && !isClubAdmin && !isTeamManager) {
-      throw new ForbiddenException(
-        'No tienes permisos para añadir jugadores a este equipo',
-      )
-    }
+// 2) Verificar permisos del requester
+await assertCanManageMembers(this.prisma, requesterId, dto.teamId)
 
     // 3) Verificar email si lo dan
-    if (dto.email) {
-      const existing = await this.prisma.user.findUnique({
-        where: { email: dto.email },
-      })
-      if (existing) {
-        throw new ConflictException(
-          'Ya existe un usuario con ese email. Búscalo en "Buscar existente" y añádelo directamente.',
-        )
-      }
-    }
+if (dto.email) {
+  const existing = await this.prisma.user.findUnique({
+    where: { email: dto.email },
+    select: { id: true, isGhost: true, deletedAt: true },
+  })
+
+  if (existing?.deletedAt) {
+    throw new ConflictException({
+      code: 'USER_DELETED',
+      message: 'Ese email pertenece a una cuenta eliminada.',
+    })
+  }
+
+  if (existing?.isGhost) {
+    // 3a) Fantasma existente → añadirlo al equipo (no crear nuevo)
+    await this.addExistingGhostToTeam(existing.id, dto, requesterId)
+
+    const ghost = await this.prisma.user.findUnique({
+      where: { id: existing.id },
+      select: {
+        id: true,
+        username: true,
+        name: true,
+        lastName: true,
+        email: true,
+        isGhost: true,
+      },
+    })
+    return ghost
+  }
+
+  if (existing && !existing.isGhost) {
+    // 3b) Usuario real → redirigir a "Usuario Registrado" (Tarea 2)
+    throw new ConflictException({
+      code: 'USER_ALREADY_EXISTS_USE_EMAIL_INVITE',
+      message:
+        'Ya existe un usuario registrado con ese email. Usa "Usuario Registrado" para invitarlo.',
+    })
+  }
+}
 
     // 4) Generar username único
     const username = await generateUniqueUsername(
@@ -823,5 +903,46 @@ export class UserService {
     })
   } 
 
+  private async addExistingGhostToTeam(
+  ghostId: string,
+  dto: CreateGhostDto,
+  requesterId: string,
+) {
+  const team = await this.prisma.team.findUnique({
+    where: { id: dto.teamId },
+    select: { clubId: true },
+  })
+  if (!team) throw new NotFoundException('Equipo no encontrado')
+
+  await this.prisma.teamMembership.upsert({
+    where: { userId_teamId: { userId: ghostId, teamId: dto.teamId } },
+    create: {
+      userId: ghostId,
+      teamId: dto.teamId,
+      status: 'ACTIVE',
+      invitedById: requesterId,
+      jerseyNumber: dto.jerseyNumber ?? null,
+      position: dto.position ?? null,
+      roles: { create: [{ role: (dto.role ?? 'PLAYER') as any }] },
+    },
+    update: {
+      status: 'ACTIVE',
+      leftAt: null,
+      ...(dto.jerseyNumber !== undefined && { jerseyNumber: dto.jerseyNumber }),
+      ...(dto.position !== undefined && { position: dto.position }),
+    },
+  })
+
+  await this.prisma.clubMember.upsert({
+    where: { userId_clubId: { userId: ghostId, clubId: team.clubId } },
+    create: {
+      userId: ghostId,
+      clubId: team.clubId,
+      role: 'MEMBER',
+      isActive: true,
+    },
+    update: { isActive: true },
+  })
+}
 
 }
