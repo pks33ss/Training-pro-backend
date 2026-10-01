@@ -70,4 +70,23 @@ export class UpdateStatsDto {
   @Min(0)
   @IsOptional()
   freeThrowsAttempted?: number
+
+  // ✅ NUEVOS
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  blocksAgainst?: number
+
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  foulsDrawn?: number
+
+  /**
+   * Puede ser negativo (jugador en cancha mientras el rival anota más).
+   * No ponemos @Min(0).
+   */
+  @IsInt()
+  @IsOptional()
+  plusMinus?: number
 }

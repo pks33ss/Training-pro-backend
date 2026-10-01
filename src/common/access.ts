@@ -552,3 +552,49 @@ export async function canEditGhost(
   })
   return !!actorStaff
 }
+  // ─────────────────────────────────────────────
+// MULTI-TEAM
+// ─────────────────────────────────────────────
+
+/**
+ * Devuelve la lista de teams verificados para el viewer.
+ * Todos deben existir, estar accesibles y ser del MISMO deporte.
+ * El primer teamId se considera el "principal".
+ */
+export async function getTeamsForViewer(
+  prisma: PrismaLike,
+  userId: string,
+  teamIds: string[],
+) {
+  if (teamIds.length === 0) {
+    throw new ForbiddenException('No se han indicado equipos')
+  }
+
+  const teams = await prisma.team.findMany({
+    where: { id: { in: teamIds } },
+    include: { club: true },
+  })
+
+  if (teams.length !== teamIds.length) {
+    throw new NotFoundException('Alguno de los equipos no existe')
+  }
+
+  // Verificar acceso a cada uno
+  for (const t of teams) {
+    if (!(await canViewTeam(prisma, userId, t.id))) {
+      throw new ForbiddenException(`No tienes acceso al equipo ${t.id}`)
+    }
+  }
+
+  // Verificar mismo deporte
+  const sports = new Set(teams.map((t) => t.sport))
+  if (sports.size > 1) {
+    throw new ForbiddenException(
+      'Solo se pueden combinar equipos del mismo deporte',
+    )
+  }
+
+  // Ordenar según el orden de entrada para preservar "principal"
+  const byId = new Map(teams.map((t) => [t.id, t]))
+  return teamIds.map((id) => byId.get(id)!).filter(Boolean)
+}

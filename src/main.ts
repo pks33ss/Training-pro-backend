@@ -9,6 +9,7 @@ async function bootstrap() {
 
   app.enableCors({
   origin: [
+    'https://app.joinsportapp.com',
     'https://joinsportapp.com',
     'https://www.joinsportapp.com',
     'https://focuspm.es',

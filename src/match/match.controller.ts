@@ -105,6 +105,20 @@ export class MatchController {
   // ESTADÍSTICAS
   // ============================================
 
+    @Get(':id/basketball-stats')
+  getBasketballStats(@Request() req, @Param('id') id: string) {
+    return this.matchService.getBasketballStats(req.user.id, id)
+  }
+
+  @Delete(':id/stats/:userId')
+  removePlayerStats(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('userId') targetUserId: string,
+  ) {
+    return this.matchService.removePlayerStats(req.user.id, id, targetUserId)
+  }
+ 
   // ✅ Ruta :playerId → :userId
   @Post(':id/stats/:userId')
   upsertPlayerStats(

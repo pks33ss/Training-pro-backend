@@ -6,6 +6,7 @@ import { UpdateResultDto } from './dto/update-result.dto'
 import { UpdateStatsDto } from './dto/update-stats.dto'
 import { getTeamForViewer } from '../common/access'
 import { computePadelStatsFromMatch } from '../stats/padel-stats.helper'
+import { computeBasketballStatsFromMatch } from '../stats/basketball-stats.helper'
 
 
 const USER_SELECT = {
@@ -812,5 +813,80 @@ export class MatchService {
         })),
       })),
     })
+  }
+    // ============================================
+  // ESTADÍSTICAS DE BALONCESTO POR PARTIDO
+  // ============================================
+
+  async getBasketballStats(userId: string, matchId: string) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      include: {
+        playerStats: {
+          include: { user: { select: USER_SELECT } },
+          orderBy: { user: { lastName: 'asc' } },
+        },
+        callups: {
+          include: { user: { select: USER_SELECT } },
+        },
+      },
+    })
+
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    await getTeamForViewer(this.prisma, userId, match.teamId)
+
+    return computeBasketballStatsFromMatch({
+      id: match.id,
+      teamId: match.teamId,
+      date: match.date,
+      opponent: match.opponent,
+      teamScore: match.teamScore,
+      opponentScore: match.opponentScore,
+      playerStats: match.playerStats.map((ps) => ({
+        userId: ps.userId,
+        user: {
+          id: ps.user.id,
+          name: ps.user.name,
+          lastName: ps.user.lastName,
+        },
+        minutes: ps.minutes,
+        points: ps.points,
+        rebounds: ps.rebounds,
+        assists: ps.assists,
+        steals: ps.steals,
+        blocks: ps.blocks,
+        turnovers: ps.turnovers,
+        fouls: ps.fouls,
+        blocksAgainst: ps.blocksAgainst,
+        foulsDrawn: ps.foulsDrawn,
+        plusMinus: ps.plusMinus,
+        fieldGoalsMade: ps.fieldGoalsMade,
+        fieldGoalsAttempted: ps.fieldGoalsAttempted,
+        threePointersMade: ps.threePointersMade,
+        threePointersAttempted: ps.threePointersAttempted,
+        freeThrowsMade: ps.freeThrowsMade,
+        freeThrowsAttempted: ps.freeThrowsAttempted,
+      })),
+    })
+  }
+
+  async removePlayerStats(userId: string, matchId: string, targetUserId: string) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+    })
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    await getTeamForViewer(this.prisma, userId, match.teamId)
+
+    // Borra las stats si existen; no falla si no existen
+    await this.prisma.matchPlayerStats.deleteMany({
+      where: { matchId, userId: targetUserId },
+    })
+
+    // Opcional: borrar también el callup de ese partido
+    await this.prisma.matchCallup.deleteMany({
+      where: { matchId, userId: targetUserId },
+    })
+
+    return { ok: true }
   }
 }

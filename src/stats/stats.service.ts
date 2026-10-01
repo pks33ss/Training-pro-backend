@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common'
+import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
-import { getTeamForViewer } from '../common/access'
+import { getTeamForViewer, getTeamsForViewer } from '../common/access'
 import { TeamStatsQueryDto } from './dto/team-stats-query.dto'
 import { computePadelStatsFromMatch } from './padel-stats.helper'
 import { BasketballStatsService } from './basketball-stats.service'
@@ -25,31 +25,46 @@ export class TeamStatsService {
   ) {}
 
   async getTeamStats(userId: string, teamId: string, query: TeamStatsQueryDto) {
-    // 1) Permisos + team
-    const team = await getTeamForViewer(this.prisma, userId, teamId)
+    // 1) Resolver equipos (principal + adicionales)
+    const additionalIds = (query.teamIds ?? []).filter((id) => id !== teamId)
+    const allIds = [teamId, ...additionalIds]
 
-    // 2) Resolver rango de fechas (seasonId + from/to combinados con AND)
-    const range = await this.resolveDateRange(teamId, query)
+    const teams = await getTeamsForViewer(this.prisma, userId, allIds)
+    const mainTeam = teams[0]
+    const teamIds = teams.map((t) => t.id)
 
-    // 3) Cargar partidos filtrados
-    const matches = await this.fetchMatches(teamId, range, query.playerId)
+    // 2) Rango de fechas
+    const range = await this.resolveDateRange(mainTeam.id, query)
 
-    // 4) Deportes
-    if (team.sport === 'PADEL') {
-      return this.buildPadelResponse(team, query, matches)
+    // 3) Rama por deporte
+    if (mainTeam.sport === 'PADEL') {
+      const matches = await this.fetchPadelMatches(teamIds, range, query)
+      return this.buildPadelResponse(teams, query, matches)
     }
 
-    // Stub resto de deportes (Fase 3+)
+    if (mainTeam.sport === 'BASKETBALL') {
+      const matches = await this.fetchBasketballMatches(teamIds, range, query)
+      return this.basketballStats.buildTeamStats(
+        teams.map((t) => ({ id: t.id, name: t.name, sport: t.sport })),
+        query,
+        matches as any,
+      )
+    }
+
+    // Resto: stub
     return {
-      team: { id: team.id, name: team.name, sport: team.sport },
+      teams: teams.map((t) => ({ id: t.id, name: t.name, sport: t.sport })),
+      team: { id: mainTeam.id, name: mainTeam.name, sport: mainTeam.sport },
       filters: {
         seasonId: query.seasonId ?? null,
         from: range.from?.toISOString() ?? null,
         to: range.to?.toISOString() ?? null,
         playerId: query.playerId ?? null,
+        matchIds: query.matchIds ?? null,
+        teamIds,
       },
       sport: {
-        type: team.sport,
+        type: mainTeam.sport,
         data: null,
       },
     }
@@ -76,7 +91,6 @@ export class TeamStatsService {
       }
       if (season.startDate) from = season.startDate
       if (season.endDate) {
-        // fin del día UTC
         const end = new Date(season.endDate)
         end.setUTCHours(23, 59, 59, 999)
         to = end
@@ -96,15 +110,12 @@ export class TeamStatsService {
     return { from, to }
   }
 
-  private async fetchMatches(
-    teamId: string,
+  private buildBaseWhere(
+    teamIds: string[],
     range: { from: Date | null; to: Date | null },
-    playerId?: string,
+    matchIds?: string[],
   ) {
-    const where: any = {
-      teamId,
-      status: 'FINISHED',
-    }
+    const where: any = { teamId: { in: teamIds }, status: 'FINISHED' }
 
     if (range.from || range.to) {
       where.date = {}
@@ -112,10 +123,24 @@ export class TeamStatsService {
       if (range.to) where.date.lte = range.to
     }
 
-    if (playerId) {
+    if (matchIds && matchIds.length > 0) {
+      where.id = { in: matchIds }
+    }
+
+    return where
+  }
+
+  private async fetchPadelMatches(
+    teamIds: string[],
+    range: { from: Date | null; to: Date | null },
+    query: TeamStatsQueryDto,
+  ) {
+    const where = this.buildBaseWhere(teamIds, range, query.matchIds)
+
+    if (query.playerId) {
       where.padelSubMatches = {
         some: {
-          OR: [{ player1Id: playerId }, { player2Id: playerId }],
+          OR: [{ player1Id: query.playerId }, { player2Id: query.playerId }],
         },
       }
     }
@@ -136,16 +161,43 @@ export class TeamStatsService {
     })
   }
 
+  private async fetchBasketballMatches(
+    teamIds: string[],
+    range: { from: Date | null; to: Date | null },
+    query: TeamStatsQueryDto,
+  ) {
+    const where = this.buildBaseWhere(teamIds, range, query.matchIds)
+
+    if (query.playerId) {
+      where.playerStats = {
+        some: { userId: query.playerId },
+      }
+    }
+
+    return this.prisma.match.findMany({
+      where,
+      orderBy: { date: 'asc' },
+      include: {
+        playerStats: {
+          include: {
+            user: { select: USER_SELECT },
+          },
+        },
+      },
+    })
+  }
+
   // ─────────────────────────────────────────────
   // PÁDEL — agregado
   // ─────────────────────────────────────────────
 
   private buildPadelResponse(
-    team: { id: string; name: string; sport: string },
+    teams: Array<{ id: string; name: string; sport: string }>,
     query: TeamStatsQueryDto,
-    matches: Awaited<ReturnType<TeamStatsService['fetchMatches']>>,
+    matches: Awaited<ReturnType<TeamStatsService['fetchPadelMatches']>>,
   ) {
-    // Computamos stats por match (reutilizando helper puro)
+    const mainTeam = teams[0]
+
     const perMatch = matches.map((m) =>
       computePadelStatsFromMatch({
         id: m.id,
@@ -174,7 +226,6 @@ export class TeamStatsService {
       }),
     )
 
-    // ── Summary global (por Match) + agregados de pista/set/game
     let matchesCount = 0
     let wins = 0
     let losses = 0
@@ -195,7 +246,6 @@ export class TeamStatsService {
 
     for (const pm of perMatch) {
       const ts = pm.teamSummary
-
       matchesCount++
       if (ts.result === 'WIN') wins++
       else if (ts.result === 'LOSS') losses++
@@ -239,7 +289,6 @@ export class TeamStatsService {
       gamesDiff: gamesWon - gamesLost,
     }
 
-    // ── Por jugador (agregado entre partidos)
     type PlayerAgg = {
       userId: string
       name: string
@@ -264,15 +313,12 @@ export class TeamStatsService {
 
     for (const pm of perMatch) {
       const matchResult = pm.match.result
-
-      // ¿Qué jugadores participaron en este partido?
       const participants = new Set<string>()
       for (const sm of pm.subMatches) {
         if (sm.player1) participants.add(sm.player1.id)
         if (sm.player2) participants.add(sm.player2.id)
       }
 
-      // Sumamos a cada jugador participante
       for (const p of pm.players) {
         if (!participants.has(p.userId)) continue
 
@@ -333,7 +379,6 @@ export class TeamStatsService {
         return b.gamesDiff - a.gamesDiff
       })
 
-    // ── Trend
     const byMonthMap = new Map<
       string,
       { matches: number; wins: number; losses: number; draws: number }
@@ -366,17 +411,13 @@ export class TeamStatsService {
             : 0,
       }))
 
-    // last10 por Match (asc: antiguo → reciente)
-    const last10ByMatch = perMatch
-      .slice(-10)
-      .map((pm) => ({
-        matchId: pm.match.id,
-        date: pm.match.date.toISOString(),
-        opponent: pm.match.opponent,
-        result: pm.match.result as MatchResult | null,
-      }))
+    const last10ByMatch = perMatch.slice(-10).map((pm) => ({
+      matchId: pm.match.id,
+      date: pm.match.date.toISOString(),
+      opponent: pm.match.opponent,
+      result: pm.match.result as MatchResult | null,
+    }))
 
-    // last10 por SubMatch (asc: antiguo → reciente)
     const allSubMatches: {
       subMatchId: string
       matchId: string
@@ -401,30 +442,33 @@ export class TeamStatsService {
     }
     const last10BySubMatch = allSubMatches.slice(-10)
 
-    const trend = {
-      byMonth,
-      last10ByMatch,
-      last10BySubMatch,
-    }
-
     return {
-      team: { id: team.id, name: team.name, sport: team.sport },
+      teams: teams.map((t) => ({ id: t.id, name: t.name, sport: t.sport })),
+      team: { id: mainTeam.id, name: mainTeam.name, sport: mainTeam.sport },
       filters: {
         seasonId: query.seasonId ?? null,
-        from: perMatch.length > 0
-          ? perMatch[0].match.date.toISOString()
-          : query.from ?? null,
-        to: perMatch.length > 0
-          ? perMatch[perMatch.length - 1].match.date.toISOString()
-          : query.to ?? null,
+        from:
+          perMatch.length > 0
+            ? perMatch[0].match.date.toISOString()
+            : query.from ?? null,
+        to:
+          perMatch.length > 0
+            ? perMatch[perMatch.length - 1].match.date.toISOString()
+            : query.to ?? null,
         playerId: query.playerId ?? null,
+        matchIds: query.matchIds ?? null,
+        teamIds: teams.map((t) => t.id),
       },
       sport: {
         type: 'PADEL',
         data: {
           summary,
           players,
-          trend,
+          trend: {
+            byMonth,
+            last10ByMatch,
+            last10BySubMatch,
+          },
         },
       },
     }
