@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common'
+import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
-import { getTeamForViewer, getTeamsForViewer } from '../common/access'
+import { getTeamsForViewer } from '../common/access'
 import { TeamStatsQueryDto } from './dto/team-stats-query.dto'
 import { computePadelStatsFromMatch } from './padel-stats.helper'
 import { BasketballStatsService } from './basketball-stats.service'
@@ -25,7 +25,6 @@ export class TeamStatsService {
   ) {}
 
   async getTeamStats(userId: string, teamId: string, query: TeamStatsQueryDto) {
-    // 1) Resolver equipos (principal + adicionales)
     const additionalIds = (query.teamIds ?? []).filter((id) => id !== teamId)
     const allIds = [teamId, ...additionalIds]
 
@@ -33,10 +32,8 @@ export class TeamStatsService {
     const mainTeam = teams[0]
     const teamIds = teams.map((t) => t.id)
 
-    // 2) Rango de fechas
     const range = await this.resolveDateRange(mainTeam.id, query)
 
-    // 3) Rama por deporte
     if (mainTeam.sport === 'PADEL') {
       const matches = await this.fetchPadelMatches(teamIds, range, query)
       return this.buildPadelResponse(teams, query, matches)
@@ -51,7 +48,6 @@ export class TeamStatsService {
       )
     }
 
-    // Resto: stub
     return {
       teams: teams.map((t) => ({ id: t.id, name: t.name, sport: t.sport })),
       team: { id: mainTeam.id, name: mainTeam.name, sport: mainTeam.sport },
@@ -69,10 +65,6 @@ export class TeamStatsService {
       },
     }
   }
-
-  // ─────────────────────────────────────────────
-  // Filtros
-  // ─────────────────────────────────────────────
 
   private async resolveDateRange(
     teamId: string,
@@ -157,6 +149,13 @@ export class TeamStatsService {
             sets: { orderBy: { order: 'asc' } },
           },
         },
+        callups: {
+          select: {
+            userId: true,
+            availableStatus: true,
+            user: { select: USER_SELECT },
+          },
+        },
       },
     })
   }
@@ -180,6 +179,13 @@ export class TeamStatsService {
       include: {
         playerStats: {
           include: {
+            user: { select: USER_SELECT },
+          },
+        },
+        callups: {
+          select: {
+            userId: true,
+            availableStatus: true,
             user: { select: USER_SELECT },
           },
         },
@@ -297,6 +303,8 @@ export class TeamStatsService {
       wins: number
       losses: number
       draws: number
+      availabilityCount: number
+      teamMatches: number
       subMatchesPlayed: number
       subMatchesWon: number
       subMatchesLost: number
@@ -311,44 +319,67 @@ export class TeamStatsService {
 
     const playersMap = new Map<string, PlayerAgg>()
 
-    for (const pm of perMatch) {
+    const ensurePlayer = (u: { id: string; name: string; lastName: string }) => {
+      if (!playersMap.has(u.id)) {
+        playersMap.set(u.id, {
+          userId: u.id,
+          name: u.name,
+          lastName: u.lastName,
+          matches: 0,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+          availabilityCount: 0,
+          teamMatches: matchesCount,
+          subMatchesPlayed: 0,
+          subMatchesWon: 0,
+          subMatchesLost: 0,
+          subMatchesDrawn: 0,
+          setsPlayed: 0,
+          setsWon: 0,
+          setsLost: 0,
+          setsDrawn: 0,
+          gamesWon: 0,
+          gamesLost: 0,
+        })
+      }
+      return playersMap.get(u.id)!
+    }
+
+    for (let i = 0; i < perMatch.length; i++) {
+      const pm = perMatch[i]
+      const match = matches[i]
       const matchResult = pm.match.result
+
+      const availabilityByUser = new Map<string, string>()
+      for (const c of match.callups ?? []) {
+        availabilityByUser.set(c.userId, c.availableStatus)
+      }
+
       const participants = new Set<string>()
       for (const sm of pm.subMatches) {
         if (sm.player1) participants.add(sm.player1.id)
         if (sm.player2) participants.add(sm.player2.id)
       }
 
+      // ── Pase 1: jugadores que jugaron pista
       for (const p of pm.players) {
         if (!participants.has(p.userId)) continue
 
-        if (!playersMap.has(p.userId)) {
-          playersMap.set(p.userId, {
-            userId: p.userId,
-            name: p.name,
-            lastName: p.lastName,
-            matches: 0,
-            wins: 0,
-            losses: 0,
-            draws: 0,
-            subMatchesPlayed: 0,
-            subMatchesWon: 0,
-            subMatchesLost: 0,
-            subMatchesDrawn: 0,
-            setsPlayed: 0,
-            setsWon: 0,
-            setsLost: 0,
-            setsDrawn: 0,
-            gamesWon: 0,
-            gamesLost: 0,
-          })
-        }
+        const agg = ensurePlayer({
+          id: p.userId,
+          name: p.name,
+          lastName: p.lastName,
+        })
 
-        const agg = playersMap.get(p.userId)!
         agg.matches++
         if (matchResult === 'WIN') agg.wins++
         else if (matchResult === 'LOSS') agg.losses++
         else if (matchResult === 'DRAW') agg.draws++
+
+        if (availabilityByUser.get(p.userId) === 'YES') {
+          agg.availabilityCount++
+        }
 
         agg.subMatchesPlayed += p.subMatchesPlayed
         agg.subMatchesWon += p.subMatchesWon
@@ -362,6 +393,21 @@ export class TeamStatsService {
 
         agg.gamesWon += p.gamesWon
         agg.gamesLost += p.gamesLost
+      }
+
+      // ── Pase 2: cualquier jugador con callup (no jugó pista)
+      for (const c of match.callups ?? []) {
+        if (participants.has(c.userId)) continue // ya contado en pase 1
+
+        const agg = ensurePlayer({
+          id: c.user.id,
+          name: c.user.name,
+          lastName: c.user.lastName,
+        })
+        // No incrementa matches (no jugó). Solo cuenta disponibilidad si YES.
+        if (c.availableStatus === 'YES') {
+          agg.availabilityCount++
+        }
       }
     }
 

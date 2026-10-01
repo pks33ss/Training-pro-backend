@@ -37,6 +37,11 @@ type MatchLoaded = {
     freeThrowsAttempted: number
     user: { id: string; name: string; lastName: string }
   }>
+  callups?: Array<{
+    userId: string
+    availableStatus: string
+    user: { id: string; name: string; lastName: string }
+  }>
 }
 
 @Injectable()
@@ -195,7 +200,7 @@ export class BasketballStatsService {
       freeThrowPct: pct(ftm, fta),
     }
 
-    // ── Por jugador (agregación multi-equipo, una fila por userId)
+    // ── Por jugador
     type PlayerAgg = {
       userId: string
       name: string
@@ -204,6 +209,8 @@ export class BasketballStatsService {
       wins: number
       losses: number
       draws: number
+      availabilityCount: number
+      teamMatches: number
       minutes: number
       points: number
       rebounds: number
@@ -225,44 +232,66 @@ export class BasketballStatsService {
 
     const playersMap = new Map<string, PlayerAgg>()
 
-    for (const pm of perMatchStats) {
+    const ensurePlayer = (u: { id: string; name: string; lastName: string }) => {
+      if (!playersMap.has(u.id)) {
+        playersMap.set(u.id, {
+          userId: u.id,
+          name: u.name,
+          lastName: u.lastName,
+          matches: 0,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+          availabilityCount: 0,
+          teamMatches: matchesCount,
+          minutes: 0,
+          points: 0,
+          rebounds: 0,
+          assists: 0,
+          steals: 0,
+          blocks: 0,
+          turnovers: 0,
+          fouls: 0,
+          blocksAgainst: 0,
+          foulsDrawn: 0,
+          plusMinus: 0,
+          fieldGoalsMade: 0,
+          fieldGoalsAttempted: 0,
+          threePointersMade: 0,
+          threePointersAttempted: 0,
+          freeThrowsMade: 0,
+          freeThrowsAttempted: 0,
+        })
+      }
+      return playersMap.get(u.id)!
+    }
+
+    for (let i = 0; i < perMatchStats.length; i++) {
+      const pm = perMatchStats[i]
+      const rawMatch = matches[i]
       const matchResult = resultFromMatch(pm.match)
 
+      const availabilityByUser = new Map<string, string>()
+      for (const c of rawMatch.callups ?? []) {
+        availabilityByUser.set(c.userId, c.availableStatus)
+      }
+
+      // ── Pase 1: jugadores con stats (jugaron)
       for (const p of pm.players) {
-        if (!playersMap.has(p.userId)) {
-          playersMap.set(p.userId, {
-            userId: p.userId,
-            name: p.name,
-            lastName: p.lastName,
-            matches: 0,
-            wins: 0,
-            losses: 0,
-            draws: 0,
-            minutes: 0,
-            points: 0,
-            rebounds: 0,
-            assists: 0,
-            steals: 0,
-            blocks: 0,
-            turnovers: 0,
-            fouls: 0,
-            blocksAgainst: 0,
-            foulsDrawn: 0,
-            plusMinus: 0,
-            fieldGoalsMade: 0,
-            fieldGoalsAttempted: 0,
-            threePointersMade: 0,
-            threePointersAttempted: 0,
-            freeThrowsMade: 0,
-            freeThrowsAttempted: 0,
-          })
-        }
-        const agg = playersMap.get(p.userId)!
+        const agg = ensurePlayer({
+          id: p.userId,
+          name: p.name,
+          lastName: p.lastName,
+        })
 
         agg.matches++
         if (matchResult === 'WIN') agg.wins++
         else if (matchResult === 'LOSS') agg.losses++
         else if (matchResult === 'DRAW') agg.draws++
+
+        if (availabilityByUser.get(p.userId) === 'YES') {
+          agg.availabilityCount++
+        }
 
         if (typeof p.minutes === 'number') agg.minutes += p.minutes
         agg.points += p.points
@@ -281,6 +310,21 @@ export class BasketballStatsService {
         agg.threePointersAttempted += p.threePointersAttempted
         agg.freeThrowsMade += p.freeThrowsMade
         agg.freeThrowsAttempted += p.freeThrowsAttempted
+      }
+
+      // ── Pase 2: jugadores con callup (no tienen stats en este partido)
+      const playersInStats = new Set(pm.players.map((p) => p.userId))
+      for (const c of rawMatch.callups ?? []) {
+        if (playersInStats.has(c.userId)) continue
+
+        const agg = ensurePlayer({
+          id: c.user.id,
+          name: c.user.name,
+          lastName: c.user.lastName,
+        })
+        if (c.availableStatus === 'YES') {
+          agg.availabilityCount++
+        }
       }
     }
 
