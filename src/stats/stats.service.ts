@@ -66,13 +66,15 @@ export class TeamStatsService {
         query,
         matches as any,
       )
-      // Filtrar summary + players
-      filterStatsPayload(
+            const visibleMetrics = filterStatsPayload(
         mainTeam.sport,
         visibleTeamKeys,
         payload.sport.data as any,
       )
-      return payload
+      return {
+        ...payload,
+        visibleMetrics: Array.from(visibleMetrics),
+      }
     }
 
     return {
@@ -546,12 +548,15 @@ export class TeamStatsService {
       },
     }
 
-    filterStatsPayload(
+        const visibleMetrics = filterStatsPayload(
       mainTeam.sport,
       visibleTeamKeys,
       response.sport.data as any,
     )
 
-    return response
+    return {
+      ...response,
+      visibleMetrics: Array.from(visibleMetrics),
+    }
   }
 }

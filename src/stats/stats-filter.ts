@@ -46,19 +46,24 @@ const BASKETBALL_FIELDS: Record<string, MetricFieldMap> = {
     summary: ['fieldGoalsAttempted'],
     players: ['fieldGoalsAttempted'],
   },
-  FG_PCT: { summary: ['fieldGoalPct'], players: ['fieldGoalPct'] },
+  FG_PCT: { summary: ['fieldGoalPct'], players: ['fieldGoalPct', 'fieldGoalsMade', 'fieldGoalsAttempted'], },
   TP_MADE: { summary: ['threePointersMade'], players: ['threePointersMade'] },
   TP_ATTEMPTED: {
     summary: ['threePointersAttempted'],
     players: ['threePointersAttempted'],
   },
-  TP_PCT: { summary: ['threePointPct'], players: ['threePointPct'] },
+  TP_PCT: { summary: ['threePointPct'], players: [
+      'threePointPct',
+      'threePointersMade',
+      'threePointersAttempted',
+    ], },
   FT_MADE: { summary: ['freeThrowsMade'], players: ['freeThrowsMade'] },
   FT_ATTEMPTED: {
     summary: ['freeThrowsAttempted'],
     players: ['freeThrowsAttempted'],
   },
-  FT_PCT: { summary: ['freeThrowPct'], players: ['freeThrowPct'] },
+  FT_PCT: { summary: ['freeThrowPct'], players: ['freeThrowPct', 'freeThrowsMade', 'freeThrowsAttempted'],
+  },
 
   // Solo MATCH (los inputs de edición también, pero no se filtran aquí)
   MINUTES: { players: ['minutes'] },
@@ -166,10 +171,9 @@ export function filterStatsPayload<T extends {
   sport: string,
   visibleKeys: Set<string>,
   payload: T,
-): T {
+): Set<string> {
   const fieldMap = getFieldMap(sport)
 
-  // Elegimos la clave de summary: summary o teamSummary
   const summaryKey: 'summary' | 'teamSummary' | null = payload.summary
     ? 'summary'
     : payload.teamSummary
@@ -209,5 +213,5 @@ export function filterStatsPayload<T extends {
     }
   }
 
-  return payload
+  return visibleKeys
 }

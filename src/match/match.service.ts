@@ -4,10 +4,9 @@ import { CreateMatchDto } from './dto/create-match.dto'
 import { UpdateMatchDto } from './dto/update-match.dto'
 import { UpdateResultDto } from './dto/update-result.dto'
 import { UpdateStatsDto } from './dto/update-stats.dto'
-import { getTeamForViewer } from '../common/access'
+import { getTeamForViewer, resolveViewerStatsRole } from '../common/access'
 import { computePadelStatsFromMatch } from '../stats/padel-stats.helper'
 import { computeBasketballStatsFromMatch } from '../stats/basketball-stats.helper'
-import { resolveViewerStatsRole } from '../common/access'
 import { buildVisibleKeys, filterStatsPayload } from '../stats/stats-filter'
 
 
@@ -832,12 +831,12 @@ export class MatchService {
       configRows as any,
     )
 
-    filterStatsPayload('PADEL', visibleKeys, {
-      summary: payload.teamSummary as any,
-      players: payload.players as any,
-    })
+        const visibleMetrics = filterStatsPayload('PADEL', visibleKeys, payload)
 
-    return payload
+    return {
+      ...payload,
+      visibleMetrics: Array.from(visibleMetrics),
+    }
   }
 
     // ============================================
@@ -911,12 +910,16 @@ export class MatchService {
       configRows as any,
     )
 
-    filterStatsPayload('BASKETBALL', visibleKeys, {
-      summary: payload.teamSummary as any,
-      players: payload.players as any,
-    })
+        const visibleMetrics = filterStatsPayload(
+      'BASKETBALL',
+      visibleKeys,
+      payload,
+    )
 
-    return payload
+    return {
+      ...payload,
+      visibleMetrics: Array.from(visibleMetrics),
+    }
   }
 
   async removePlayerStats(userId: string, matchId: string, targetUserId: string) {
