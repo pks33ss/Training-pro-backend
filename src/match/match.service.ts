@@ -7,6 +7,8 @@ import { UpdateStatsDto } from './dto/update-stats.dto'
 import { getTeamForViewer } from '../common/access'
 import { computePadelStatsFromMatch } from '../stats/padel-stats.helper'
 import { computeBasketballStatsFromMatch } from '../stats/basketball-stats.helper'
+import { resolveViewerStatsRole } from '../common/access'
+import { buildVisibleKeys, filterStatsPayload } from '../stats/stats-filter'
 
 
 const USER_SELECT = {
@@ -767,7 +769,7 @@ export class MatchService {
   // ESTADÍSTICAS DE PÁDEL POR PARTIDO
   // ============================================
 
-  async getPadelStats(userId: string, matchId: string) {
+    async getPadelStats(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
@@ -788,7 +790,7 @@ export class MatchService {
     if (!match) throw new NotFoundException('Partido no encontrado')
     await getTeamForViewer(this.prisma, userId, match.teamId)
 
-    return computePadelStatsFromMatch({
+    const payload = computePadelStatsFromMatch({
       id: match.id,
       teamId: match.teamId,
       date: match.date,
@@ -813,12 +815,36 @@ export class MatchService {
         })),
       })),
     })
+
+    // Filtrado por config de visibilidad
+    const viewerRole = await resolveViewerStatsRole(
+      this.prisma,
+      userId,
+      match.teamId,
+    )
+    const configRows = await this.prisma.statsVisibilityConfig.findMany({
+      where: { teamId: match.teamId, sport: 'PADEL' },
+    })
+    const visibleKeys = buildVisibleKeys(
+      'PADEL',
+      'MATCH',
+      viewerRole,
+      configRows as any,
+    )
+
+    filterStatsPayload('PADEL', visibleKeys, {
+      summary: payload.teamSummary as any,
+      players: payload.players as any,
+    })
+
+    return payload
   }
+
     // ============================================
   // ESTADÍSTICAS DE BALONCESTO POR PARTIDO
   // ============================================
 
-  async getBasketballStats(userId: string, matchId: string) {
+    async getBasketballStats(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
@@ -835,7 +861,7 @@ export class MatchService {
     if (!match) throw new NotFoundException('Partido no encontrado')
     await getTeamForViewer(this.prisma, userId, match.teamId)
 
-    return computeBasketballStatsFromMatch({
+    const payload = computeBasketballStatsFromMatch({
       id: match.id,
       teamId: match.teamId,
       date: match.date,
@@ -868,6 +894,29 @@ export class MatchService {
         freeThrowsAttempted: ps.freeThrowsAttempted,
       })),
     })
+
+    // Filtrado por config de visibilidad
+    const viewerRole = await resolveViewerStatsRole(
+      this.prisma,
+      userId,
+      match.teamId,
+    )
+    const configRows = await this.prisma.statsVisibilityConfig.findMany({
+      where: { teamId: match.teamId, sport: 'BASKETBALL' },
+    })
+    const visibleKeys = buildVisibleKeys(
+      'BASKETBALL',
+      'MATCH',
+      viewerRole,
+      configRows as any,
+    )
+
+    filterStatsPayload('BASKETBALL', visibleKeys, {
+      summary: payload.teamSummary as any,
+      players: payload.players as any,
+    })
+
+    return payload
   }
 
   async removePlayerStats(userId: string, matchId: string, targetUserId: string) {

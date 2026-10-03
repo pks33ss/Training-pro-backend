@@ -1,9 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
-import { getTeamsForViewer } from '../common/access'
+import {
+  getTeamsForViewer,
+  resolveViewerStatsRole,
+} from '../common/access'
 import { TeamStatsQueryDto } from './dto/team-stats-query.dto'
 import { computePadelStatsFromMatch } from './padel-stats.helper'
 import { BasketballStatsService } from './basketball-stats.service'
+import { buildVisibleKeys, filterStatsPayload } from './stats-filter'
 
 const USER_SELECT = {
   id: true,
@@ -34,18 +38,41 @@ export class TeamStatsService {
 
     const range = await this.resolveDateRange(mainTeam.id, query)
 
+    // Config de visibilidad + rol del viewer (para filtrar el payload)
+    const viewerRole = await resolveViewerStatsRole(
+      this.prisma,
+      userId,
+      mainTeam.id,
+    )
+    const configRows = await this.prisma.statsVisibilityConfig.findMany({
+      where: { teamId: mainTeam.id, sport: mainTeam.sport },
+    })
+    const visibleTeamKeys = buildVisibleKeys(
+      mainTeam.sport,
+      'TEAM',
+      viewerRole,
+      configRows as any,
+    )
+
     if (mainTeam.sport === 'PADEL') {
       const matches = await this.fetchPadelMatches(teamIds, range, query)
-      return this.buildPadelResponse(teams, query, matches)
+      return this.buildPadelResponse(teams, query, matches, visibleTeamKeys)
     }
 
     if (mainTeam.sport === 'BASKETBALL') {
       const matches = await this.fetchBasketballMatches(teamIds, range, query)
-      return this.basketballStats.buildTeamStats(
+      const payload = this.basketballStats.buildTeamStats(
         teams.map((t) => ({ id: t.id, name: t.name, sport: t.sport })),
         query,
         matches as any,
       )
+      // Filtrar summary + players
+      filterStatsPayload(
+        mainTeam.sport,
+        visibleTeamKeys,
+        payload.sport.data as any,
+      )
+      return payload
     }
 
     return {
@@ -201,6 +228,7 @@ export class TeamStatsService {
     teams: Array<{ id: string; name: string; sport: string }>,
     query: TeamStatsQueryDto,
     matches: Awaited<ReturnType<TeamStatsService['fetchPadelMatches']>>,
+    visibleTeamKeys: Set<string>,
   ) {
     const mainTeam = teams[0]
 
@@ -362,7 +390,7 @@ export class TeamStatsService {
         if (sm.player2) participants.add(sm.player2.id)
       }
 
-      // ── Pase 1: jugadores que jugaron pista
+      // Pase 1: jugadores que jugaron pista
       for (const p of pm.players) {
         if (!participants.has(p.userId)) continue
 
@@ -395,16 +423,15 @@ export class TeamStatsService {
         agg.gamesLost += p.gamesLost
       }
 
-      // ── Pase 2: cualquier jugador con callup (no jugó pista)
+      // Pase 2: cualquier jugador con callup (no jugó pista)
       for (const c of match.callups ?? []) {
-        if (participants.has(c.userId)) continue // ya contado en pase 1
+        if (participants.has(c.userId)) continue
 
         const agg = ensurePlayer({
           id: c.user.id,
           name: c.user.name,
           lastName: c.user.lastName,
         })
-        // No incrementa matches (no jugó). Solo cuenta disponibilidad si YES.
         if (c.availableStatus === 'YES') {
           agg.availabilityCount++
         }
@@ -488,7 +515,7 @@ export class TeamStatsService {
     }
     const last10BySubMatch = allSubMatches.slice(-10)
 
-    return {
+    const response = {
       teams: teams.map((t) => ({ id: t.id, name: t.name, sport: t.sport })),
       team: { id: mainTeam.id, name: mainTeam.name, sport: mainTeam.sport },
       filters: {
@@ -506,7 +533,7 @@ export class TeamStatsService {
         teamIds: teams.map((t) => t.id),
       },
       sport: {
-        type: 'PADEL',
+        type: 'PADEL' as const,
         data: {
           summary,
           players,
@@ -518,5 +545,13 @@ export class TeamStatsService {
         },
       },
     }
+
+    filterStatsPayload(
+      mainTeam.sport,
+      visibleTeamKeys,
+      response.sport.data as any,
+    )
+
+    return response
   }
 }

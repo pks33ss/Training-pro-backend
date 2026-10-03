@@ -105,6 +105,7 @@ model Team {
   favoritedBy        FavoriteTeam[]
   memberships        TeamMembership[]
   pendingInvitations PendingInvitation[]
+  statsVisibilityConfigs StatsVisibilityConfig[]
 }
 
 
@@ -346,6 +347,7 @@ enum MembershipRoleType {
   COACH
   ASSISTANT
   ADMIN_TEAM
+  VISITOR
 }
 
 model MembershipRole {
@@ -710,4 +712,40 @@ model PadelSet {
 
   @@unique([subMatchId, order])
   @@index([subMatchId])
+}
+
+// ============================================
+// CONFIGURACIÓN DE VISIBILIDAD DE ESTADÍSTICAS
+// ============================================
+
+enum StatsScope {
+  MATCH   // hoja de stats del partido
+  TEAM    // hoja de stats agregadas del equipo
+  PLAYER  // hoja de stats individual del jugador (futuro 3.2)
+}
+
+enum StatsAudienceRole {
+  PLAYER
+  COACH
+  ASSISTANT
+  ADMIN_TEAM
+  VISITOR
+}
+
+model StatsVisibilityConfig {
+  id        String             @id @default(cuid())
+  teamId    String
+  team      Team               @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  sport     Sport              // informativo; el team ya tiene sport fijo
+  scope     StatsScope
+  role      StatsAudienceRole
+  metricKey String             // ej. "PTS", "REB", "WIN_RATE", "MIN"
+  visible   Boolean            @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, scope, role, metricKey])
+  @@index([teamId, scope, role])
+  @@index([teamId, scope])
 }

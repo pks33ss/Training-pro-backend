@@ -598,3 +598,79 @@ export async function getTeamsForViewer(
   const byId = new Map(teams.map((t) => [t.id, t]))
   return teamIds.map((id) => byId.get(id)!).filter(Boolean)
 }
+
+// ─────────────────────────────────────────────
+// STATS CONFIG
+// ─────────────────────────────────────────────
+
+/**
+ * ¿Puede el actor gestionar la configuración de visibilidad de stats
+ * de este team? Misma regla que editar el team.
+ */
+export async function canManageStatsConfig(
+  prisma: PrismaLike,
+  actorId: string,
+  teamId: string,
+): Promise<boolean> {
+  return canEditTeam(prisma, actorId, teamId)
+}
+
+// ─────────────────────────────────────────────
+// STATS ROLE
+// ─────────────────────────────────────────────
+
+export type StatsAudienceRoleValue =
+  | 'PLAYER'
+  | 'COACH'
+  | 'ASSISTANT'
+  | 'ADMIN_TEAM'
+  | 'VISITOR'
+
+const ROLE_PRIORITY: StatsAudienceRoleValue[] = [
+  'ADMIN_TEAM',
+  'COACH',
+  'ASSISTANT',
+  'PLAYER',
+  'VISITOR',
+]
+
+/**
+ * Rol efectivo del viewer sobre este team para filtrar stats.
+ * Prioridad:
+ *  1. SUPER_ADMIN          → ADMIN_TEAM
+ *  2. ADMIN_CLUB del club  → ADMIN_TEAM
+ *  3. Membership ACTIVE    → rol más alto (ADMIN_TEAM > COACH > ASSISTANT > PLAYER > VISITOR)
+ *  4. Tutor activo         → VISITOR
+ *  5. Default              → VISITOR
+ */
+export async function resolveViewerStatsRole(
+  prisma: PrismaLike,
+  userId: string,
+  teamId: string,
+): Promise<StatsAudienceRoleValue> {
+  if (await isSuperAdmin(prisma, userId)) return 'ADMIN_TEAM'
+
+  const team = await prisma.team.findUnique({
+    where: { id: teamId },
+    select: { clubId: true },
+  })
+  if (!team) return 'VISITOR'
+
+  if (await isClubAdmin(prisma, userId, team.clubId)) return 'ADMIN_TEAM'
+
+  const roles = await getTeamRoles(prisma, userId, teamId)
+  if (roles.length > 0) {
+    for (const r of ROLE_PRIORITY) {
+      // 'VISITOR' no está en MembershipRoleValue, así que solo comprobamos
+      // los que sí lo están.
+      if (r === 'VISITOR') continue
+      if (roles.includes(r as MembershipRoleValue)) return r
+    }
+    // Si por lo que sea solo tiene roles raros, caemos a VISITOR
+    return 'VISITOR'
+  }
+
+  if (await isParentOfTeamMember(prisma, userId, teamId)) return 'VISITOR'
+
+  return 'VISITOR'
+}
