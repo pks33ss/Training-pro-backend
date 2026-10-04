@@ -1,4 +1,13 @@
-import { IsString, IsNotEmpty, IsOptional, IsDateString, IsEnum, IsInt, Min, Max } from 'class-validator'
+import {
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsDateString,
+  IsEnum,
+  IsInt,
+  Min,
+  Max,
+} from 'class-validator'
 
 export enum MatchType {
   LEAGUE = 'LEAGUE',
@@ -23,9 +32,11 @@ export class CreateMatchDto {
   @IsNotEmpty({ message: 'El rival es requerido' })
   opponent: string
 
-  @IsEnum(MatchLocation)
-  @IsOptional()
-  location?: MatchLocation
+  @IsEnum(MatchLocation, {
+    message: 'La localización es requerida (HOME, AWAY o NEUTRAL)',
+  })
+  @IsNotEmpty({ message: 'La localización es requerida' })
+  location: MatchLocation
 
   @IsEnum(MatchType)
   @IsOptional()
@@ -47,7 +58,7 @@ export class CreateMatchDto {
   @IsNotEmpty()
   teamId: string
 
-    @IsInt()
+  @IsInt()
   @Min(1)
   @Max(20)
   @IsOptional()

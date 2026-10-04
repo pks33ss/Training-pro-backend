@@ -5,11 +5,25 @@
 // padelSubMatches[].player1/player2/sets ya cargados y devuelve
 // el mismo shape que expone GET /matches/:id/padel-stats.
 //
+// MODELO:
+//   PadelSet.homeScore = score del LOCAL      (izquierda)
+//   PadelSet.awayScore = score del VISITANTE  (derecha)
+//
+// Los AGREGADOS (sets, games) también van en formato LOCAL-VISITANTE:
+//   - subMatches[].setsWon  = sets del LOCAL
+//   - subMatches[].setsLost = sets del VISITANTE
+//   - subMatches[].gamesWon = games del LOCAL
+//   - subMatches[].gamesLost = games del VISITANTE
+//   Igual para teamSummary y players.
+//
+// EXCEPCIONES (desde NUESTRA perspectiva):
+//   - set.result  = WIN/LOSS/DRAW (según match.location)
+//   - subMatch.result, teamSummary.result, players[].matchResult
+//   - subMatchesWon/Lost/Drawn (contador de pistas ganadas/perdidas)
+//
 // La usa:
 //   - MatchService.getPadelStats(userId, matchId)  → con 1 match
 //   - TeamStatsService.getTeamStats(...)            → con N matches
-
-const USER_FIELDS = ['id', 'name', 'lastName'] as const
 
 type UserMini = {
   id: string
@@ -33,11 +47,14 @@ type SubMatchLike = {
   sets: SetLike[]
 }
 
+type MatchLocation = 'HOME' | 'AWAY' | 'NEUTRAL'
+
 export type MatchWithPadel = {
   id: string
   teamId: string
   date: Date
   opponent: string
+  location: MatchLocation
   teamScore: number | null
   opponentScore: number | null
   padelSubMatches: SubMatchLike[]
@@ -112,6 +129,7 @@ export type PadelStatsResult = {
     teamId: string
     date: Date
     opponent: string
+    location: MatchLocation
     teamScore: number | null
     opponentScore: number | null
     result: MatchResult
@@ -129,10 +147,30 @@ export type PadelStatsResult = {
 const setHasData = (s: { homeScore: number; awayScore: number }) =>
   s.homeScore > 0 || s.awayScore > 0
 
-const setResult = (s: { homeScore: number; awayScore: number }): SetResult => {
+/**
+ * Devuelve [nuestro score, score del rival] a partir de un set con
+ * homeScore = local, awayScore = visitante, según match.location.
+ */
+function translateScores(
+  s: { homeScore: number; awayScore: number },
+  location: MatchLocation,
+): { ours: number; theirs: number } {
+  if (location === 'AWAY') {
+    // Local = rival, visitante = nuestro
+    return { ours: s.awayScore, theirs: s.homeScore }
+  }
+  // HOME / NEUTRAL → local = nuestro, visitante = rival
+  return { ours: s.homeScore, theirs: s.awayScore }
+}
+
+const setResult = (
+  s: { homeScore: number; awayScore: number },
+  location: MatchLocation,
+): SetResult => {
   if (!setHasData(s)) return null
-  if (s.homeScore > s.awayScore) return 'WIN'
-  if (s.homeScore < s.awayScore) return 'LOSS'
+  const { ours, theirs } = translateScores(s, location)
+  if (ours > theirs) return 'WIN'
+  if (ours < theirs) return 'LOSS'
   return 'DRAW'
 }
 
@@ -143,6 +181,7 @@ const setResult = (s: { homeScore: number; awayScore: number }): SetResult => {
 export function computePadelStatsFromMatch(
   match: MatchWithPadel,
 ): PadelStatsResult {
+  const location = match.location
   const hasGlobalScore =
     match.teamScore !== null && match.opponentScore !== null
 
@@ -158,25 +197,36 @@ export function computePadelStatsFromMatch(
     (sm) => {
       const validSets = sm.sets.filter(setHasData)
 
-      let setsWon = 0
-      let setsLost = 0
+      // Agregados en formato local-visitante
+      let setsWonLocal = 0
+      let setsWonVisitante = 0
       let setsDrawn = 0
-      let gamesWon = 0
-      let gamesLost = 0
+      let gamesLocal = 0
+      let gamesVisitante = 0
+
+      // Contador de pistas ganadas/perdidas (nuestra perspectiva)
+      let setsOursWon = 0
+      let setsOursLost = 0
 
       for (const s of validSets) {
-        gamesWon += s.homeScore
-        gamesLost += s.awayScore
-        const r = setResult(s)
-        if (r === 'WIN') setsWon++
-        else if (r === 'LOSS') setsLost++
-        else if (r === 'DRAW') setsDrawn++
+        gamesLocal += s.homeScore
+        gamesVisitante += s.awayScore
+
+        // Contamos sets desde la perspectiva local-visitante
+        if (s.homeScore > s.awayScore) setsWonLocal++
+        else if (s.homeScore < s.awayScore) setsWonVisitante++
+        else setsDrawn++
+
+        // Y desde nuestra perspectiva (para result)
+        const r = setResult(s, location)
+        if (r === 'WIN') setsOursWon++
+        else if (r === 'LOSS') setsOursLost++
       }
 
       let result: SubMatchResult = null
       if (validSets.length > 0) {
-        if (setsWon > setsLost) result = 'WIN'
-        else if (setsWon < setsLost) result = 'LOSS'
+        if (setsOursWon > setsOursLost) result = 'WIN'
+        else if (setsOursWon < setsOursLost) result = 'LOSS'
         else result = 'DRAW'
       }
 
@@ -190,27 +240,28 @@ export function computePadelStatsFromMatch(
           ? { id: sm.player2.id, name: sm.player2.name, lastName: sm.player2.lastName }
           : null,
         result,
-        setsWon,
-        setsLost,
+        setsWon: setsWonLocal,
+        setsLost: setsWonVisitante,
         setsDrawn,
-        gamesWon,
-        gamesLost,
-        gamesDiff: gamesWon - gamesLost,
+        gamesWon: gamesLocal,
+        gamesLost: gamesVisitante,
+        gamesDiff: gamesLocal - gamesVisitante,
         sets: sm.sets.map((s) => ({
           id: s.id,
           order: s.order,
           homeScore: s.homeScore,
           awayScore: s.awayScore,
-          result: setResult(s),
+          result: setResult(s, location),
         })),
       }
     },
   )
 
-  // ── Resumen del equipo
+  // ── Resumen del equipo (agregados en formato local-visitante)
   let subMatchesWon = 0
   let subMatchesLost = 0
   let subMatchesDrawn = 0
+
   let setsWon = 0
   let setsLost = 0
   let setsDrawn = 0
@@ -218,10 +269,12 @@ export function computePadelStatsFromMatch(
   let gamesLost = 0
 
   for (const sm of subMatchesPayload) {
+    // Contador de pistas: desde nuestra perspectiva
     if (sm.result === 'WIN') subMatchesWon++
     else if (sm.result === 'LOSS') subMatchesLost++
     else if (sm.result === 'DRAW') subMatchesDrawn++
 
+    // Sets y games: local-visitante
     setsWon += sm.setsWon
     setsLost += sm.setsLost
     setsDrawn += sm.setsDrawn
@@ -246,7 +299,7 @@ export function computePadelStatsFromMatch(
     gamesDiff: gamesWon - gamesLost,
   }
 
-  // ── Por jugador
+  // ── Por jugador (agregados en formato local-visitante)
   type PlayerAgg = {
     userId: string
     name: string
@@ -261,6 +314,7 @@ export function computePadelStatsFromMatch(
     setsDrawn: number
     gamesWon: number
     gamesLost: number
+    setsOursWon: number // auxiliar para winRate
   }
 
   const playersMap = new Map<string, PlayerAgg>()
@@ -281,6 +335,7 @@ export function computePadelStatsFromMatch(
         setsDrawn: 0,
         gamesWon: 0,
         gamesLost: 0,
+        setsOursWon: 0,
       })
     }
     return playersMap.get(u.id)!
@@ -292,26 +347,53 @@ export function computePadelStatsFromMatch(
     )
     for (const p of validPlayers) {
       const agg = ensurePlayer(p)
+
+      // Contador de pistas: desde nuestra perspectiva
       if (sm.result !== null) {
         agg.subMatchesPlayed++
         if (sm.result === 'WIN') agg.subMatchesWon++
         else if (sm.result === 'LOSS') agg.subMatchesLost++
         else agg.subMatchesDrawn++
       }
+
+      // Sets y games: local-visitante
       agg.setsPlayed += sm.setsWon + sm.setsLost + sm.setsDrawn
       agg.setsWon += sm.setsWon
       agg.setsLost += sm.setsLost
       agg.setsDrawn += sm.setsDrawn
       agg.gamesWon += sm.gamesWon
       agg.gamesLost += sm.gamesLost
+
+      // Auxiliar para setsWinRate desde nuestra perspectiva
+      // (setsOursWon = sets ganados por nosotros en esta pista)
+      // Necesitamos recalcularlo aquí: los sets ganados por nosotros
+      // en esta pista son los que tienen result WIN.
+      for (const s of sm.sets) {
+        const r = setResult(s, location)
+        if (r === 'WIN') agg.setsOursWon++
+      }
     }
   }
 
   const playersPayload: PadelPlayerPayload[] = Array.from(playersMap.values())
     .map((p) => ({
-      ...p,
+      userId: p.userId,
+      name: p.name,
+      lastName: p.lastName,
+      subMatchesPlayed: p.subMatchesPlayed,
+      subMatchesWon: p.subMatchesWon,
+      subMatchesLost: p.subMatchesLost,
+      subMatchesDrawn: p.subMatchesDrawn,
+      setsPlayed: p.setsPlayed,
+      setsWon: p.setsWon,
+      setsLost: p.setsLost,
+      setsDrawn: p.setsDrawn,
+      gamesWon: p.gamesWon,
+      gamesLost: p.gamesLost,
       setsWinRate:
-        p.setsPlayed > 0 ? Math.round((p.setsWon / p.setsPlayed) * 100) : 0,
+        p.setsPlayed > 0
+          ? Math.round((p.setsOursWon / p.setsPlayed) * 100)
+          : 0,
       gamesDiff: p.gamesWon - p.gamesLost,
       matchResult,
     }))
@@ -326,6 +408,7 @@ export function computePadelStatsFromMatch(
       teamId: match.teamId,
       date: match.date,
       opponent: match.opponent,
+      location,
       teamScore: match.teamScore,
       opponentScore: match.opponentScore,
       result: matchResult,

@@ -240,6 +240,7 @@ export class TeamStatsService {
         teamId: m.teamId,
         date: m.date,
         opponent: m.opponent,
+        location: m.location as any,
         teamScore: m.teamScore,
         opponentScore: m.opponentScore,
         padelSubMatches: m.padelSubMatches.map((sm) => ({

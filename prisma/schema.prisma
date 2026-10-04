@@ -398,7 +398,7 @@ model Match {
   id          String        @id @default(cuid())
   date        DateTime // Fecha y hora del partido
   opponent    String // Nombre del equipo rival
-  location    MatchLocation @default(HOME)
+  location    MatchLocation
   type        MatchType     @default(LEAGUE)
   status      MatchStatus   @default(SCHEDULED)
   venue       String? // Pabellón/ubicación

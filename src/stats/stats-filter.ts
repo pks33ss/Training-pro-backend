@@ -1,12 +1,6 @@
 import { StatsAudienceRole, StatsScope } from '@prisma/client'
 import { getValidMetricKeys } from './metric-registry'
 
-/**
- * Mapa de metricKey → nombres de campos del payload (summary y players).
- * Un `null` significa "no aplica en ese bloque".
- *
- * Si un campo no aparece aquí, NUNCA se oculta (ej. `match`, `trend`).
- */
 interface MetricFieldMap {
   summary?: string[]
   players?: string[]
@@ -46,31 +40,36 @@ const BASKETBALL_FIELDS: Record<string, MetricFieldMap> = {
     summary: ['fieldGoalsAttempted'],
     players: ['fieldGoalsAttempted'],
   },
-  FG_PCT: { summary: ['fieldGoalPct'], players: ['fieldGoalPct', 'fieldGoalsMade', 'fieldGoalsAttempted'], },
+  FG_PCT: {
+    summary: ['fieldGoalPct'],
+    players: ['fieldGoalPct', 'fieldGoalsMade', 'fieldGoalsAttempted'],
+  },
   TP_MADE: { summary: ['threePointersMade'], players: ['threePointersMade'] },
   TP_ATTEMPTED: {
     summary: ['threePointersAttempted'],
     players: ['threePointersAttempted'],
   },
-  TP_PCT: { summary: ['threePointPct'], players: [
+  TP_PCT: {
+    summary: ['threePointPct'],
+    players: [
       'threePointPct',
       'threePointersMade',
       'threePointersAttempted',
-    ], },
+    ],
+  },
   FT_MADE: { summary: ['freeThrowsMade'], players: ['freeThrowsMade'] },
   FT_ATTEMPTED: {
     summary: ['freeThrowsAttempted'],
     players: ['freeThrowsAttempted'],
   },
-  FT_PCT: { summary: ['freeThrowPct'], players: ['freeThrowPct', 'freeThrowsMade', 'freeThrowsAttempted'],
+  FT_PCT: {
+    summary: ['freeThrowPct'],
+    players: ['freeThrowPct', 'freeThrowsMade', 'freeThrowsAttempted'],
   },
 
-  // Solo MATCH (los inputs de edición también, pero no se filtran aquí)
   MINUTES: { players: ['minutes'] },
-
-  // Solo por jugador en TEAM
   MINUTES_PER_MATCH_PLAYER: { players: ['minutesPerMatch'] },
-  POINTS_PLAYER: { players: ['points'] }, // unificado con POINTS
+  POINTS_PLAYER: { players: ['points'] },
   POINTS_PER_MATCH_PLAYER: { players: ['pointsPerMatch'] },
   AVAILABILITY: { players: ['availabilityCount'] },
 }
@@ -80,6 +79,7 @@ const BASKETBALL_FIELDS: Record<string, MetricFieldMap> = {
 // ============================================
 
 const PADEL_FIELDS: Record<string, MetricFieldMap> = {
+  // Equipo (summary agregado + resumen del partido)
   MATCHES: { summary: ['matches'] },
   WINS: { summary: ['wins'] },
   LOSSES: { summary: ['losses'] },
@@ -100,12 +100,12 @@ const PADEL_FIELDS: Record<string, MetricFieldMap> = {
   GAMES_LOST: { summary: ['gamesLost'] },
   GAMES_DIFF: { summary: ['gamesDiff'] },
 
-  // MATCH scope
-  RESULT: {}, // se maneja en el filtro de match (no en team)
+  // Específicas del partido
+  RESULT: {},
   TEAM_SCORE: {},
   SUB_MATCHES: {},
 
-  // Jugador en TEAM
+  // Jugador
   PLAYER_MATCHES: { players: ['matches'] },
   PLAYER_W_L_D: { players: ['wins', 'losses', 'draws'] },
   AVAILABILITY: { players: ['availabilityCount'] },
@@ -128,10 +128,6 @@ function getFieldMap(sport: string): Record<string, MetricFieldMap> {
   return {}
 }
 
-/**
- * Construye, para un viewer concreto, el set de metricKeys visibles.
- * Si no hay fila en DB → visible (default true).
- */
 export function buildVisibleKeys(
   sport: string,
   scope: StatsScope,
@@ -157,12 +153,6 @@ export function buildVisibleKeys(
   return visible
 }
 
-/**
- * Filtra un payload de stats (summary + players) según las claves visibles.
- * No toca `match`, `teams`, `filters` ni `trend`.
- *
- * IMPORTANTE: muta el objeto (borra claves).
- */
 export function filterStatsPayload<T extends {
   summary?: Record<string, any>
   teamSummary?: Record<string, any>

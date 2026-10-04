@@ -39,7 +39,7 @@ export class MatchService {
       data: {
         date: new Date(createMatchDto.date),
         opponent: createMatchDto.opponent,
-        location: (createMatchDto.location as any) || 'HOME',
+        location: createMatchDto.location as any,
         type: (createMatchDto.type as any) || 'LEAGUE',
         venue: createMatchDto.venue,
         competition: createMatchDto.competition,
@@ -789,11 +789,12 @@ export class MatchService {
     if (!match) throw new NotFoundException('Partido no encontrado')
     await getTeamForViewer(this.prisma, userId, match.teamId)
 
-    const payload = computePadelStatsFromMatch({
+        const payload = computePadelStatsFromMatch({
       id: match.id,
       teamId: match.teamId,
       date: match.date,
       opponent: match.opponent,
+      location: match.location as any,
       teamScore: match.teamScore,
       opponentScore: match.opponentScore,
       padelSubMatches: match.padelSubMatches.map((sm) => ({
