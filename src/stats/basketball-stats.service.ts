@@ -8,6 +8,8 @@ import {
   resultFromMatch,
 } from './basketball-stats.helper'
 import type { TeamStatsQueryDto } from './dto/team-stats-query.dto'
+import { findTrendMetric } from './metric-registry'
+import { buildMonthlySeries, TrendMatchInput } from './trend.helper'
 
 type MatchLoaded = {
   id: string
@@ -180,15 +182,21 @@ export class BasketballStatsService {
       totalMinutes,
       minutesPerMatch: perMatch(totalMinutes, matchesCount),
       rebounds,
+      reboundsPerMatch: perMatch(rebounds, matchesCount),
       assists,
+      assistsPerMatch: perMatch(assists, matchesCount),
       steals,
+      stealsPerMatch: perMatch(steals, matchesCount),
       blocks,
+      blocksPerMatch: perMatch(blocks, matchesCount),
       turnovers,
+      turnoversPerMatch: perMatch(turnovers, matchesCount),
       fouls,
       blocksAgainst,
       foulsDrawn,
       plusMinus,
       valuation: teamValuation,
+      valuationPerMatch: perMatch(teamValuation, matchesCount),
       fieldGoalsMade: fgm,
       fieldGoalsAttempted: fga,
       fieldGoalPct: pct(fgm, fga),
@@ -369,7 +377,7 @@ export class BasketballStatsService {
         return b.points - a.points
       })
 
-    // ── Trend
+    // ── Trend (byMonth histórico)
     const byMonthMap = new Map<
       string,
       {
@@ -425,6 +433,64 @@ export class BasketballStatsService {
         opponentPointsPerMatch: perMatch(v.opponentPoints, v.matches),
       }))
 
+    // ── Trend (series opcional por trendMetric)
+    const trendMetric = query.trendMetric
+    let series: Array<{ month: string; value: number }> | null = null
+    const requestedMetric: string | null = trendMetric ?? null
+    let appliedMetric: string | null = null
+
+    if (trendMetric) {
+      const metricDef = findTrendMetric('BASKETBALL', 'TEAM', trendMetric)
+      if (metricDef) {
+        const trendInput: TrendMatchInput[] = perMatchStats.map((pm) => {
+          const r = resultFromMatch(pm.match)
+          const pts = pm.teamSummary.points
+          const oppPts = pm.match.opponentScore ?? 0
+          const reb = pm.teamSummary.rebounds
+          const ast = pm.teamSummary.assists
+          const stl = pm.teamSummary.steals
+          const blk = pm.teamSummary.blocks
+          const tov = pm.teamSummary.turnovers
+          const val = pm.teamSummary.valuation
+
+          const values: Record<string, number> = {
+            matchesPlayed: 1,
+            wins: r === 'WIN' ? 1 : 0,
+            losses: r === 'LOSS' ? 1 : 0,
+            points: pts,
+            pointsPerMatch: pts,
+            opponentPoints: oppPts,
+            opponentPointsPerMatch: oppPts,
+            rebounds: reb,
+            reboundsPerMatch: reb,
+            assists: ast,
+            assistsPerMatch: ast,
+            steals: stl,
+            stealsPerMatch: stl,
+            blocks: blk,
+            blocksPerMatch: blk,
+            turnovers: tov,
+            turnoversPerMatch: tov,
+            valuation: val,
+            valuationPerMatch: val,
+
+            __ratioNum_winRate: r === 'WIN' ? 1 : 0,
+            __ratioDen_winRate: 1,
+            __ratioNum_fgPct: pm.teamSummary.fieldGoalsMade,
+            __ratioDen_fgPct: pm.teamSummary.fieldGoalsAttempted,
+            __ratioNum_tpPct: pm.teamSummary.threePointersMade,
+            __ratioDen_tpPct: pm.teamSummary.threePointersAttempted,
+            __ratioNum_ftPct: pm.teamSummary.freeThrowsMade,
+            __ratioDen_ftPct: pm.teamSummary.freeThrowsAttempted,
+          }
+          return { date: pm.match.date, values }
+        })
+
+        series = buildMonthlySeries(trendInput, metricDef)
+        appliedMetric = metricDef.trendKey ?? null
+      }
+    }
+
     const last10ByMatch = perMatchStats.slice(-10).map((pm) => ({
       matchId: pm.match.id,
       date: pm.match.date.toISOString(),
@@ -458,6 +524,9 @@ export class BasketballStatsService {
           trend: {
             byMonth,
             last10ByMatch,
+            series,
+            requestedMetric,
+            appliedMetric,
           },
         },
       },

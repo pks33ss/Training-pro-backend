@@ -141,3 +141,66 @@ describe('filterStatsPayload', () => {
     ).not.toThrow()
   })
 })
+
+import { getAvailableTrendMetrics } from './stats-filter'
+
+describe('getAvailableTrendMetrics', () => {
+  it('devuelve solo las trendables visibles para el rol', () => {
+    const all = getAvailableTrendMetrics(
+      'BASKETBALL',
+      'TEAM',
+      new Set([
+        'WIN_RATE',
+        'MATCHES',
+        'WINS',
+        'LOSSES',
+        'POINTS',
+        'POINTS_PER_MATCH',
+        'REBOUNDS',
+        'REBOUNDS_PER_MATCH',
+        'ASSISTS',
+        'ASSISTS_PER_MATCH',
+        'STEALS',
+        'STEALS_PER_MATCH',
+        'BLOCKS',
+        'BLOCKS_PER_MATCH',
+        'TURNOVERS',
+        'TURNOVERS_PER_MATCH',
+        'VALUATION',
+        'VALUATION_PER_MATCH',
+        'FG_PCT',
+        'TP_PCT',
+        'FT_PCT',
+      ]),
+    )
+    const keys = all.map((m) => m.trendKey)
+    expect(keys).toContain('winRate')
+    expect(keys).toContain('pointsPerMatch')
+    expect(keys).toContain('reboundsPerMatch')
+  })
+
+  it('excluye las trendables que el rol no puede ver', () => {
+    const all = getAvailableTrendMetrics(
+      'BASKETBALL',
+      'TEAM',
+      new Set(['WIN_RATE']),
+    )
+    const keys = all.map((m) => m.trendKey)
+    expect(keys).toEqual(['winRate'])
+  })
+
+  it('devuelve [] si el rol no ve ninguna trendable', () => {
+    const all = getAvailableTrendMetrics('BASKETBALL', 'TEAM', new Set())
+    expect(all).toEqual([])
+  })
+
+  it('funciona también en PADEL', () => {
+    const all = getAvailableTrendMetrics(
+      'PADEL',
+      'TEAM',
+      new Set(['WIN_RATE', 'SETS_WON', 'GAMES_DIFF']),
+    )
+    const keys = all.map((m) => m.trendKey)
+    expect(keys).toEqual(['winRate', 'setsWon', 'gamesDiff'])
+  })
+})

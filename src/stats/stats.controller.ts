@@ -9,6 +9,7 @@ import {
 import { AuthGuard } from '../auth/auth.guard'
 import { TeamStatsService } from './stats.service'
 import { TeamStatsQueryDto } from './dto/team-stats-query.dto'
+import { PlayerStatsQueryDto } from './dto/player-stats-query.dto'
 
 @UseGuards(AuthGuard)
 @Controller('teams')
@@ -22,5 +23,15 @@ export class StatsController {
     @Query() query: TeamStatsQueryDto,
   ) {
     return this.statsService.getTeamStats(req.user.id, id, query)
+  }
+
+  @Get(':id/players/:userId/stats')
+  getPlayerStats(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+    @Query() query: PlayerStatsQueryDto,
+  ) {
+    return this.statsService.getPlayerStats(req.user.id, id, userId, query)
   }
 }

@@ -1,5 +1,6 @@
 import { StatsAudienceRole, StatsScope } from '@prisma/client'
-import { getValidMetricKeys } from './metric-registry'
+import { getValidMetricKeys, getTrendableMetrics } from './metric-registry'
+import type { MetricDefinition } from './metric-registry'
 
 interface MetricFieldMap {
   summary?: string[]
@@ -79,7 +80,6 @@ const BASKETBALL_FIELDS: Record<string, MetricFieldMap> = {
 // ============================================
 
 const PADEL_FIELDS: Record<string, MetricFieldMap> = {
-  // Equipo (summary agregado + resumen del partido)
   MATCHES: { summary: ['matches'] },
   WINS: { summary: ['wins'] },
   LOSSES: { summary: ['losses'] },
@@ -100,12 +100,10 @@ const PADEL_FIELDS: Record<string, MetricFieldMap> = {
   GAMES_LOST: { summary: ['gamesLost'] },
   GAMES_DIFF: { summary: ['gamesDiff'] },
 
-  // Específicas del partido
   RESULT: {},
   TEAM_SCORE: {},
   SUB_MATCHES: {},
 
-  // Jugador
   PLAYER_MATCHES: { players: ['matches'] },
   PLAYER_W_L_D: { players: ['wins', 'losses', 'draws'] },
   AVAILABILITY: { players: ['availabilityCount'] },
@@ -157,10 +155,17 @@ export function filterStatsPayload<T extends {
   summary?: Record<string, any>
   teamSummary?: Record<string, any>
   players?: Array<Record<string, any>>
+  byMatch?: Array<Record<string, any>>
 }>(
   sport: string,
   visibleKeys: Set<string>,
   payload: T,
+  /**
+   * Nombre del campo del payload que contiene el array de filas "por partido"
+   * o "por jugador". Por defecto 'players' (payload de equipo).
+   * Para el payload individual de jugador se pasa 'byMatch'.
+   */
+  playersFieldName: 'players' | 'byMatch' = 'players',
 ): Set<string> {
   const fieldMap = getFieldMap(sport)
 
@@ -186,10 +191,14 @@ export function filterStatsPayload<T extends {
     for (const k of toDelete) delete summaryObj[k]
   }
 
-  if (payload.players) {
-    for (const player of payload.players) {
+  const rows = (payload as any)[playersFieldName] as
+    | Array<Record<string, any>>
+    | undefined
+
+  if (rows) {
+    for (const row of rows) {
       const toDelete: string[] = []
-      for (const key of Object.keys(player)) {
+      for (const key of Object.keys(row)) {
         const coveringMetrics = Object.entries(fieldMap).filter(([, m]) =>
           (m.players ?? []).includes(key),
         )
@@ -199,9 +208,23 @@ export function filterStatsPayload<T extends {
         )
         if (!anyVisible) toDelete.push(key)
       }
-      for (const k of toDelete) delete player[k]
+      for (const k of toDelete) delete row[k]
     }
   }
 
   return visibleKeys
+}
+
+/**
+ * Devuelve las métricas trendables para `sport`+`scope` que el viewer
+ * puede ver según `visibleKeys`. El orden respeta el del registry.
+ */
+export function getAvailableTrendMetrics(
+  sport: string,
+  scope: StatsScope,
+  visibleKeys: Set<string>,
+): MetricDefinition[] {
+  return getTrendableMetrics(sport, scope).filter((m) =>
+    visibleKeys.has(m.key),
+  )
 }

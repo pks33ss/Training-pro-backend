@@ -5,9 +5,22 @@ import {
   resolveViewerStatsRole,
 } from '../common/access'
 import { TeamStatsQueryDto } from './dto/team-stats-query.dto'
+import { PlayerStatsQueryDto } from './dto/player-stats-query.dto'
 import { computePadelStatsFromMatch } from './padel-stats.helper'
+import {
+  computeBasketballStatsFromMatch,
+  computeValuation,
+  pct,
+  perMatch as perMatchAvg,
+} from './basketball-stats.helper'
 import { BasketballStatsService } from './basketball-stats.service'
-import { buildVisibleKeys, filterStatsPayload } from './stats-filter'
+import {
+  buildVisibleKeys,
+  filterStatsPayload,
+  getAvailableTrendMetrics,
+} from './stats-filter'
+import { findTrendMetric } from './metric-registry'
+import { buildMonthlySeries, TrendMatchInput } from './trend.helper'
 
 const USER_SELECT = {
   id: true,
@@ -38,7 +51,6 @@ export class TeamStatsService {
 
     const range = await this.resolveDateRange(mainTeam.id, query)
 
-    // Config de visibilidad + rol del viewer (para filtrar el payload)
     const viewerRole = await resolveViewerStatsRole(
       this.prisma,
       userId,
@@ -54,9 +66,25 @@ export class TeamStatsService {
       configRows as any,
     )
 
+    const availableTrendMetrics = getAvailableTrendMetrics(
+      mainTeam.sport,
+      'TEAM',
+      visibleTeamKeys,
+    ).map((m) => ({
+      key: m.trendKey!,
+      label: m.trendLabel!,
+      unit: m.unit!,
+    }))
+
     if (mainTeam.sport === 'PADEL') {
       const matches = await this.fetchPadelMatches(teamIds, range, query)
-      return this.buildPadelResponse(teams, query, matches, visibleTeamKeys)
+      return this.buildPadelResponse(
+        teams,
+        query,
+        matches,
+        visibleTeamKeys,
+        availableTrendMetrics,
+      )
     }
 
     if (mainTeam.sport === 'BASKETBALL') {
@@ -66,14 +94,26 @@ export class TeamStatsService {
         query,
         matches as any,
       )
-            const visibleMetrics = filterStatsPayload(
+
+      const requestedMetric = query.trendMetric ?? null
+      const isRequestedAvailable =
+        requestedMetric === null ||
+        availableTrendMetrics.some((m) => m.key === requestedMetric)
+      if (!isRequestedAvailable) {
+        payload.sport.data.trend.series = null
+        payload.sport.data.trend.appliedMetric = null
+      }
+
+      const visibleMetrics = filterStatsPayload(
         mainTeam.sport,
         visibleTeamKeys,
         payload.sport.data as any,
       )
+
       return {
         ...payload,
         visibleMetrics: Array.from(visibleMetrics),
+        availableTrendMetrics,
       }
     }
 
@@ -92,12 +132,923 @@ export class TeamStatsService {
         type: mainTeam.sport,
         data: null,
       },
+      availableTrendMetrics,
     }
   }
 
+  // ─────────────────────────────────────────────
+  // FASE 3.4 — Stats individuales de jugador
+  // ─────────────────────────────────────────────
+
+  async getPlayerStats(
+    viewerId: string,
+    teamId: string,
+    playerUserId: string,
+    query: PlayerStatsQueryDto,
+  ) {
+    const additionalIds = (query.teamIds ?? []).filter((id) => id !== teamId)
+    const allIds = [teamId, ...additionalIds]
+
+    const teams = await getTeamsForViewer(this.prisma, viewerId, allIds)
+    const mainTeam = teams[0]
+    const teamIds = teams.map((t) => t.id)
+
+    const player = await this.prisma.user.findUnique({
+      where: { id: playerUserId },
+      select: { id: true, name: true, lastName: true, deletedAt: true },
+    })
+    if (!player || player.deletedAt) {
+      throw new NotFoundException('Jugador no encontrado')
+    }
+
+    const range = await this.resolveDateRange(mainTeam.id, query)
+
+    const viewerRole = await resolveViewerStatsRole(
+      this.prisma,
+      viewerId,
+      mainTeam.id,
+    )
+    const configRows = await this.prisma.statsVisibilityConfig.findMany({
+      where: { teamId: mainTeam.id, sport: mainTeam.sport },
+    })
+    const visiblePlayerKeys = buildVisibleKeys(
+      mainTeam.sport,
+      'PLAYER',
+      viewerRole,
+      configRows as any,
+    )
+
+    const availableTrendMetrics = getAvailableTrendMetrics(
+      mainTeam.sport,
+      'PLAYER',
+      visiblePlayerKeys,
+    ).map((m) => ({
+      key: m.trendKey!,
+      label: m.trendLabel!,
+      unit: m.unit!,
+    }))
+
+    if (mainTeam.sport === 'PADEL') {
+      const matches = await this.fetchPadelMatchesForPlayer(
+        teamIds,
+        range,
+        playerUserId,
+        query,
+      )
+      return this.buildPadelPlayerResponse(
+        teams,
+        player,
+        query,
+        matches,
+        playerUserId,
+        visiblePlayerKeys,
+        availableTrendMetrics,
+      )
+    }
+
+    if (mainTeam.sport === 'BASKETBALL') {
+      const matches = await this.fetchBasketballMatchesForPlayer(
+        teamIds,
+        range,
+        playerUserId,
+        query,
+      )
+      return this.buildBasketballPlayerResponse(
+        teams,
+        player,
+        query,
+        matches,
+        playerUserId,
+        visiblePlayerKeys,
+        availableTrendMetrics,
+      )
+    }
+
+    return {
+      team: { id: mainTeam.id, name: mainTeam.name, sport: mainTeam.sport },
+      player: {
+        userId: player.id,
+        name: player.name,
+        lastName: player.lastName,
+      },
+      filters: {
+        seasonId: query.seasonId ?? null,
+        from: range.from?.toISOString() ?? null,
+        to: range.to?.toISOString() ?? null,
+        matchIds: query.matchIds ?? null,
+        teamIds,
+      },
+      summary: null,
+      byMatch: [],
+      trend: {
+        byMonth: [],
+        series: null,
+        requestedMetric: query.trendMetric ?? null,
+        appliedMetric: null,
+      },
+      visibleMetrics: [],
+      availableTrendMetrics,
+    }
+  }
+
+  private async fetchPadelMatchesForPlayer(
+    teamIds: string[],
+    range: { from: Date | null; to: Date | null },
+    playerUserId: string,
+    query: PlayerStatsQueryDto,
+  ) {
+    const where = this.buildBaseWhere(teamIds, range, query.matchIds)
+    where.padelSubMatches = {
+      some: {
+        OR: [{ player1Id: playerUserId }, { player2Id: playerUserId }],
+      },
+    }
+
+    return this.prisma.match.findMany({
+      where,
+      orderBy: { date: 'asc' },
+      include: {
+        padelSubMatches: {
+          orderBy: { order: 'asc' },
+          include: {
+            player1: { select: USER_SELECT },
+            player2: { select: USER_SELECT },
+            sets: { orderBy: { order: 'asc' } },
+          },
+        },
+        callups: {
+          select: {
+            userId: true,
+            availableStatus: true,
+            user: { select: USER_SELECT },
+          },
+        },
+      },
+    })
+  }
+
+  private async fetchBasketballMatchesForPlayer(
+    teamIds: string[],
+    range: { from: Date | null; to: Date | null },
+    playerUserId: string,
+    query: PlayerStatsQueryDto,
+  ) {
+    const where = this.buildBaseWhere(teamIds, range, query.matchIds)
+    where.playerStats = { some: { userId: playerUserId } }
+
+    return this.prisma.match.findMany({
+      where,
+      orderBy: { date: 'asc' },
+      include: {
+        playerStats: {
+          include: {
+            user: { select: USER_SELECT },
+          },
+        },
+        callups: {
+          select: {
+            userId: true,
+            availableStatus: true,
+            user: { select: USER_SELECT },
+          },
+        },
+      },
+    })
+  }
+
+  // ─────────────────────────────────────────────
+  // PÁDEL — respuesta individual de jugador
+  // ─────────────────────────────────────────────
+
+  private buildPadelPlayerResponse(
+    teams: Array<{ id: string; name: string; sport: string }>,
+    player: { id: string; name: string; lastName: string },
+    query: PlayerStatsQueryDto,
+    matches: Awaited<ReturnType<TeamStatsService['fetchPadelMatchesForPlayer']>>,
+    playerUserId: string,
+    visiblePlayerKeys: Set<string>,
+    availableTrendMetrics: Array<{ key: string; label: string; unit: string }>,
+  ) {
+    const mainTeam = teams[0]
+
+    const perMatch = matches.map((m) =>
+      computePadelStatsFromMatch({
+        id: m.id,
+        teamId: m.teamId,
+        date: m.date,
+        opponent: m.opponent,
+        location: m.location as any,
+        teamScore: m.teamScore,
+        opponentScore: m.opponentScore,
+        padelSubMatches: m.padelSubMatches.map((sm) => ({
+          id: sm.id,
+          order: sm.order,
+          player1: sm.player1
+            ? {
+                id: sm.player1.id,
+                name: sm.player1.name,
+                lastName: sm.player1.lastName,
+              }
+            : null,
+          player2: sm.player2
+            ? {
+                id: sm.player2.id,
+                name: sm.player2.name,
+                lastName: sm.player2.lastName,
+              }
+            : null,
+          sets: sm.sets.map((s) => ({
+            id: s.id,
+            order: s.order,
+            homeScore: s.homeScore,
+            awayScore: s.awayScore,
+            played: s.played,
+          })),
+        })),
+      }),
+    )
+
+    let matchesCount = 0
+    let wins = 0
+    let losses = 0
+    let draws = 0
+    let availabilityCount = 0
+    let teamMatches = 0
+
+    let subMatchesPlayed = 0
+    let subMatchesWon = 0
+    let subMatchesLost = 0
+    let subMatchesDrawn = 0
+
+    let setsPlayed = 0
+    let setsWon = 0
+    let setsLost = 0
+    let setsDrawn = 0
+
+    let gamesWon = 0
+    let gamesLost = 0
+
+    const byMatch: Array<Record<string, any>> = []
+
+    for (let i = 0; i < perMatch.length; i++) {
+      const pm = perMatch[i]
+      const rawMatch = matches[i]
+      teamMatches++
+
+      const availability = rawMatch.callups?.find(
+        (c) => c.userId === playerUserId,
+      )?.availableStatus
+      if (availability === 'YES') availabilityCount++
+
+      const playerSubMatches = pm.subMatches.filter(
+        (sm) =>
+          sm.player1?.id === playerUserId ||
+          sm.player2?.id === playerUserId,
+      )
+
+      if (playerSubMatches.length === 0) {
+        continue
+      }
+
+      const matchResult = pm.match.result
+
+      let pmSubPlayed = 0
+      let pmSubWon = 0
+      let pmSubLost = 0
+      let pmSubDrawn = 0
+      let pmSetsWon = 0
+      let pmSetsLost = 0
+      let pmSetsDrawn = 0
+      let pmGamesWon = 0
+      let pmGamesLost = 0
+
+      for (const sm of playerSubMatches) {
+        if (sm.result === null) continue
+        pmSubPlayed++
+        if (sm.result === 'WIN') pmSubWon++
+        else if (sm.result === 'LOSS') pmSubLost++
+        else pmSubDrawn++
+
+        pmSetsWon += sm.setsWon
+        pmSetsLost += sm.setsLost
+        pmSetsDrawn += sm.setsDrawn
+        pmGamesWon += sm.gamesWon
+        pmGamesLost += sm.gamesLost
+      }
+
+      matchesCount++
+      if (matchResult === 'WIN') wins++
+      else if (matchResult === 'LOSS') losses++
+      else if (matchResult === 'DRAW') draws++
+
+      subMatchesPlayed += pmSubPlayed
+      subMatchesWon += pmSubWon
+      subMatchesLost += pmSubLost
+      subMatchesDrawn += pmSubDrawn
+
+      setsPlayed += pmSetsWon + pmSetsLost + pmSetsDrawn
+      setsWon += pmSetsWon
+      setsLost += pmSetsLost
+      setsDrawn += pmSetsDrawn
+
+      gamesWon += pmGamesWon
+      gamesLost += pmGamesLost
+
+      byMatch.push({
+        matchId: pm.match.id,
+        date: pm.match.date.toISOString(),
+        opponent: pm.match.opponent,
+        result: matchResult,
+        teamScore: pm.match.teamScore,
+        opponentScore: pm.match.opponentScore,
+        matches: 1,
+        wins: matchResult === 'WIN' ? 1 : 0,
+        losses: matchResult === 'LOSS' ? 1 : 0,
+        draws: matchResult === 'DRAW' ? 1 : 0,
+        availabilityCount: availability === 'YES' ? 1 : 0,
+        subMatchesPlayed: pmSubPlayed,
+        subMatchesWon: pmSubWon,
+        subMatchesLost: pmSubLost,
+        subMatchesDrawn: pmSubDrawn,
+        setsPlayed: pmSetsWon + pmSetsLost + pmSetsDrawn,
+        setsWon: pmSetsWon,
+        setsLost: pmSetsLost,
+        setsDrawn: pmSetsDrawn,
+        gamesWon: pmGamesWon,
+        gamesLost: pmGamesLost,
+        gamesDiff: pmGamesWon - pmGamesLost,
+        winRate:
+          matchesCount > 0
+            ? Math.round((wins / matchesCount) * 1000) / 10
+            : 0,
+      })
+    }
+
+    const winRate =
+      matchesCount > 0
+        ? Math.round((wins / matchesCount) * 1000) / 10
+        : 0
+
+    const summary = {
+      matches: matchesCount,
+      wins,
+      losses,
+      draws,
+      winRate,
+      availabilityCount,
+      teamMatches,
+      subMatchesPlayed,
+      subMatchesWon,
+      subMatchesLost,
+      subMatchesDrawn,
+      setsPlayed,
+      setsWon,
+      setsLost,
+      setsDrawn,
+      gamesWon,
+      gamesLost,
+      gamesDiff: gamesWon - gamesLost,
+    }
+
+    const trendMetric = query.trendMetric
+    let series: Array<{ month: string; value: number }> | null = null
+    const requestedMetric: string | null = trendMetric ?? null
+    let appliedMetric: string | null = null
+
+    const byMonthMap = new Map<
+      string,
+      {
+        matches: number
+        wins: number
+        losses: number
+        draws: number
+        setsPlayed: number
+        setsWon: number
+        setsLost: number
+        gamesWon: number
+        gamesLost: number
+        subMatchesWon: number
+        subMatchesLost: number
+      }
+    >()
+
+    for (const bm of byMatch) {
+      const d = new Date(bm.date as string)
+      const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+      if (!byMonthMap.has(key)) {
+        byMonthMap.set(key, {
+          matches: 0,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+          setsPlayed: 0,
+          setsWon: 0,
+          setsLost: 0,
+          gamesWon: 0,
+          gamesLost: 0,
+          subMatchesWon: 0,
+          subMatchesLost: 0,
+        })
+      }
+      const acc = byMonthMap.get(key)!
+      acc.matches += bm.matches
+      acc.wins += bm.wins
+      acc.losses += bm.losses
+      acc.draws += bm.draws
+      acc.setsPlayed += bm.setsPlayed
+      acc.setsWon += bm.setsWon
+      acc.setsLost += bm.setsLost
+      acc.gamesWon += bm.gamesWon
+      acc.gamesLost += bm.gamesLost
+      acc.subMatchesWon += bm.subMatchesWon
+      acc.subMatchesLost += bm.subMatchesLost
+    }
+
+    const byMonth = Array.from(byMonthMap.entries())
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([month, v]) => ({
+        month,
+        matches: v.matches,
+        wins: v.wins,
+        losses: v.losses,
+        draws: v.draws,
+        winRate:
+          v.matches > 0
+            ? Math.round((v.wins / v.matches) * 1000) / 10
+            : 0,
+      }))
+
+    if (trendMetric) {
+      const metricDef = findTrendMetric('PADEL', 'PLAYER', trendMetric)
+      if (metricDef) {
+        const trendInput: TrendMatchInput[] = byMatch.map((bm) => {
+          const r = bm.result as MatchResult | null
+          const values: Record<string, number> = {
+            matchesPlayed: 1,
+            wins: r === 'WIN' ? 1 : 0,
+            losses: r === 'LOSS' ? 1 : 0,
+            setsPlayed: bm.setsPlayed,
+            setsWon: bm.setsWon,
+            setsLost: bm.setsLost,
+            gamesWon: bm.gamesWon,
+            gamesLost: bm.gamesLost,
+            gamesDiff: bm.gamesDiff,
+            subMatchesWon: bm.subMatchesWon,
+            subMatchesLost: bm.subMatchesLost,
+            __ratioNum_winRate: r === 'WIN' ? 1 : 0,
+            __ratioDen_winRate: 1,
+          }
+          return { date: new Date(bm.date as string), values }
+        })
+        series = buildMonthlySeries(trendInput, metricDef)
+        appliedMetric = metricDef.trendKey ?? null
+      }
+    }
+
+    const response = {
+      team: { id: mainTeam.id, name: mainTeam.name, sport: mainTeam.sport },
+      player: {
+        userId: player.id,
+        name: player.name,
+        lastName: player.lastName,
+      },
+      filters: {
+        seasonId: query.seasonId ?? null,
+        from: byMatch.length > 0 ? byMatch[0].date : query.from ?? null,
+        to:
+          byMatch.length > 0
+            ? byMatch[byMatch.length - 1].date
+            : query.to ?? null,
+        matchIds: query.matchIds ?? null,
+        teamIds: teams.map((t) => t.id),
+      },
+      summary,
+      byMatch,
+      trend: {
+        byMonth,
+        series,
+        requestedMetric,
+        appliedMetric,
+      },
+    }
+
+    const isRequestedAvailable =
+      requestedMetric === null ||
+      availableTrendMetrics.some((m) => m.key === requestedMetric)
+    if (!isRequestedAvailable) {
+      response.trend.series = null
+      response.trend.appliedMetric = null
+    }
+
+    const visibleMetrics = filterStatsPayload(
+      mainTeam.sport,
+      visiblePlayerKeys,
+      response as any,
+      'byMatch',
+    )
+
+    return {
+      ...response,
+      visibleMetrics: Array.from(visibleMetrics),
+      availableTrendMetrics,
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  // BASKET — respuesta individual de jugador
+  // ─────────────────────────────────────────────
+
+  private buildBasketballPlayerResponse(
+    teams: Array<{ id: string; name: string; sport: string }>,
+    player: { id: string; name: string; lastName: string },
+    query: PlayerStatsQueryDto,
+    matches: Awaited<
+      ReturnType<TeamStatsService['fetchBasketballMatchesForPlayer']>
+    >,
+    playerUserId: string,
+    visiblePlayerKeys: Set<string>,
+    availableTrendMetrics: Array<{ key: string; label: string; unit: string }>,
+  ) {
+    const mainTeam = teams[0]
+
+    const perMatch = matches.map((m) =>
+      computeBasketballStatsFromMatch({
+        id: m.id,
+        teamId: m.teamId,
+        date: m.date,
+        opponent: m.opponent,
+        teamScore: m.teamScore,
+        opponentScore: m.opponentScore,
+        playerStats: m.playerStats.map((ps) => ({
+          userId: ps.userId,
+          user: {
+            id: ps.user.id,
+            name: ps.user.name,
+            lastName: ps.user.lastName,
+          },
+          minutes: ps.minutes,
+          points: ps.points,
+          rebounds: ps.rebounds,
+          assists: ps.assists,
+          steals: ps.steals,
+          blocks: ps.blocks,
+          turnovers: ps.turnovers,
+          fouls: ps.fouls,
+          blocksAgainst: ps.blocksAgainst,
+          foulsDrawn: ps.foulsDrawn,
+          plusMinus: ps.plusMinus,
+          fieldGoalsMade: ps.fieldGoalsMade,
+          fieldGoalsAttempted: ps.fieldGoalsAttempted,
+          threePointersMade: ps.threePointersMade,
+          threePointersAttempted: ps.threePointersAttempted,
+          freeThrowsMade: ps.freeThrowsMade,
+          freeThrowsAttempted: ps.freeThrowsAttempted,
+        })),
+      }),
+    )
+
+    let matchesCount = 0
+    let wins = 0
+    let losses = 0
+    let draws = 0
+    let availabilityCount = 0
+    let teamMatches = 0
+
+    let minutes = 0
+    let points = 0
+    let rebounds = 0
+    let assists = 0
+    let steals = 0
+    let blocks = 0
+    let turnovers = 0
+    let fouls = 0
+    let blocksAgainst = 0
+    let foulsDrawn = 0
+    let plusMinus = 0
+    let fgm = 0
+    let fga = 0
+    let tpm = 0
+    let tpa = 0
+    let ftm = 0
+    let fta = 0
+
+    const byMatch: Array<Record<string, any>> = []
+
+    for (let i = 0; i < perMatch.length; i++) {
+      const pm = perMatch[i]
+      const rawMatch = matches[i]
+      teamMatches++
+
+      const availability = rawMatch.callups?.find(
+        (c) => c.userId === playerUserId,
+      )?.availableStatus
+      if (availability === 'YES') availabilityCount++
+
+      const playerRow = pm.players.find((p) => p.userId === playerUserId)
+      if (!playerRow) continue
+
+      const matchResult = pm.match.result
+
+      const valuation = computeValuation(playerRow)
+
+      matchesCount++
+      if (matchResult === 'WIN') wins++
+      else if (matchResult === 'LOSS') losses++
+      else if (matchResult === 'DRAW') draws++
+
+      minutes += playerRow.minutes ?? 0
+      points += playerRow.points
+      rebounds += playerRow.rebounds
+      assists += playerRow.assists
+      steals += playerRow.steals
+      blocks += playerRow.blocks
+      turnovers += playerRow.turnovers
+      fouls += playerRow.fouls
+      blocksAgainst += playerRow.blocksAgainst
+      foulsDrawn += playerRow.foulsDrawn
+      plusMinus += playerRow.plusMinus ?? 0
+      fgm += playerRow.fieldGoalsMade
+      fga += playerRow.fieldGoalsAttempted
+      tpm += playerRow.threePointersMade
+      tpa += playerRow.threePointersAttempted
+      ftm += playerRow.freeThrowsMade
+      fta += playerRow.freeThrowsAttempted
+
+      byMatch.push({
+        matchId: pm.match.id,
+        date: pm.match.date.toISOString(),
+        opponent: pm.match.opponent,
+        result: matchResult,
+        teamScore: pm.match.teamScore,
+        opponentScore: pm.match.opponentScore,
+        matches: 1,
+        wins: matchResult === 'WIN' ? 1 : 0,
+        losses: matchResult === 'LOSS' ? 1 : 0,
+        draws: matchResult === 'DRAW' ? 1 : 0,
+        availabilityCount: availability === 'YES' ? 1 : 0,
+        minutes: playerRow.minutes,
+        points: playerRow.points,
+        rebounds: playerRow.rebounds,
+        assists: playerRow.assists,
+        steals: playerRow.steals,
+        blocks: playerRow.blocks,
+        turnovers: playerRow.turnovers,
+        fouls: playerRow.fouls,
+        blocksAgainst: playerRow.blocksAgainst,
+        foulsDrawn: playerRow.foulsDrawn,
+        plusMinus: playerRow.plusMinus,
+        valuation,
+        fieldGoalsMade: playerRow.fieldGoalsMade,
+        fieldGoalsAttempted: playerRow.fieldGoalsAttempted,
+        fieldGoalPct: pct(
+          playerRow.fieldGoalsMade,
+          playerRow.fieldGoalsAttempted,
+        ),
+        threePointersMade: playerRow.threePointersMade,
+        threePointersAttempted: playerRow.threePointersAttempted,
+        threePointPct: pct(
+          playerRow.threePointersMade,
+          playerRow.threePointersAttempted,
+        ),
+        freeThrowsMade: playerRow.freeThrowsMade,
+        freeThrowsAttempted: playerRow.freeThrowsAttempted,
+        freeThrowPct: pct(
+          playerRow.freeThrowsMade,
+          playerRow.freeThrowsAttempted,
+        ),
+      })
+    }
+
+    const teamValuation = computeValuation({
+      points,
+      rebounds,
+      assists,
+      steals,
+      blocks,
+      foulsDrawn,
+      fieldGoalsMade: fgm,
+      fieldGoalsAttempted: fga,
+      threePointersMade: tpm,
+      threePointersAttempted: tpa,
+      freeThrowsMade: ftm,
+      freeThrowsAttempted: fta,
+      turnovers,
+      blocksAgainst,
+      fouls,
+    })
+
+    const winRate =
+      matchesCount > 0
+        ? Math.round((wins / matchesCount) * 1000) / 10
+        : 0
+
+    const summary = {
+      matches: matchesCount,
+      wins,
+      losses,
+      draws,
+      winRate,
+      availabilityCount,
+      teamMatches,
+      minutes,
+      minutesPerMatch: perMatchAvg(minutes, matchesCount),
+      points,
+      pointsPerMatch: perMatchAvg(points, matchesCount),
+      rebounds,
+      assists,
+      steals,
+      blocks,
+      turnovers,
+      fouls,
+      blocksAgainst,
+      foulsDrawn,
+      plusMinus,
+      valuation: teamValuation,
+      valuationPerMatch: perMatchAvg(teamValuation, matchesCount),
+      fieldGoalsMade: fgm,
+      fieldGoalsAttempted: fga,
+      fieldGoalPct: pct(fgm, fga),
+      threePointersMade: tpm,
+      threePointersAttempted: tpa,
+      threePointPct: pct(tpm, tpa),
+      freeThrowsMade: ftm,
+      freeThrowsAttempted: fta,
+      freeThrowPct: pct(ftm, fta),
+    }
+
+    const trendMetric = query.trendMetric
+    let series: Array<{ month: string; value: number }> | null = null
+    const requestedMetric: string | null = trendMetric ?? null
+    let appliedMetric: string | null = null
+
+    const byMonthMap = new Map<
+      string,
+      {
+        matches: number
+        wins: number
+        losses: number
+        draws: number
+        points: number
+        rebounds: number
+        assists: number
+        valuation: number
+        fgm: number
+        fga: number
+        tpm: number
+        tpa: number
+        ftm: number
+        fta: number
+      }
+    >()
+
+    for (const bm of byMatch) {
+      const d = new Date(bm.date as string)
+      const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+      if (!byMonthMap.has(key)) {
+        byMonthMap.set(key, {
+          matches: 0,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+          points: 0,
+          rebounds: 0,
+          assists: 0,
+          valuation: 0,
+          fgm: 0,
+          fga: 0,
+          tpm: 0,
+          tpa: 0,
+          ftm: 0,
+          fta: 0,
+        })
+      }
+      const acc = byMonthMap.get(key)!
+      acc.matches += bm.matches
+      acc.wins += bm.wins
+      acc.losses += bm.losses
+      acc.draws += bm.draws
+      acc.points += bm.points
+      acc.rebounds += bm.rebounds
+      acc.assists += bm.assists
+      acc.valuation += bm.valuation
+      acc.fgm += bm.fieldGoalsMade
+      acc.fga += bm.fieldGoalsAttempted
+      acc.tpm += bm.threePointersMade
+      acc.tpa += bm.threePointersAttempted
+      acc.ftm += bm.freeThrowsMade
+      acc.fta += bm.freeThrowsAttempted
+    }
+
+    const byMonth = Array.from(byMonthMap.entries())
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([month, v]) => ({
+        month,
+        matches: v.matches,
+        wins: v.wins,
+        losses: v.losses,
+        draws: v.draws,
+        winRate:
+          v.matches > 0
+            ? Math.round((v.wins / v.matches) * 1000) / 10
+            : 0,
+      }))
+
+    if (trendMetric) {
+      const metricDef = findTrendMetric('BASKETBALL', 'PLAYER', trendMetric)
+      if (metricDef) {
+        const trendInput: TrendMatchInput[] = byMatch.map((bm) => {
+          const r = bm.result as MatchResult | null
+          const pts = bm.points
+          const reb = bm.rebounds
+          const ast = bm.assists
+          const val = bm.valuation
+
+          const values: Record<string, number> = {
+            matchesPlayed: 1,
+            wins: r === 'WIN' ? 1 : 0,
+            losses: r === 'LOSS' ? 1 : 0,
+            points: pts,
+            pointsPerMatch: pts,
+            playerPoints: pts,
+            playerPointsPerMatch: pts,
+            rebounds: reb,
+            reboundsPerMatch: reb,
+            assists: ast,
+            assistsPerMatch: ast,
+            valuation: val,
+            valuationPerMatch: val,
+            __ratioNum_winRate: r === 'WIN' ? 1 : 0,
+            __ratioDen_winRate: 1,
+            __ratioNum_fgPct: bm.fieldGoalsMade,
+            __ratioDen_fgPct: bm.fieldGoalsAttempted,
+            __ratioNum_tpPct: bm.threePointersMade,
+            __ratioDen_tpPct: bm.threePointersAttempted,
+            __ratioNum_ftPct: bm.freeThrowsMade,
+            __ratioDen_ftPct: bm.freeThrowsAttempted,
+          }
+          return { date: new Date(bm.date as string), values }
+        })
+        series = buildMonthlySeries(trendInput, metricDef)
+        appliedMetric = metricDef.trendKey ?? null
+      }
+    }
+
+    const response = {
+      team: { id: mainTeam.id, name: mainTeam.name, sport: mainTeam.sport },
+      player: {
+        userId: player.id,
+        name: player.name,
+        lastName: player.lastName,
+      },
+      filters: {
+        seasonId: query.seasonId ?? null,
+        from: byMatch.length > 0 ? byMatch[0].date : query.from ?? null,
+        to:
+          byMatch.length > 0
+            ? byMatch[byMatch.length - 1].date
+            : query.to ?? null,
+        matchIds: query.matchIds ?? null,
+        teamIds: teams.map((t) => t.id),
+      },
+      summary,
+      byMatch,
+      trend: {
+        byMonth,
+        series,
+        requestedMetric,
+        appliedMetric,
+      },
+    }
+
+    const isRequestedAvailable =
+      requestedMetric === null ||
+      availableTrendMetrics.some((m) => m.key === requestedMetric)
+    if (!isRequestedAvailable) {
+      response.trend.series = null
+      response.trend.appliedMetric = null
+    }
+
+    const visibleMetrics = filterStatsPayload(
+      mainTeam.sport,
+      visiblePlayerKeys,
+      response as any,
+      'byMatch',
+    )
+
+    return {
+      ...response,
+      visibleMetrics: Array.from(visibleMetrics),
+      availableTrendMetrics,
+    }
+  }
+
+  // ─────────────────────────────────────────────
+  // Helpers comunes
+  // ─────────────────────────────────────────────
+
   private async resolveDateRange(
     teamId: string,
-    query: TeamStatsQueryDto,
+    query: TeamStatsQueryDto | PlayerStatsQueryDto,
   ): Promise<{ from: Date | null; to: Date | null }> {
     let from: Date | null = null
     let to: Date | null = null
@@ -223,7 +1174,7 @@ export class TeamStatsService {
   }
 
   // ─────────────────────────────────────────────
-  // PÁDEL — agregado
+  // PÁDEL — agregado de equipo
   // ─────────────────────────────────────────────
 
   private buildPadelResponse(
@@ -231,6 +1182,7 @@ export class TeamStatsService {
     query: TeamStatsQueryDto,
     matches: Awaited<ReturnType<TeamStatsService['fetchPadelMatches']>>,
     visibleTeamKeys: Set<string>,
+    availableTrendMetrics: Array<{ key: string; label: string; unit: string }>,
   ) {
     const mainTeam = teams[0]
 
@@ -281,25 +1233,39 @@ export class TeamStatsService {
     let gamesWon = 0
     let gamesLost = 0
 
-    for (const pm of perMatch) {
+    // ⚠️ Los agregados de pádel de un partido vienen en formato
+    // LOCAL-VISITANTE. Para el agregado del equipo los traducimos a
+    // "nuestro-rival" según la location del partido.
+    for (let i = 0; i < perMatch.length; i++) {
+      const pm = perMatch[i]
+      const match = matches[i]
       const ts = pm.teamSummary
+      const isAway = match.location === 'AWAY'
+
       matchesCount++
       if (ts.result === 'WIN') wins++
       else if (ts.result === 'LOSS') losses++
       else if (ts.result === 'DRAW') draws++
 
+      // subMatchesWon/Lost/Drawn ya vienen desde nuestra perspectiva
       subMatchesPlayed += ts.subMatchesPlayed
       subMatchesWon += ts.subMatchesWon
       subMatchesLost += ts.subMatchesLost
       subMatchesDrawn += ts.subMatchesDrawn
 
+      // setsWon/Lost/Drawn vienen en local-visitante → traducir
+      const setsOurs = isAway ? ts.setsLost : ts.setsWon
+      const setsTheirs = isAway ? ts.setsWon : ts.setsLost
+      const gamesOurs = isAway ? ts.gamesLost : ts.gamesWon
+      const gamesTheirs = isAway ? ts.gamesWon : ts.gamesLost
+
       setsPlayed += ts.setsPlayed
-      setsWon += ts.setsWon
-      setsLost += ts.setsLost
+      setsWon += setsOurs
+      setsLost += setsTheirs
       setsDrawn += ts.setsDrawn
 
-      gamesWon += ts.gamesWon
-      gamesLost += ts.gamesLost
+      gamesWon += gamesOurs
+      gamesLost += gamesTheirs
     }
 
     const winRate =
@@ -381,6 +1347,7 @@ export class TeamStatsService {
       const pm = perMatch[i]
       const match = matches[i]
       const matchResult = pm.match.result
+      const isAway = match.location === 'AWAY'
 
       const availabilityByUser = new Map<string, string>()
       for (const c of match.callups ?? []) {
@@ -393,7 +1360,6 @@ export class TeamStatsService {
         if (sm.player2) participants.add(sm.player2.id)
       }
 
-      // Pase 1: jugadores que jugaron pista
       for (const p of pm.players) {
         if (!participants.has(p.userId)) continue
 
@@ -412,21 +1378,27 @@ export class TeamStatsService {
           agg.availabilityCount++
         }
 
+        // subMatchesWon/Lost/Drawn del jugador ya vienen desde nuestra perspectiva
         agg.subMatchesPlayed += p.subMatchesPlayed
         agg.subMatchesWon += p.subMatchesWon
         agg.subMatchesLost += p.subMatchesLost
         agg.subMatchesDrawn += p.subMatchesDrawn
 
+        // setsWon/Lost/Drawn y gamesWon/Lost vienen en local-visitante → traducir
+        const pSetsOurs = isAway ? p.setsLost : p.setsWon
+        const pSetsTheirs = isAway ? p.setsWon : p.setsLost
+        const pGamesOurs = isAway ? p.gamesLost : p.gamesWon
+        const pGamesTheirs = isAway ? p.gamesWon : p.gamesLost
+
         agg.setsPlayed += p.setsPlayed
-        agg.setsWon += p.setsWon
-        agg.setsLost += p.setsLost
+        agg.setsWon += pSetsOurs
+        agg.setsLost += pSetsTheirs
         agg.setsDrawn += p.setsDrawn
 
-        agg.gamesWon += p.gamesWon
-        agg.gamesLost += p.gamesLost
+        agg.gamesWon += pGamesOurs
+        agg.gamesLost += pGamesTheirs
       }
 
-      // Pase 2: cualquier jugador con callup (no jugó pista)
       for (const c of match.callups ?? []) {
         if (participants.has(c.userId)) continue
 
@@ -487,6 +1459,47 @@ export class TeamStatsService {
             : 0,
       }))
 
+    const trendMetric = query.trendMetric
+    let series: Array<{ month: string; value: number }> | null = null
+    const requestedMetric: string | null = trendMetric ?? null
+    let appliedMetric: string | null = null
+
+    if (trendMetric) {
+      const metricDef = findTrendMetric('PADEL', 'TEAM', trendMetric)
+      if (metricDef) {
+        const trendInput: TrendMatchInput[] = perMatch.map((pm, i) => {
+          const r = pm.match.result
+          const ts = pm.teamSummary
+          const isAway = matches[i].location === 'AWAY'
+
+          const setsOurs = isAway ? ts.setsLost : ts.setsWon
+          const setsTheirs = isAway ? ts.setsWon : ts.setsLost
+          const gamesOurs = isAway ? ts.gamesLost : ts.gamesWon
+          const gamesTheirs = isAway ? ts.gamesWon : ts.gamesLost
+
+          const values: Record<string, number> = {
+            matchesPlayed: 1,
+            wins: r === 'WIN' ? 1 : 0,
+            losses: r === 'LOSS' ? 1 : 0,
+            setsPlayed: ts.setsPlayed,
+            setsWon: setsOurs,
+            setsLost: setsTheirs,
+            gamesWon: gamesOurs,
+            gamesLost: gamesTheirs,
+            gamesDiff: gamesOurs - gamesTheirs,
+            subMatchesWon: ts.subMatchesWon,
+            subMatchesLost: ts.subMatchesLost,
+            __ratioNum_winRate: r === 'WIN' ? 1 : 0,
+            __ratioDen_winRate: 1,
+          }
+          return { date: pm.match.date, values }
+        })
+
+        series = buildMonthlySeries(trendInput, metricDef)
+        appliedMetric = metricDef.trendKey ?? null
+      }
+    }
+
     const last10ByMatch = perMatch.slice(-10).map((pm) => ({
       matchId: pm.match.id,
       date: pm.match.date.toISOString(),
@@ -544,12 +1557,23 @@ export class TeamStatsService {
             byMonth,
             last10ByMatch,
             last10BySubMatch,
+            series,
+            requestedMetric,
+            appliedMetric,
           },
         },
       },
     }
 
-        const visibleMetrics = filterStatsPayload(
+    const isRequestedAvailable =
+      requestedMetric === null ||
+      availableTrendMetrics.some((m) => m.key === requestedMetric)
+    if (!isRequestedAvailable) {
+      response.sport.data.trend.series = null
+      response.sport.data.trend.appliedMetric = null
+    }
+
+    const visibleMetrics = filterStatsPayload(
       mainTeam.sport,
       visibleTeamKeys,
       response.sport.data as any,
@@ -558,6 +1582,7 @@ export class TeamStatsService {
     return {
       ...response,
       visibleMetrics: Array.from(visibleMetrics),
+      availableTrendMetrics,
     }
   }
 }
