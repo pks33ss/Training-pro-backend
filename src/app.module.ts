@@ -6,19 +6,20 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ClubModule } from './club/club.module';
 import { TeamModule } from './team/team.module';
 
-import { SessionModule } from './session/session.module'; // ✅ UNA SOLA VEZ
+import { SessionModule } from './session/session.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { CloudinaryModule } from './cloudinary/cloudinary.module';
 import { MatchModule } from './match/match.module';
-import { DashboardModule } from './dashboard/dashboard.module'; // 👈 NUEVO
-import { LiveModule } from './live/live.module'; 
-import { SeasonModule } from './season/season.module';  // ✅ AÑADIR arriba
-import { CalendarModule } from './calendar/calendar.module';  // ✅ NUEVO
+import { DashboardModule } from './dashboard/dashboard.module';
+import { LiveModule } from './live/live.module';
+import { SeasonModule } from './season/season.module';
+import { CalendarModule } from './calendar/calendar.module';
 import { FavoritesModule } from './favorites/favorites.module';
-import { InvitationsModule } from './invitations/invitations.module'
-import { MembershipsModule } from './memberships/memberships.module'
-import { TutorRelationshipsModule } from './tutor-relationships/tutor-relationships.module'
-import { StatsModule } from './stats/stats.module'; 
+import { InvitationsModule } from './invitations/invitations.module';
+import { MembershipsModule } from './memberships/memberships.module';
+import { TutorRelationshipsModule } from './tutor-relationships/tutor-relationships.module';
+import { StatsModule } from './stats/stats.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -30,20 +31,22 @@ import { StatsModule } from './stats/stats.module';
     UserModule,
     ClubModule,
     TeamModule,
-   
+
     SessionModule,
     CalendarModule,
-    FavoritesModule, 
+    FavoritesModule,
     AttendanceModule,
     CloudinaryModule,
     MatchModule,
-    DashboardModule, 
-    LiveModule, 
-    SeasonModule, 
+    DashboardModule,
+    LiveModule,
+    SeasonModule,
     InvitationsModule,
     MembershipsModule,
     TutorRelationshipsModule,
-    StatsModule, 
+    StatsModule,
+
+    HealthModule,
   ],
 })
 export class AppModule {}
