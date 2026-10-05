@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import {
   getTeamsForViewer,
   resolveViewerStatsRole,
+  canViewTeam,
 } from '../common/access'
 import { TeamStatsQueryDto } from './dto/team-stats-query.dto'
 import { PlayerStatsQueryDto } from './dto/player-stats-query.dto'
@@ -42,22 +43,34 @@ export class TeamStatsService {
   ) {}
 
   async getTeamStats(userId: string, teamId: string, query: TeamStatsQueryDto) {
-    const additionalIds = (query.teamIds ?? []).filter((id) => id !== teamId)
-    const allIds = [teamId, ...additionalIds]
+    // Selección efectiva de equipos:
+    // - Si el viewer manda teamIds explícitos, se usan esos (sustituyen).
+    // - Si no, se usa el equipo activo del path.
+    const explicitTeamIds = (query.teamIds ?? []).filter(Boolean)
+    const effectiveTeamIds =
+      explicitTeamIds.length > 0 ? explicitTeamIds : [teamId]
 
-    const teams = await getTeamsForViewer(this.prisma, userId, allIds)
+    const teams = await getTeamsForViewer(
+      this.prisma,
+      userId,
+      effectiveTeamIds,
+    )
     const mainTeam = teams[0]
     const teamIds = teams.map((t) => t.id)
 
-    const range = await this.resolveDateRange(mainTeam.id, query)
+    // El rango de fechas se resuelve contra el teamId del path (el activo),
+    // porque las seasons pertenecen al equipo activo aunque el usuario
+    // haya cambiado la selección de equipos.
+    const range = await this.resolveDateRange(teamId, query)
 
+    // Rol del viewer y config de visibilidad: SIEMPRE con el teamId del path.
     const viewerRole = await resolveViewerStatsRole(
       this.prisma,
       userId,
-      mainTeam.id,
+      teamId,
     )
     const configRows = await this.prisma.statsVisibilityConfig.findMany({
-      where: { teamId: mainTeam.id, sport: mainTeam.sport },
+      where: { teamId, sport: mainTeam.sport },
     })
     const visibleTeamKeys = buildVisibleKeys(
       mainTeam.sport,
@@ -146,10 +159,16 @@ export class TeamStatsService {
     playerUserId: string,
     query: PlayerStatsQueryDto,
   ) {
-    const additionalIds = (query.teamIds ?? []).filter((id) => id !== teamId)
-    const allIds = [teamId, ...additionalIds]
+    // Selección efectiva de equipos (mismo criterio que en getTeamStats).
+    const explicitTeamIds = (query.teamIds ?? []).filter(Boolean)
+    const effectiveTeamIds =
+      explicitTeamIds.length > 0 ? explicitTeamIds : [teamId]
 
-    const teams = await getTeamsForViewer(this.prisma, viewerId, allIds)
+    const teams = await getTeamsForViewer(
+      this.prisma,
+      viewerId,
+      effectiveTeamIds,
+    )
     const mainTeam = teams[0]
     const teamIds = teams.map((t) => t.id)
 
@@ -161,15 +180,16 @@ export class TeamStatsService {
       throw new NotFoundException('Jugador no encontrado')
     }
 
-    const range = await this.resolveDateRange(mainTeam.id, query)
+    // Rango y rol: con el teamId del path.
+    const range = await this.resolveDateRange(teamId, query)
 
     const viewerRole = await resolveViewerStatsRole(
       this.prisma,
       viewerId,
-      mainTeam.id,
+      teamId,
     )
     const configRows = await this.prisma.statsVisibilityConfig.findMany({
-      where: { teamId: mainTeam.id, sport: mainTeam.sport },
+      where: { teamId, sport: mainTeam.sport },
     })
     const visiblePlayerKeys = buildVisibleKeys(
       mainTeam.sport,
@@ -477,10 +497,6 @@ export class TeamStatsService {
         gamesWon: pmGamesWon,
         gamesLost: pmGamesLost,
         gamesDiff: pmGamesWon - pmGamesLost,
-        winRate:
-          matchesCount > 0
-            ? Math.round((wins / matchesCount) * 1000) / 10
-            : 0,
       })
     }
 
@@ -1233,9 +1249,6 @@ export class TeamStatsService {
     let gamesWon = 0
     let gamesLost = 0
 
-    // ⚠️ Los agregados de pádel de un partido vienen en formato
-    // LOCAL-VISITANTE. Para el agregado del equipo los traducimos a
-    // "nuestro-rival" según la location del partido.
     for (let i = 0; i < perMatch.length; i++) {
       const pm = perMatch[i]
       const match = matches[i]
@@ -1247,13 +1260,11 @@ export class TeamStatsService {
       else if (ts.result === 'LOSS') losses++
       else if (ts.result === 'DRAW') draws++
 
-      // subMatchesWon/Lost/Drawn ya vienen desde nuestra perspectiva
       subMatchesPlayed += ts.subMatchesPlayed
       subMatchesWon += ts.subMatchesWon
       subMatchesLost += ts.subMatchesLost
       subMatchesDrawn += ts.subMatchesDrawn
 
-      // setsWon/Lost/Drawn vienen en local-visitante → traducir
       const setsOurs = isAway ? ts.setsLost : ts.setsWon
       const setsTheirs = isAway ? ts.setsWon : ts.setsLost
       const gamesOurs = isAway ? ts.gamesLost : ts.gamesWon
@@ -1378,13 +1389,11 @@ export class TeamStatsService {
           agg.availabilityCount++
         }
 
-        // subMatchesWon/Lost/Drawn del jugador ya vienen desde nuestra perspectiva
         agg.subMatchesPlayed += p.subMatchesPlayed
         agg.subMatchesWon += p.subMatchesWon
         agg.subMatchesLost += p.subMatchesLost
         agg.subMatchesDrawn += p.subMatchesDrawn
 
-        // setsWon/Lost/Drawn y gamesWon/Lost vienen en local-visitante → traducir
         const pSetsOurs = isAway ? p.setsLost : p.setsWon
         const pSetsTheirs = isAway ? p.setsWon : p.setsLost
         const pGamesOurs = isAway ? p.gamesLost : p.gamesWon
@@ -1584,5 +1593,72 @@ export class TeamStatsService {
       visibleMetrics: Array.from(visibleMetrics),
       availableTrendMetrics,
     }
+  }
+
+  // ─────────────────────────────────────────────
+  // FASE 3.4 — Equipos del jugador para el filtro multi-equipo
+  // ─────────────────────────────────────────────
+
+  async getPlayerTeamsForTeamContext(
+    viewerId: string,
+    teamId: string,
+    playerUserId: string,
+  ) {
+    const teams = await getTeamsForViewer(this.prisma, viewerId, [teamId])
+    const mainTeam = teams[0]
+
+    const player = await this.prisma.user.findUnique({
+      where: { id: playerUserId },
+      select: { id: true, deletedAt: true },
+    })
+    if (!player || player.deletedAt) {
+      throw new NotFoundException('Jugador no encontrado')
+    }
+
+    const candidateTeams = await this.prisma.team.findMany({
+      where: {
+        clubId: mainTeam.clubId,
+        sport: mainTeam.sport,
+        memberships: {
+          some: { userId: playerUserId },
+        },
+      },
+      include: {
+        club: { select: { id: true, name: true } },
+        memberships: {
+          where: { userId: playerUserId },
+          include: { roles: true },
+        },
+      },
+      orderBy: { name: 'asc' },
+    })
+
+    const result = []
+    for (const t of candidateTeams) {
+      if (!(await canViewTeam(this.prisma, viewerId, t.id))) continue
+
+      const membership = t.memberships[0] ?? null
+      const roles = membership?.roles.map((r) => r.role) ?? []
+      const isFormer = !membership || membership.status !== 'ACTIVE'
+
+      result.push({
+        id: t.id,
+        name: t.name,
+        sport: t.sport,
+        category: t.category ?? null,
+        club: {
+          id: t.club.id,
+          name: t.club.name,
+        },
+        role: roles[0] ?? null,
+        roles,
+        status: membership?.status ?? null,
+        jerseyNumber: membership?.jerseyNumber ?? null,
+        position: membership?.position ?? null,
+        isFormer,
+      })
+    }
+
+    return result
   }
 }
