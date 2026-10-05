@@ -68,11 +68,24 @@ const BASKETBALL_FIELDS: Record<string, MetricFieldMap> = {
     players: ['freeThrowPct', 'freeThrowsMade', 'freeThrowsAttempted'],
   },
 
-  MINUTES: { players: ['minutes'] },
-  MINUTES_PER_MATCH_PLAYER: { players: ['minutesPerMatch'] },
-  POINTS_PLAYER: { players: ['points'] },
-  POINTS_PER_MATCH_PLAYER: { players: ['pointsPerMatch'] },
-  AVAILABILITY: { players: ['availabilityCount'] },
+  // ─── Jugador (basket) ───
+  // Además de `players` (tabla del equipo / byMatch del jugador),
+  // cubren también las mismas keys en el `summary` del payload
+  // individual, para que el filtro no las elimine al usar scope PLAYER.
+  MINUTES: { summary: ['minutes'], players: ['minutes'] },
+  MINUTES_PER_MATCH_PLAYER: {
+    summary: ['minutesPerMatch'],
+    players: ['minutesPerMatch'],
+  },
+  POINTS_PLAYER: { summary: ['points'], players: ['points'] },
+  POINTS_PER_MATCH_PLAYER: {
+    summary: ['pointsPerMatch'],
+    players: ['pointsPerMatch'],
+  },
+  AVAILABILITY: {
+    summary: ['availabilityCount'],
+    players: ['availabilityCount'],
+  },
 }
 
 // ============================================
@@ -104,16 +117,40 @@ const PADEL_FIELDS: Record<string, MetricFieldMap> = {
   TEAM_SCORE: {},
   SUB_MATCHES: {},
 
-  PLAYER_MATCHES: { players: ['matches'] },
-  PLAYER_W_L_D: { players: ['wins', 'losses', 'draws'] },
-  AVAILABILITY: { players: ['availabilityCount'] },
-  PLAYER_WIN_RATE: { players: ['winRate'] },
+  // ─── Jugador (pádel) ───
+  // Cubren también el `summary` del payload individual.
+  PLAYER_MATCHES: {
+    summary: ['matches'],
+    players: ['matches'],
+  },
+  PLAYER_W_L_D: {
+    summary: ['wins', 'losses', 'draws'],
+    players: ['wins', 'losses', 'draws'],
+  },
+  AVAILABILITY: {
+    summary: ['availabilityCount'],
+    players: ['availabilityCount'],
+  },
+  PLAYER_WIN_RATE: {
+    summary: ['winRate'],
+    players: ['winRate'],
+  },
   PLAYER_SUB_MATCHES: {
+    summary: ['subMatchesWon', 'subMatchesLost', 'subMatchesDrawn'],
     players: ['subMatchesWon', 'subMatchesLost', 'subMatchesDrawn'],
   },
-  PLAYER_SETS: { players: ['setsWon', 'setsLost', 'setsDrawn'] },
-  PLAYER_GAMES: { players: ['gamesWon', 'gamesLost'] },
-  PLAYER_GAMES_DIFF: { players: ['gamesDiff'] },
+  PLAYER_SETS: {
+    summary: ['setsWon', 'setsLost', 'setsDrawn'],
+    players: ['setsWon', 'setsLost', 'setsDrawn'],
+  },
+  PLAYER_GAMES: {
+    summary: ['gamesWon', 'gamesLost'],
+    players: ['gamesWon', 'gamesLost'],
+  },
+  PLAYER_GAMES_DIFF: {
+    summary: ['gamesDiff'],
+    players: ['gamesDiff'],
+  },
 }
 
 // ============================================

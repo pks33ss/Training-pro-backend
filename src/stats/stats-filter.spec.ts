@@ -106,19 +106,29 @@ describe('filterStatsPayload', () => {
     expect(payload.match.id).toBe('m1')
   })
 
-  it('conserva el campo si algún covering metric está visible', () => {
-    // `points` está cubierto por POINTS y POINTS_PLAYER.
-    // Si uno está visible, no se borra.
-    const payload = {
-      summary: { points: 10 },
-      players: [{ name: 'A', points: 10 }],
-    }
-    filterStatsPayload('BASKETBALL', new Set(['POINTS_PLAYER']), payload)
-    // summary.points: coveringMetrics = [POINTS] (no POINTS_PLAYER) → se borra
-    expect(payload.summary.points).toBeUndefined()
-    // players[0].points: coveringMetrics = [POINTS, POINTS_PLAYER] → visible sí
-    expect(payload.players[0].points).toBe(10)
-  })
+  it('conserva el campo si algún covering metric está visible (POINTS_PLAYER cubre summary y players)', () => {
+  // `points` está cubierto por POINTS y POINTS_PLAYER, tanto en summary
+  // como en players. Como POINTS_PLAYER está visible, no se borra en
+  // ninguno de los dos sitios.
+  const payload = {
+    summary: { points: 10 },
+    players: [{ name: 'A', points: 10 }],
+  }
+  filterStatsPayload('BASKETBALL', new Set(['POINTS_PLAYER']), payload)
+  expect(payload.summary.points).toBe(10)
+  expect(payload.players[0].points).toBe(10)
+})
+
+it('borra summary.points si NINGUNA métrica que lo cubre está visible', () => {
+  const payload = {
+    summary: { points: 10 },
+    players: [{ name: 'A', points: 10 }],
+  }
+  // Ni POINTS ni POINTS_PLAYER visibles
+  filterStatsPayload('BASKETBALL', new Set(['REBOUNDS']), payload)
+  expect(payload.summary.points).toBeUndefined()
+  expect(payload.players[0].points).toBeUndefined()
+})
 
   it('acepta teamSummary como alias de summary', () => {
     const payload = {
@@ -203,4 +213,45 @@ describe('getAvailableTrendMetrics', () => {
     const keys = all.map((m) => m.trendKey)
     expect(keys).toEqual(['winRate', 'setsWon', 'gamesDiff'])
   })
+})
+it('con playersFieldName=byMatch, summary conserva points si POINTS_PLAYER está visible', () => {
+  const payload = {
+    summary: { points: 18, minutesPerMatch: 22, pointsPerMatch: 18 },
+    byMatch: [
+      { matchId: 'm1', points: 18, minutesPerMatch: 22, pointsPerMatch: 18 },
+    ],
+  }
+  filterStatsPayload(
+    'BASKETBALL',
+    new Set(['POINTS_PLAYER', 'MINUTES_PER_MATCH_PLAYER', 'POINTS_PER_MATCH_PLAYER']),
+    payload,
+    'byMatch',
+  )
+  expect(payload.summary.points).toBe(18)
+  expect(payload.summary.pointsPerMatch).toBe(18)
+  expect(payload.summary.minutesPerMatch).toBe(22)
+  expect(payload.byMatch[0].points).toBe(18)
+  expect(payload.byMatch[0].pointsPerMatch).toBe(18)
+  expect(payload.byMatch[0].minutesPerMatch).toBe(22)
+})
+
+it('con playersFieldName=byMatch, summary borra points si POINTS_PLAYER NO está visible', () => {
+  const payload = {
+    summary: { points: 18, minutesPerMatch: 22, pointsPerMatch: 18 },
+    byMatch: [
+      { matchId: 'm1', points: 18, minutesPerMatch: 22, pointsPerMatch: 18 },
+    ],
+  }
+  filterStatsPayload(
+    'BASKETBALL',
+    new Set(['REBOUNDS']),
+    payload,
+    'byMatch',
+  )
+  expect(payload.summary.points).toBeUndefined()
+  expect(payload.summary.pointsPerMatch).toBeUndefined()
+  expect(payload.summary.minutesPerMatch).toBeUndefined()
+  expect(payload.byMatch[0].points).toBeUndefined()
+  expect(payload.byMatch[0].pointsPerMatch).toBeUndefined()
+  expect(payload.byMatch[0].minutesPerMatch).toBeUndefined()
 })
