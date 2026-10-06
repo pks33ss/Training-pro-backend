@@ -34,4 +34,23 @@ export class StatsController {
   ) {
     return this.statsService.getPlayerStats(req.user.id, id, userId, query)
   }
+
+  /**
+   * Devuelve los equipos del mismo club y mismo deporte donde el jugador
+   * ha disputado al menos un partido finalizado, y a los que el viewer
+   * tiene acceso. Se usa para el filtro multi-equipo de las stats
+   * individuales del jugador.
+   */
+  @Get(':id/players/:userId/teams')
+  getPlayerTeams(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.statsService.getPlayerTeamsForTeamContext(
+      req.user.id,
+      id,
+      userId,
+    )
+  }
 }

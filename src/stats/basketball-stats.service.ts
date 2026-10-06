@@ -503,7 +503,7 @@ export class BasketballStatsService {
     return {
       teams: teams.map((t) => ({ id: t.id, name: t.name, sport: t.sport })),
       filters: {
-        seasonId: query.seasonId ?? null,
+        season: query.season ?? null,
         from:
           perMatchStats.length > 0
             ? perMatchStats[0].match.date.toISOString()
