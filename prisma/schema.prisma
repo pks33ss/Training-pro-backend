@@ -47,6 +47,9 @@ model User {
   grantedPermissions StreamPermission[] @relation("GrantedBy")
   attendances        Attendance[]
   matchCallups       MatchCallup[]
+
+  playerProfile       PlayerProfile?
+  injuries            Injury[]
   
   @@index([deletedAt])
 }
@@ -748,4 +751,82 @@ model StatsVisibilityConfig {
   @@unique([teamId, scope, role, metricKey])
   @@index([teamId, scope, role])
   @@index([teamId, scope])
+}
+
+// ============================================
+// PERFIL DEL JUGADOR (Fase 4)
+// ============================================
+
+model PlayerProfile {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // ─── Personales ───
+  birthDate       DateTime?
+  dni             String?
+  fatherName      String?
+  motherName      String?
+  fatherPhone     String?
+  motherPhone     String?
+  address         String?
+  schoolOrCompany String?
+  allergies       String?
+
+  // ─── Deportivos ───
+  height   Int? // cm
+  wingspan Int? // envergadura en cm
+  weight   Int? // kg
+
+  // ─── Emergencia ───
+  emergencyContactName  String?
+  emergencyContactPhone String?
+
+  // ─── Seguro médico ───
+  medicalInsurance       String?
+  medicalInsuranceNumber String?
+
+  // ─── Tallas ───
+  shirtSize String?
+  pantsSize String?
+  shoeSize  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// ============================================
+// HISTORIAL DE LESIONES
+// ============================================
+
+enum InjuryStatus {
+  ACTIVE
+  RECOVERED
+  CHRONIC
+}
+
+model Injury {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  date        DateTime
+  description String
+  bodyPart    String?
+  severity    String? // "leve" | "moderada" | "grave"
+  status      InjuryStatus @default(ACTIVE)
+
+  expectedReturn DateTime?
+  actualReturn   DateTime?
+  treatment      String?
+  doctor         String?
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
 }
