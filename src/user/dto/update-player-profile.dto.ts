@@ -12,102 +12,102 @@ export class UpdatePlayerProfileDto {
   // ─── Personales ───
   @IsOptional()
   @IsISO8601()
-  birthDate?: string
+  birthDate?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(20)
-  dni?: string
+  dni?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(120)
-  fatherName?: string
+  fatherName?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(120)
-  motherName?: string
+  motherName?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(30)
-  fatherPhone?: string
+  fatherPhone?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(30)
-  motherPhone?: string
+  motherPhone?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(240)
-  address?: string
+  address?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(160)
-  schoolOrCompany?: string
+  schoolOrCompany?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(500)
-  allergies?: string
+  allergies?: string | null
 
   // ─── Deportivos ───
   @IsOptional()
   @IsInt()
   @Min(50)
   @Max(300)
-  height?: number
+  height?: number | null
 
   @IsOptional()
   @IsInt()
   @Min(50)
   @Max(300)
-  wingspan?: number
+  wingspan?: number | null
 
   @IsOptional()
   @IsInt()
   @Min(20)
   @Max(300)
-  weight?: number
+  weight?: number | null
 
   // ─── Emergencia ───
   @IsOptional()
   @IsString()
   @MaxLength(120)
-  emergencyContactName?: string
+  emergencyContactName?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(30)
-  emergencyContactPhone?: string
+  emergencyContactPhone?: string | null
 
   // ─── Seguro médico ───
   @IsOptional()
   @IsString()
   @MaxLength(160)
-  medicalInsurance?: string
+  medicalInsurance?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(60)
-  medicalInsuranceNumber?: string
+  medicalInsuranceNumber?: string | null
 
   // ─── Tallas ───
   @IsOptional()
   @IsString()
   @MaxLength(10)
-  shirtSize?: string
+  shirtSize?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(10)
-  pantsSize?: string
+  pantsSize?: string | null
 
   @IsOptional()
   @IsString()
   @MaxLength(10)
-  shoeSize?: string
+  shoeSize?: string | null
 }

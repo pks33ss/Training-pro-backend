@@ -9,8 +9,9 @@ import {
   assertCanManageMembers,
   assertCanViewPlayerProfile,
   assertCanEditPlayerProfile,
+  canViewPlayerProfile,
+  canEditPlayerProfile,
 } from '../common/access'
-
 import { UpdatePlayerProfileDto } from './dto/update-player-profile.dto'
 import { CreateInjuryDto } from './dto/create-injury.dto'
 import { UpdateInjuryDto } from './dto/update-injury.dto'
@@ -19,7 +20,7 @@ import { UpdateInjuryDto } from './dto/update-injury.dto'
 export class UserService {
   constructor(private prisma: PrismaService) {}
 
- async findAll(includeDeleted = false) {
+  async findAll(includeDeleted = false) {
     return this.prisma.user.findMany({
       where: includeDeleted ? {} : { deletedAt: null },
       select: {
@@ -118,16 +119,6 @@ export class UserService {
   // SOFT DELETE (solo SUPER_ADMIN)
   // ============================================
 
-  /**
-   * Marca un user como eliminado (soft delete).
-   *
-   * - Solo SUPER_ADMIN.
-   * - User.deletedAt = now() → no puede login ni refresh.
-   * - Todas las TeamMembership activas → LEFT.
-   * - RefreshTokens revocados.
-   * - ClubMember desactivado.
-   * - Aviso a coaches de los equipos.
-   */
   async softDelete(id: string, actorId: string) {
     if (!(await isSuperAdmin(this.prisma, actorId))) {
       throw new ForbiddenException('Solo los super administradores pueden eliminar usuarios')
@@ -144,29 +135,24 @@ export class UserService {
       throw new ConflictException('El usuario ya estaba eliminado')
     }
 
-    // Avisar a coaches antes de desvincular
     await this.notifyCoachesOfDeparture(id)
 
     await this.prisma.$transaction(async (tx) => {
-      // 1) Soft delete
       await tx.user.update({
         where: { id },
         data: { deletedAt: new Date() },
       })
 
-      // 2) Memberships activas → LEFT
       await tx.teamMembership.updateMany({
         where: { userId: id, status: 'ACTIVE' },
         data: { status: 'LEFT', leftAt: new Date() },
       })
 
-      // 3) ClubMembers → inactivos
       await tx.clubMember.updateMany({
         where: { userId: id, isActive: true },
         data: { isActive: false },
       })
 
-      // 4) RefreshTokens revocados
       await tx.refreshToken.updateMany({
         where: { userId: id, isRevoked: false },
         data: { isRevoked: true },
@@ -180,15 +166,10 @@ export class UserService {
     }
   }
 
-    // ============================================
+  // ============================================
   // DELETE ME (borrar mi propia cuenta)
   // ============================================
 
-  /**
-   * Permite a un usuario eliminar su propia cuenta (soft delete).
-   * No hay hard delete self-service.
-   * Avisa a los coaches de los equipos donde estaba.
-   */
   async deleteMe(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -201,7 +182,6 @@ export class UserService {
       throw new ConflictException('Tu cuenta ya estaba eliminada')
     }
 
-    // Avisar a coaches antes de desvincular
     await this.notifyCoachesOfDeparture(userId)
 
     await this.prisma.$transaction(async (tx) => {
@@ -232,7 +212,6 @@ export class UserService {
       userId,
     }
   }
-
 
   // ============================================
   // HARD DELETE (solo SUPER_ADMIN)
@@ -991,6 +970,35 @@ export class UserService {
       update: { isActive: true },
     })
   }
+
+  // ============================================
+  // PERMISOS DE VISUALIZACIÓN DEL PERFIL
+  // ============================================
+
+  async getUserPermissions(viewerId: string, targetUserId: string) {
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, deletedAt: true },
+    })
+
+    if (!target || target.deletedAt) {
+      return {
+        canViewProfile: false,
+        canEditProfile: false,
+      }
+    }
+
+    const [canViewProfile, canEditProfile] = await Promise.all([
+      canViewPlayerProfile(this.prisma, viewerId, targetUserId),
+      canEditPlayerProfile(this.prisma, viewerId, targetUserId),
+    ])
+
+    return {
+      canViewProfile,
+      canEditProfile,
+    }
+  }
+
   // ============================================
   // PLAYER PROFILE (Fase 4)
   // ============================================
@@ -1002,8 +1010,6 @@ export class UserService {
       where: { userId: targetUserId },
     })
 
-    // Si no existe, devolvemos estructura vacía para que el frontend
-    // pueda pintar el formulario sin 404.
     return profile ?? null
   }
 
@@ -1014,31 +1020,67 @@ export class UserService {
   ) {
     await assertCanEditPlayerProfile(this.prisma, viewerId, targetUserId)
 
-    // Normalizamos strings vacíos → null, y parseamos fechas.
-    const normalized = {
-      birthDate: data.birthDate ? new Date(data.birthDate) : undefined,
-      dni: normalizeStr(data.dni),
-      fatherName: normalizeStr(data.fatherName),
-      motherName: normalizeStr(data.motherName),
-      fatherPhone: normalizeStr(data.fatherPhone),
-      motherPhone: normalizeStr(data.motherPhone),
-      address: normalizeStr(data.address),
-      schoolOrCompany: normalizeStr(data.schoolOrCompany),
-      allergies: normalizeStr(data.allergies),
-      height: data.height ?? undefined,
-      wingspan: data.wingspan ?? undefined,
-      weight: data.weight ?? undefined,
-      emergencyContactName: normalizeStr(data.emergencyContactName),
-      emergencyContactPhone: normalizeStr(data.emergencyContactPhone),
-      medicalInsurance: normalizeStr(data.medicalInsurance),
-      medicalInsuranceNumber: normalizeStr(data.medicalInsuranceNumber),
-      shirtSize: normalizeStr(data.shirtSize),
-      pantsSize: normalizeStr(data.pantsSize),
-      shoeSize: normalizeStr(data.shoeSize),
+    // ─── Normalización ───
+    // undefined  → no tocar el campo
+    // null       → borrar el campo
+    // ""         → borrar el campo
+    // valor      → aplicar
+    const str = (
+      v: string | null | undefined,
+    ): string | null | undefined => {
+      if (v === undefined) return undefined
+      if (v === null) return null
+      const t = String(v).trim()
+      return t.length === 0 ? null : t
     }
 
-    // Filtramos undefined (no tocar) para no sobreescribir con null
-    // campos que el cliente no envía.
+    const num = (
+      v: number | string | null | undefined,
+    ): number | null | undefined => {
+      if (v === undefined) return undefined
+      if (v === null) return null
+      if (typeof v === 'string') {
+        const t = v.trim()
+        if (t.length === 0) return null
+        const n = Number(t)
+        return Number.isNaN(n) ? null : n
+      }
+      return v
+    }
+
+    const date = (
+      v: string | null | undefined,
+    ): Date | null | undefined => {
+      if (v === undefined) return undefined
+      if (v === null) return null
+      const t = String(v).trim()
+      if (t.length === 0) return null
+      const d = new Date(t)
+      return isNaN(d.getTime()) ? null : d
+    }
+
+    const normalized = {
+      birthDate: date(data.birthDate),
+      dni: str(data.dni),
+      fatherName: str(data.fatherName),
+      motherName: str(data.motherName),
+      fatherPhone: str(data.fatherPhone),
+      motherPhone: str(data.motherPhone),
+      address: str(data.address),
+      schoolOrCompany: str(data.schoolOrCompany),
+      allergies: str(data.allergies),
+      height: num(data.height),
+      wingspan: num(data.wingspan),
+      weight: num(data.weight),
+      emergencyContactName: str(data.emergencyContactName),
+      emergencyContactPhone: str(data.emergencyContactPhone),
+      medicalInsurance: str(data.medicalInsurance),
+      medicalInsuranceNumber: str(data.medicalInsuranceNumber),
+      shirtSize: str(data.shirtSize),
+      pantsSize: str(data.pantsSize),
+      shoeSize: str(data.shoeSize),
+    }
+
     const updateData = Object.fromEntries(
       Object.entries(normalized).filter(([, v]) => v !== undefined),
     )
@@ -1080,16 +1122,16 @@ export class UserService {
         userId: targetUserId,
         date: new Date(data.date),
         description: data.description,
-        bodyPart: normalizeStr(data.bodyPart),
-        severity: normalizeStr(data.severity),
+        bodyPart: data.bodyPart ? data.bodyPart.trim() || null : null,
+        severity: data.severity ? data.severity.trim() || null : null,
         status: data.status ?? 'ACTIVE',
         expectedReturn: data.expectedReturn
           ? new Date(data.expectedReturn)
           : null,
         actualReturn: data.actualReturn ? new Date(data.actualReturn) : null,
-        treatment: normalizeStr(data.treatment),
-        doctor: normalizeStr(data.doctor),
-        notes: normalizeStr(data.notes),
+        treatment: data.treatment ? data.treatment.trim() || null : null,
+        doctor: data.doctor ? data.doctor.trim() || null : null,
+        notes: data.notes ? data.notes.trim() || null : null,
       },
     })
   }
@@ -1102,7 +1144,6 @@ export class UserService {
   ) {
     await assertCanEditPlayerProfile(this.prisma, viewerId, targetUserId)
 
-    // Verificamos que la lesión existe y pertenece a ese usuario
     const existing = await this.prisma.injury.findFirst({
       where: { id: injuryId, userId: targetUserId },
       select: { id: true },
@@ -1116,9 +1157,9 @@ export class UserService {
     if (data.description !== undefined)
       updateData.description = data.description
     if (data.bodyPart !== undefined)
-      updateData.bodyPart = normalizeStr(data.bodyPart)
+      updateData.bodyPart = data.bodyPart ? data.bodyPart.trim() || null : null
     if (data.severity !== undefined)
-      updateData.severity = normalizeStr(data.severity)
+      updateData.severity = data.severity ? data.severity.trim() || null : null
     if (data.status !== undefined) updateData.status = data.status
     if (data.expectedReturn !== undefined)
       updateData.expectedReturn = data.expectedReturn
@@ -1129,10 +1170,13 @@ export class UserService {
         ? new Date(data.actualReturn)
         : null
     if (data.treatment !== undefined)
-      updateData.treatment = normalizeStr(data.treatment)
+      updateData.treatment = data.treatment
+        ? data.treatment.trim() || null
+        : null
     if (data.doctor !== undefined)
-      updateData.doctor = normalizeStr(data.doctor)
-    if (data.notes !== undefined) updateData.notes = normalizeStr(data.notes)
+      updateData.doctor = data.doctor ? data.doctor.trim() || null : null
+    if (data.notes !== undefined)
+      updateData.notes = data.notes ? data.notes.trim() || null : null
 
     return this.prisma.injury.update({
       where: { id: injuryId },
@@ -1159,11 +1203,4 @@ export class UserService {
 
     return { deleted: true, id: injuryId }
   }
-
-
-}
-function normalizeStr(v: string | undefined): string | null | undefined {
-  if (v === undefined) return undefined
-  const trimmed = v.trim()
-  return trimmed.length === 0 ? null : trimmed
 }

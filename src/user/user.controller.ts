@@ -134,6 +134,10 @@ async findAll(@Request() req, @Query('includeDeleted') includeDeleted?: string) 
   ) {
     return this.userService.deleteInjury(req.user.id, userId, injuryId)
   }
+    @Get(':userId/permissions')
+  getUserPermissions(@Request() req, @Param('userId') userId: string) {
+    return this.userService.getUserPermissions(req.user.id, userId)
+  }
   @Get(':id')
   async findOne(@Request() req, @Param('id') id: string) {
     if (req.user.role !== 'SUPER_ADMIN' && req.user.id !== id) {
