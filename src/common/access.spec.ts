@@ -292,3 +292,267 @@ describe('access', () => {
     })
   })
 })
+import {
+  canViewPlayerProfile,
+  canEditPlayerProfile,
+  assertCanViewPlayerProfile,
+} from './access'
+import { ForbiddenException, NotFoundException } from '@nestjs/common'
+
+// Helper para crear un prisma mock con todos los métodos que necesitamos.
+// Cada test ajusta solo lo que le interesa.
+function makePrismaMock(overrides: Record<string, any> = {}) {
+  const base: any = {
+    user: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
+    tutorRelationship: {
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    clubMember: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    teamMembership: {
+      findMany: jest.fn().mockResolvedValue([]),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+  }
+  return { ...base, ...overrides }
+}
+
+describe('canViewPlayerProfile', () => {
+  it('el propio usuario puede ver su perfil', async () => {
+    const prisma = makePrismaMock()
+    expect(await canViewPlayerProfile(prisma, 'u1', 'u1')).toBe(true)
+  })
+
+  it('SUPER_ADMIN siempre puede ver', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce({ role: 'SUPER_ADMIN', deletedAt: null }) // isSuperAdmin
+          .mockResolvedValueOnce({ id: 'u2', deletedAt: null }), // target
+      },
+    })
+    expect(await canViewPlayerProfile(prisma, 'admin', 'u2')).toBe(true)
+  })
+
+  it('devuelve false si el target no existe', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null) // isSuperAdmin → null
+          .mockResolvedValueOnce(null), // target → null
+      },
+    })
+    expect(await canViewPlayerProfile(prisma, 'u1', 'target')).toBe(false)
+  })
+
+  it('devuelve false si el target está soft-deleted', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: 'target', deletedAt: new Date() }),
+      },
+    })
+    expect(await canViewPlayerProfile(prisma, 'u1', 'target')).toBe(false)
+  })
+
+  it('devuelve false si no hay club ni equipo', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: 'target', deletedAt: null }),
+      },
+    })
+    expect(await canViewPlayerProfile(prisma, 'u1', 'target')).toBe(false)
+  })
+
+  it('tutor ACTIVE puede ver', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: 'target', deletedAt: null }),
+      },
+      tutorRelationship: {
+        findFirst: jest.fn().mockResolvedValue({ id: 'rel' }),
+      },
+    })
+    expect(await canViewPlayerProfile(prisma, 'tutor', 'target')).toBe(true)
+  })
+
+  it('ADMIN_CLUB del club del target puede ver', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: 'target', deletedAt: null }),
+      },
+      clubMember: {
+        findMany: jest.fn().mockResolvedValue([{ clubId: 'club1' }]),
+        findFirst: jest.fn().mockResolvedValue({ id: 'cm' }),
+      },
+    })
+    expect(await canViewPlayerProfile(prisma, 'adminclub', 'target')).toBe(
+      true,
+    )
+  })
+
+  it('COACH de un equipo del target puede ver', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: 'target', deletedAt: null }),
+      },
+      teamMembership: {
+        findMany: jest.fn().mockResolvedValue([{ teamId: 'team1' }]),
+        findFirst: jest.fn().mockResolvedValue({ id: 'tm' }),
+      },
+    })
+    expect(await canViewPlayerProfile(prisma, 'coach', 'target')).toBe(true)
+  })
+
+  it('un usuario random sin relación no puede ver', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: 'target', deletedAt: null }),
+      },
+      clubMember: {
+        findMany: jest.fn().mockResolvedValue([{ clubId: 'club1' }]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      teamMembership: {
+        findMany: jest.fn().mockResolvedValue([{ teamId: 'team1' }]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+    })
+    expect(await canViewPlayerProfile(prisma, 'random', 'target')).toBe(false)
+  })
+})
+
+describe('canEditPlayerProfile', () => {
+  it('SUPER_ADMIN siempre puede editar', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce({ role: 'SUPER_ADMIN', deletedAt: null }),
+      },
+    })
+    expect(await canEditPlayerProfile(prisma, 'admin', 'target')).toBe(true)
+  })
+
+  it('el propio usuario puede editar', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({
+            id: 'target',
+            isGhost: false,
+            deletedAt: null,
+          }),
+      },
+    })
+    expect(await canEditPlayerProfile(prisma, 'target', 'target')).toBe(true)
+  })
+
+  it('otro usuario NO puede editar si el target no es ghost', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({
+            id: 'target',
+            isGhost: false,
+            deletedAt: null,
+          }),
+      },
+    })
+    expect(await canEditPlayerProfile(prisma, 'other', 'target')).toBe(false)
+  })
+
+  it('COACH de un equipo del target ghost puede editar', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({
+            id: 'target',
+            isGhost: true,
+            deletedAt: null,
+          }),
+      },
+      teamMembership: {
+        findMany: jest.fn().mockResolvedValue([{ teamId: 'team1' }]),
+        findFirst: jest.fn().mockResolvedValue({ id: 'tm' }),
+      },
+    })
+    expect(await canEditPlayerProfile(prisma, 'coach', 'target')).toBe(true)
+  })
+
+  it('un usuario random no puede editar a un ghost', async () => {
+    const prisma = makePrismaMock({
+      user: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({
+            id: 'target',
+            isGhost: true,
+            deletedAt: null,
+          }),
+      },
+      clubMember: {
+        findMany: jest.fn().mockResolvedValue([{ clubId: 'club1' }]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      teamMembership: {
+        findMany: jest.fn().mockResolvedValue([{ teamId: 'team1' }]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+    })
+    expect(await canEditPlayerProfile(prisma, 'random', 'target')).toBe(false)
+  })
+})
+
+describe('assertCanViewPlayerProfile', () => {
+  it('lanza 404 si el target no existe', async () => {
+    const prisma = makePrismaMock()
+    await expect(
+      assertCanViewPlayerProfile(prisma, 'u1', 'ghost'),
+    ).rejects.toBeInstanceOf(NotFoundException)
+  })
+
+  it('lanza 403 si no tiene acceso', async () => {
+  const prisma = makePrismaMock({
+    user: {
+      findUnique: jest
+        .fn()
+        .mockResolvedValueOnce({ id: 'target', deletedAt: null }) // target existe
+        .mockResolvedValueOnce(null), // isSuperAdmin → no es super admin
+    },
+  })
+  await expect(
+    assertCanViewPlayerProfile(prisma, 'u1', 'target'),
+  ).rejects.toBeInstanceOf(ForbiddenException)
+})
+})

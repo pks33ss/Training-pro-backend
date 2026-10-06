@@ -674,3 +674,217 @@ export async function resolveViewerStatsRole(
 
   return 'VISITOR'
 }
+
+  // ─────────────────────────────────────────────
+// PLAYER PROFILE (Fase 4)
+// ─────────────────────────────────────────────
+
+/**
+ * ¿Puede el viewer ver el perfil personal/deportivo del jugador?
+ *
+ * Reglas:
+ *   - El propio usuario.
+ *   - SUPER_ADMIN.
+ *   - ADMIN_CLUB del club del jugador (con isActive).
+ *   - COACH / ASSISTANT / ADMIN_TEAM de algún equipo del jugador (ACTIVE).
+ *   - Tutor del jugador con relación ACTIVE.
+ *   - Si el jugador no pertenece a ningún club/equipo: solo él y SUPER_ADMIN.
+ */
+export async function canViewPlayerProfile(
+  prisma: PrismaLike,
+  viewerId: string,
+  targetUserId: string,
+): Promise<boolean> {
+  if (viewerId === targetUserId) return true
+  if (await isSuperAdmin(prisma, viewerId)) return true
+
+  // El target debe existir y no estar soft-deleted
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, deletedAt: true },
+  })
+  if (!target || target.deletedAt) return false
+
+  // Tutor con relación ACTIVE
+  const tutorRel = await prisma.tutorRelationship.findFirst({
+    where: {
+      tutorUserId: viewerId,
+      playerUserId: targetUserId,
+      status: 'ACTIVE',
+    },
+    select: { id: true },
+  })
+  if (tutorRel) return true
+
+  // Clubs del target
+  const targetClubMemberships = await prisma.clubMember.findMany({
+    where: { userId: targetUserId, isActive: true },
+    select: { clubId: true },
+  })
+  const clubIds = targetClubMemberships.map((c) => c.clubId)
+
+  // Equipos del target (membresías ACTIVE)
+  const targetTeamMemberships = await prisma.teamMembership.findMany({
+    where: { userId: targetUserId, status: 'ACTIVE' },
+    select: { teamId: true },
+  })
+  const teamIds = targetTeamMemberships.map((m) => m.teamId)
+
+  if (clubIds.length === 0 && teamIds.length === 0) return false
+
+  // ADMIN_CLUB de algún club del target
+  if (clubIds.length > 0) {
+    const clubAdmin = await prisma.clubMember.findFirst({
+      where: {
+        userId: viewerId,
+        clubId: { in: clubIds },
+        role: 'ADMIN_CLUB',
+        isActive: true,
+      },
+      select: { id: true },
+    })
+    if (clubAdmin) return true
+  }
+
+  // COACH / ASSISTANT / ADMIN_TEAM de algún equipo del target
+  if (teamIds.length > 0) {
+    const teamStaff = await prisma.teamMembership.findFirst({
+      where: {
+        userId: viewerId,
+        teamId: { in: teamIds },
+        status: 'ACTIVE',
+        roles: {
+          some: { role: { in: STAFF_TEAM_ROLES } },
+        },
+      },
+      select: { id: true },
+    })
+    if (teamStaff) return true
+  }
+
+  return false
+}
+
+/**
+ * ¿Puede el viewer editar el perfil del jugador?
+ *
+ * Reglas:
+ *   - SUPER_ADMIN: siempre.
+ *   - Si el target es ghost (isGhost: true):
+ *     - ADMIN_CLUB del club del target.
+ *     - COACH / ASSISTANT / ADMIN_TEAM de algún equipo del target (ACTIVE).
+ *   - Si el target NO es ghost:
+ *     - Solo el propio usuario (y SUPER_ADMIN).
+ */
+export async function canEditPlayerProfile(
+  prisma: PrismaLike,
+  viewerId: string,
+  targetUserId: string,
+): Promise<boolean> {
+  if (await isSuperAdmin(prisma, viewerId)) return true
+
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, isGhost: true, deletedAt: true },
+  })
+  if (!target || target.deletedAt) return false
+
+  if (viewerId === targetUserId) return true
+
+  // A partir de aquí, solo si es ghost
+  if (!target.isGhost) return false
+
+  // Clubs del target
+  const targetClubMemberships = await prisma.clubMember.findMany({
+    where: { userId: targetUserId, isActive: true },
+    select: { clubId: true },
+  })
+  const clubIds = targetClubMemberships.map((c) => c.clubId)
+
+  // Equipos del target
+  const targetTeamMemberships = await prisma.teamMembership.findMany({
+    where: { userId: targetUserId, status: 'ACTIVE' },
+    select: { teamId: true },
+  })
+  const teamIds = targetTeamMemberships.map((m) => m.teamId)
+
+  if (clubIds.length === 0 && teamIds.length === 0) return false
+
+  // ADMIN_CLUB de algún club del target
+  if (clubIds.length > 0) {
+    const clubAdmin = await prisma.clubMember.findFirst({
+      where: {
+        userId: viewerId,
+        clubId: { in: clubIds },
+        role: 'ADMIN_CLUB',
+        isActive: true,
+      },
+      select: { id: true },
+    })
+    if (clubAdmin) return true
+  }
+
+  // COACH / ASSISTANT / ADMIN_TEAM de algún equipo del target
+  if (teamIds.length > 0) {
+    const teamStaff = await prisma.teamMembership.findFirst({
+      where: {
+        userId: viewerId,
+        teamId: { in: teamIds },
+        status: 'ACTIVE',
+        roles: {
+          some: { role: { in: STAFF_TEAM_ROLES } },
+        },
+      },
+      select: { id: true },
+    })
+    if (teamStaff) return true
+  }
+
+  return false
+}
+
+/**
+ * Assert version de canViewPlayerProfile.
+ * Lanza 404 si el target no existe, 403 si no tiene acceso.
+ */
+export async function assertCanViewPlayerProfile(
+  prisma: PrismaLike,
+  viewerId: string,
+  targetUserId: string,
+): Promise<void> {
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, deletedAt: true },
+  })
+  if (!target || target.deletedAt) {
+    throw new NotFoundException('Usuario no encontrado')
+  }
+
+  if (!(await canViewPlayerProfile(prisma, viewerId, targetUserId))) {
+    throw new ForbiddenException('No tienes acceso al perfil de este usuario')
+  }
+}
+
+/**
+ * Assert version de canEditPlayerProfile.
+ * Lanza 404 si el target no existe, 403 si no puede editar.
+ */
+export async function assertCanEditPlayerProfile(
+  prisma: PrismaLike,
+  viewerId: string,
+  targetUserId: string,
+): Promise<void> {
+  const target = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { id: true, deletedAt: true },
+  })
+  if (!target || target.deletedAt) {
+    throw new NotFoundException('Usuario no encontrado')
+  }
+
+  if (!(await canEditPlayerProfile(prisma, viewerId, targetUserId))) {
+    throw new ForbiddenException(
+      'No tienes permisos para editar el perfil de este usuario',
+    )
+  }
+}
