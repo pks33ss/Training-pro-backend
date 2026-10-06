@@ -48,6 +48,7 @@ export class MatchService {
         createdById: userId,
         subMatchesCount,
         setsPerSubMatch,
+        season: createMatchDto.season ?? team.season ?? null,
       },
     })
 
@@ -86,11 +87,14 @@ export class MatchService {
     })
   }
 
-  async findAllByTeam(userId: string, teamId: string) {
+  async findAllByTeam(userId: string, teamId: string, season?: string) {
     await getTeamForViewer(this.prisma, userId, teamId)
 
+    const where: any = { teamId }
+    if (season) where.season = season
+
     return this.prisma.match.findMany({
-      where: { teamId },
+      where,
       include: {
         team: { include: { club: true } },
         _count: {
@@ -99,6 +103,30 @@ export class MatchService {
       },
       orderBy: { date: 'desc' },
     })
+  }
+
+  /**
+   * Devuelve las temporadas (strings) distintas de los partidos del equipo.
+   * Ordenadas de más reciente a más antigua.
+   */
+  async findSeasonsByTeam(userId: string, teamId: string): Promise<string[]> {
+    await getTeamForViewer(this.prisma, userId, teamId)
+
+    const rows = await this.prisma.match.findMany({
+      where: { teamId, NOT: { season: null } },
+      select: { season: true },
+      distinct: ['season'],
+    })
+
+    const seasons = rows
+      .map((r) => r.season)
+      .filter((s): s is string => !!s)
+
+    // Orden descendente (más reciente primero).
+    // Asume formato "YYYY-YYYY" o similar. Si no, orden lexicográfico inverso.
+    seasons.sort((a, b) => b.localeCompare(a))
+
+    return seasons
   }
 
   async findOne(userId: string, matchId: string) {
@@ -789,7 +817,7 @@ export class MatchService {
     if (!match) throw new NotFoundException('Partido no encontrado')
     await getTeamForViewer(this.prisma, userId, match.teamId)
 
-        const payload = computePadelStatsFromMatch({
+    const payload = computePadelStatsFromMatch({
       id: match.id,
       teamId: match.teamId,
       date: match.date,

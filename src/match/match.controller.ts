@@ -17,8 +17,18 @@ export class MatchController {
   }
 
   @Get('team/:teamId')
-  findAllByTeam(@Request() req, @Param('teamId') teamId: string) {
-    return this.matchService.findAllByTeam(req.user.id, teamId)
+  findAllByTeam(
+    @Request() req,
+    @Param('teamId') teamId: string,
+    @Query('season') season?: string,
+  ) {
+    
+  return this.matchService.findAllByTeam(req.user.id, teamId, season)
+}
+
+  @Get('team/:teamId/seasons')
+  findSeasonsByTeam(@Request() req, @Param('teamId') teamId: string) {
+    return this.matchService.findSeasonsByTeam(req.user.id, teamId)
   }
 
   @Get('team/:teamId/stats')

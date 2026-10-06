@@ -414,6 +414,7 @@ model Match {
   gamePlan String? // Plan de partido (markdown/texto)
   lineup   Json? // Line up: { starters: [...], bench: [...] } o similar
 
+season String?
   // Resultado
   teamScore     Int? // Puntos del equipo
   opponentScore Int? // Puntos del rival
@@ -437,6 +438,7 @@ model Match {
 
   @@index([teamId])
   @@index([date])
+  @@index([teamId, season])
 }
 
 model MatchCallup {

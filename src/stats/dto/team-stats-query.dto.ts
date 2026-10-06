@@ -2,9 +2,13 @@ import { IsOptional, IsString, IsISO8601, IsArray } from 'class-validator'
 import { Transform } from 'class-transformer'
 
 export class TeamStatsQueryDto {
+  /**
+   * Temporada (string libre, ej. "2025-2026").
+   * Filtra por Match.season.
+   */
   @IsOptional()
   @IsString()
-  seasonId?: string
+  season?: string
 
   @IsOptional()
   @IsISO8601()
@@ -31,13 +35,6 @@ export class TeamStatsQueryDto {
   @IsString({ each: true })
   matchIds?: string[]
 
-  /**
-   * Equipos adicionales (además del :id del path) que se agregan
-   * en las estadísticas. Todos deben:
-   *  - pertenecer al mismo deporte que el team principal
-   *  - estar accesibles para el viewer
-   * Si el sport difiere → 400.
-   */
   @IsOptional()
   @Transform(({ value }) => {
     if (value == null) return undefined
@@ -51,12 +48,6 @@ export class TeamStatsQueryDto {
   @IsString({ each: true })
   teamIds?: string[]
 
-  /**
-   * Métrica de tendencia a pintar en el gráfico.
-   * Debe ser una trendKey de las disponibles para el sport/scope.
-   * Si no se envía, se mantiene el comportamiento histórico
-   * (trend.byMonth solo).
-   */
   @IsOptional()
   @IsString()
   trendMetric?: string

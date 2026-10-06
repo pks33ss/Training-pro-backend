@@ -1,14 +1,10 @@
 import { IsOptional, IsString, IsISO8601, IsArray } from 'class-validator'
 import { Transform } from 'class-transformer'
 
-/**
- * Query params para GET /teams/:id/players/:userId/stats
- * Mismos que TeamStatsQueryDto excepto `playerId` (viene por path).
- */
 export class PlayerStatsQueryDto {
   @IsOptional()
   @IsString()
-  seasonId?: string
+  season?: string
 
   @IsOptional()
   @IsISO8601()

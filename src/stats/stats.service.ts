@@ -134,7 +134,7 @@ export class TeamStatsService {
       teams: teams.map((t) => ({ id: t.id, name: t.name, sport: t.sport })),
       team: { id: mainTeam.id, name: mainTeam.name, sport: mainTeam.sport },
       filters: {
-        seasonId: query.seasonId ?? null,
+        season: query.season ?? null,
         from: range.from?.toISOString() ?? null,
         to: range.to?.toISOString() ?? null,
         playerId: query.playerId ?? null,
@@ -252,7 +252,7 @@ export class TeamStatsService {
         lastName: player.lastName,
       },
       filters: {
-        seasonId: query.seasonId ?? null,
+        season: query.season ?? null,
         from: range.from?.toISOString() ?? null,
         to: range.to?.toISOString() ?? null,
         matchIds: query.matchIds ?? null,
@@ -277,7 +277,7 @@ export class TeamStatsService {
     playerUserId: string,
     query: PlayerStatsQueryDto,
   ) {
-    const where = this.buildBaseWhere(teamIds, range, query.matchIds)
+    const where = this.buildBaseWhere(teamIds, range, query.matchIds, query.season)
     where.padelSubMatches = {
       some: {
         OR: [{ player1Id: playerUserId }, { player2Id: playerUserId }],
@@ -313,7 +313,7 @@ export class TeamStatsService {
     playerUserId: string,
     query: PlayerStatsQueryDto,
   ) {
-    const where = this.buildBaseWhere(teamIds, range, query.matchIds)
+    const where = this.buildBaseWhere(teamIds, range, query.matchIds, query.season)
     where.playerStats = { some: { userId: playerUserId } }
 
     return this.prisma.match.findMany({
@@ -629,7 +629,7 @@ export class TeamStatsService {
         lastName: player.lastName,
       },
       filters: {
-        seasonId: query.seasonId ?? null,
+        season: query.season ?? null,
         from: byMatch.length > 0 ? byMatch[0].date : query.from ?? null,
         to:
           byMatch.length > 0
@@ -1017,7 +1017,7 @@ export class TeamStatsService {
         lastName: player.lastName,
       },
       filters: {
-        seasonId: query.seasonId ?? null,
+        season: query.season ?? null,
         from: byMatch.length > 0 ? byMatch[0].date : query.from ?? null,
         to:
           byMatch.length > 0
@@ -1062,28 +1062,12 @@ export class TeamStatsService {
   // Helpers comunes
   // ─────────────────────────────────────────────
 
-  private async resolveDateRange(
+    private async resolveDateRange(
     teamId: string,
     query: TeamStatsQueryDto | PlayerStatsQueryDto,
   ): Promise<{ from: Date | null; to: Date | null }> {
     let from: Date | null = null
     let to: Date | null = null
-
-    if (query.seasonId) {
-      const season = await this.prisma.season.findFirst({
-        where: { id: query.seasonId, teamId },
-        select: { id: true, startDate: true, endDate: true },
-      })
-      if (!season) {
-        throw new NotFoundException('Temporada no encontrada para este equipo')
-      }
-      if (season.startDate) from = season.startDate
-      if (season.endDate) {
-        const end = new Date(season.endDate)
-        end.setUTCHours(23, 59, 59, 999)
-        to = end
-      }
-    }
 
     if (query.from) {
       const qf = new Date(query.from)
@@ -1098,10 +1082,11 @@ export class TeamStatsService {
     return { from, to }
   }
 
-  private buildBaseWhere(
+    private buildBaseWhere(
     teamIds: string[],
     range: { from: Date | null; to: Date | null },
     matchIds?: string[],
+    season?: string,
   ) {
     const where: any = { teamId: { in: teamIds }, status: 'FINISHED' }
 
@@ -1115,6 +1100,10 @@ export class TeamStatsService {
       where.id = { in: matchIds }
     }
 
+    if (season) {
+      where.season = season
+    }
+
     return where
   }
 
@@ -1123,7 +1112,7 @@ export class TeamStatsService {
     range: { from: Date | null; to: Date | null },
     query: TeamStatsQueryDto,
   ) {
-    const where = this.buildBaseWhere(teamIds, range, query.matchIds)
+    const where = this.buildBaseWhere(teamIds, range, query.matchIds, query.season)
 
     if (query.playerId) {
       where.padelSubMatches = {
@@ -1161,7 +1150,7 @@ export class TeamStatsService {
     range: { from: Date | null; to: Date | null },
     query: TeamStatsQueryDto,
   ) {
-    const where = this.buildBaseWhere(teamIds, range, query.matchIds)
+    const where = this.buildBaseWhere(teamIds, range, query.matchIds, query.season)
 
     if (query.playerId) {
       where.playerStats = {
@@ -1544,7 +1533,7 @@ export class TeamStatsService {
       teams: teams.map((t) => ({ id: t.id, name: t.name, sport: t.sport })),
       team: { id: mainTeam.id, name: mainTeam.name, sport: mainTeam.sport },
       filters: {
-        seasonId: query.seasonId ?? null,
+        season: query.season ?? null,
         from:
           perMatch.length > 0
             ? perMatch[0].match.date.toISOString()

@@ -69,4 +69,8 @@ export class CreateMatchDto {
   @Max(7)
   @IsOptional()
   setsPerSubMatch?: number
+
+    @IsString()
+  @IsOptional()
+  season?: string
 }
