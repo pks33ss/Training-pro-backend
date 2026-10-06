@@ -3,7 +3,17 @@ import { PrismaService } from '../prisma/prisma.service'
 import * as bcrypt from 'bcrypt'
 import { CreateGhostDto } from './dto/create-ghost.dto'
 import { generateUniqueUsername } from './utils/generate-username'
-import { isSuperAdmin, canEditGhost, assertCanManageMembers } from '../common/access'
+import {
+  isSuperAdmin,
+  canEditGhost,
+  assertCanManageMembers,
+  assertCanViewPlayerProfile,
+  assertCanEditPlayerProfile,
+} from '../common/access'
+
+import { UpdatePlayerProfileDto } from './dto/update-player-profile.dto'
+import { CreateInjuryDto } from './dto/create-injury.dto'
+import { UpdateInjuryDto } from './dto/update-injury.dto'
 
 @Injectable()
 export class UserService {
@@ -981,4 +991,179 @@ export class UserService {
       update: { isActive: true },
     })
   }
+  // ============================================
+  // PLAYER PROFILE (Fase 4)
+  // ============================================
+
+  async getPlayerProfile(viewerId: string, targetUserId: string) {
+    await assertCanViewPlayerProfile(this.prisma, viewerId, targetUserId)
+
+    const profile = await this.prisma.playerProfile.findUnique({
+      where: { userId: targetUserId },
+    })
+
+    // Si no existe, devolvemos estructura vacía para que el frontend
+    // pueda pintar el formulario sin 404.
+    return profile ?? null
+  }
+
+  async updatePlayerProfile(
+    viewerId: string,
+    targetUserId: string,
+    data: UpdatePlayerProfileDto,
+  ) {
+    await assertCanEditPlayerProfile(this.prisma, viewerId, targetUserId)
+
+    // Normalizamos strings vacíos → null, y parseamos fechas.
+    const normalized = {
+      birthDate: data.birthDate ? new Date(data.birthDate) : undefined,
+      dni: normalizeStr(data.dni),
+      fatherName: normalizeStr(data.fatherName),
+      motherName: normalizeStr(data.motherName),
+      fatherPhone: normalizeStr(data.fatherPhone),
+      motherPhone: normalizeStr(data.motherPhone),
+      address: normalizeStr(data.address),
+      schoolOrCompany: normalizeStr(data.schoolOrCompany),
+      allergies: normalizeStr(data.allergies),
+      height: data.height ?? undefined,
+      wingspan: data.wingspan ?? undefined,
+      weight: data.weight ?? undefined,
+      emergencyContactName: normalizeStr(data.emergencyContactName),
+      emergencyContactPhone: normalizeStr(data.emergencyContactPhone),
+      medicalInsurance: normalizeStr(data.medicalInsurance),
+      medicalInsuranceNumber: normalizeStr(data.medicalInsuranceNumber),
+      shirtSize: normalizeStr(data.shirtSize),
+      pantsSize: normalizeStr(data.pantsSize),
+      shoeSize: normalizeStr(data.shoeSize),
+    }
+
+    // Filtramos undefined (no tocar) para no sobreescribir con null
+    // campos que el cliente no envía.
+    const updateData = Object.fromEntries(
+      Object.entries(normalized).filter(([, v]) => v !== undefined),
+    )
+
+    const profile = await this.prisma.playerProfile.upsert({
+      where: { userId: targetUserId },
+      create: {
+        userId: targetUserId,
+        ...updateData,
+      },
+      update: updateData,
+    })
+
+    return profile
+  }
+
+  // ============================================
+  // INJURIES (Fase 4)
+  // ============================================
+
+  async listInjuries(viewerId: string, targetUserId: string) {
+    await assertCanViewPlayerProfile(this.prisma, viewerId, targetUserId)
+
+    return this.prisma.injury.findMany({
+      where: { userId: targetUserId },
+      orderBy: { date: 'desc' },
+    })
+  }
+
+  async createInjury(
+    viewerId: string,
+    targetUserId: string,
+    data: CreateInjuryDto,
+  ) {
+    await assertCanEditPlayerProfile(this.prisma, viewerId, targetUserId)
+
+    return this.prisma.injury.create({
+      data: {
+        userId: targetUserId,
+        date: new Date(data.date),
+        description: data.description,
+        bodyPart: normalizeStr(data.bodyPart),
+        severity: normalizeStr(data.severity),
+        status: data.status ?? 'ACTIVE',
+        expectedReturn: data.expectedReturn
+          ? new Date(data.expectedReturn)
+          : null,
+        actualReturn: data.actualReturn ? new Date(data.actualReturn) : null,
+        treatment: normalizeStr(data.treatment),
+        doctor: normalizeStr(data.doctor),
+        notes: normalizeStr(data.notes),
+      },
+    })
+  }
+
+  async updateInjury(
+    viewerId: string,
+    targetUserId: string,
+    injuryId: string,
+    data: UpdateInjuryDto,
+  ) {
+    await assertCanEditPlayerProfile(this.prisma, viewerId, targetUserId)
+
+    // Verificamos que la lesión existe y pertenece a ese usuario
+    const existing = await this.prisma.injury.findFirst({
+      where: { id: injuryId, userId: targetUserId },
+      select: { id: true },
+    })
+    if (!existing) {
+      throw new NotFoundException('Lesión no encontrada')
+    }
+
+    const updateData: any = {}
+    if (data.date !== undefined) updateData.date = new Date(data.date)
+    if (data.description !== undefined)
+      updateData.description = data.description
+    if (data.bodyPart !== undefined)
+      updateData.bodyPart = normalizeStr(data.bodyPart)
+    if (data.severity !== undefined)
+      updateData.severity = normalizeStr(data.severity)
+    if (data.status !== undefined) updateData.status = data.status
+    if (data.expectedReturn !== undefined)
+      updateData.expectedReturn = data.expectedReturn
+        ? new Date(data.expectedReturn)
+        : null
+    if (data.actualReturn !== undefined)
+      updateData.actualReturn = data.actualReturn
+        ? new Date(data.actualReturn)
+        : null
+    if (data.treatment !== undefined)
+      updateData.treatment = normalizeStr(data.treatment)
+    if (data.doctor !== undefined)
+      updateData.doctor = normalizeStr(data.doctor)
+    if (data.notes !== undefined) updateData.notes = normalizeStr(data.notes)
+
+    return this.prisma.injury.update({
+      where: { id: injuryId },
+      data: updateData,
+    })
+  }
+
+  async deleteInjury(
+    viewerId: string,
+    targetUserId: string,
+    injuryId: string,
+  ) {
+    await assertCanEditPlayerProfile(this.prisma, viewerId, targetUserId)
+
+    const existing = await this.prisma.injury.findFirst({
+      where: { id: injuryId, userId: targetUserId },
+      select: { id: true },
+    })
+    if (!existing) {
+      throw new NotFoundException('Lesión no encontrada')
+    }
+
+    await this.prisma.injury.delete({ where: { id: injuryId } })
+
+    return { deleted: true, id: injuryId }
+  }
+
+
+}
+function normalizeStr(v: string | undefined): string | null | undefined {
+  if (v === undefined) return undefined
+  const trimmed = v.trim()
+  return trimmed.length === 0 ? null : trimmed
 }

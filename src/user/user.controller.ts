@@ -2,6 +2,9 @@ import { Controller, Get, Post, Put, Delete, Body, Param, Query, Request, UseGua
 import { UserService } from './user.service'
 import { AuthGuard } from '../auth/auth.guard'
 import { CreateGhostDto } from './dto/create-ghost.dto'
+import { UpdatePlayerProfileDto } from './dto/update-player-profile.dto'
+import { CreateInjuryDto } from './dto/create-injury.dto'
+import { UpdateInjuryDto } from './dto/update-injury.dto'
 
 @Controller('users')
 @UseGuards(AuthGuard)
@@ -81,7 +84,56 @@ async findAll(@Request() req, @Query('includeDeleted') includeDeleted?: string) 
   }
   return this.userService.findAll(includeDeleted === 'true')
 }
+  // ============================================
+  // PLAYER PROFILE + INJURIES (Fase 4)
+  // ============================================
 
+  @Get(':userId/player-profile')
+  getPlayerProfile(@Request() req, @Param('userId') userId: string) {
+    return this.userService.getPlayerProfile(req.user.id, userId)
+  }
+
+  @Put(':userId/player-profile')
+  updatePlayerProfile(
+    @Request() req,
+    @Param('userId') userId: string,
+    @Body() dto: UpdatePlayerProfileDto,
+  ) {
+    return this.userService.updatePlayerProfile(req.user.id, userId, dto)
+  }
+
+  @Get(':userId/injuries')
+  listInjuries(@Request() req, @Param('userId') userId: string) {
+    return this.userService.listInjuries(req.user.id, userId)
+  }
+
+  @Post(':userId/injuries')
+  createInjury(
+    @Request() req,
+    @Param('userId') userId: string,
+    @Body() dto: CreateInjuryDto,
+  ) {
+    return this.userService.createInjury(req.user.id, userId, dto)
+  }
+
+  @Put(':userId/injuries/:injuryId')
+  updateInjury(
+    @Request() req,
+    @Param('userId') userId: string,
+    @Param('injuryId') injuryId: string,
+    @Body() dto: UpdateInjuryDto,
+  ) {
+    return this.userService.updateInjury(req.user.id, userId, injuryId, dto)
+  }
+
+  @Delete(':userId/injuries/:injuryId')
+  deleteInjury(
+    @Request() req,
+    @Param('userId') userId: string,
+    @Param('injuryId') injuryId: string,
+  ) {
+    return this.userService.deleteInjury(req.user.id, userId, injuryId)
+  }
   @Get(':id')
   async findOne(@Request() req, @Param('id') id: string) {
     if (req.user.role !== 'SUPER_ADMIN' && req.user.id !== id) {
