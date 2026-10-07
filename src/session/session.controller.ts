@@ -20,10 +20,6 @@ import { AuthGuard } from '../auth/auth.guard'
 export class SessionController {
   constructor(private readonly sessionService: SessionService) {}
 
-  // ============================================
-  // SESIONES
-  // ============================================
-
   @Post()
   create(@Request() req, @Body() createSessionDto: CreateSessionDto) {
     return this.sessionService.create(req.user.id, createSessionDto)

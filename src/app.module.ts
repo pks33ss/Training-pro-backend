@@ -21,6 +21,7 @@ import { TutorRelationshipsModule } from './tutor-relationships/tutor-relationsh
 import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
 import { LibraryModule } from './library/library.module';
+import { PlaybookModule } from './playbook/playbook.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { LibraryModule } from './library/library.module';
     StatsModule,
 
     LibraryModule,
+    PlaybookModule,
 
     HealthModule,
   ],

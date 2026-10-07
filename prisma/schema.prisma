@@ -28,8 +28,8 @@ model User {
   calendarEvents      CalendarEvent[]
   calendarInvitations CalendarInvitation[]
 
-  padelSubMatchesAsPlayer1 PadelSubMatch[] @relation("PadelSubMatchPlayer1")  // ✅ NUEVA
-  padelSubMatchesAsPlayer2 PadelSubMatch[] @relation("PadelSubMatchPlayer2")  // ✅ NUEVA
+  padelSubMatchesAsPlayer1 PadelSubMatch[] @relation("PadelSubMatchPlayer1") // ✅ NUEVA
+  padelSubMatchesAsPlayer2 PadelSubMatch[] @relation("PadelSubMatchPlayer2") // ✅ NUEVA
 
   createdMatches      Match[] // ✅ NUEVO
   favoriteTeams       FavoriteTeam[]
@@ -39,20 +39,23 @@ model User {
   playerRelationships TutorRelationship[] @relation("PlayerUser")
   matchStats          MatchPlayerStats[]
   invitedMemberships  TeamMembership[]    @relation("MembershipInviter")
-  pendingForMe        PendingInvitation[] // ← AÑADE ESTA LÍNEA
+  pendingForMe        PendingInvitation[]
 
   hostedStreams      LiveStream[]       @relation("HostedStreams")
   liveViewers        LiveViewer[]
-  streamPermissions  StreamPermission[] @relation("UserStreamPermissions") // ✅ NUEVO
+  streamPermissions  StreamPermission[] @relation("UserStreamPermissions")
   grantedPermissions StreamPermission[] @relation("GrantedBy")
   attendances        Attendance[]
   matchCallups       MatchCallup[]
 
-  playerProfile       PlayerProfile?
-  injuries            Injury[]
+  playerProfile PlayerProfile?
+  injuries      Injury[]
 
   // ✅ NUEVO — Biblioteca de ejercicios del usuario
-  libraryExercises    LibraryExercise[]
+  libraryExercises LibraryExercise[]
+
+  // ✅ NUEVO — Jugadas (Playbook) creadas por el usuario
+  createdPlays Play[] @relation("PlayCreatedBy")
 
   @@index([deletedAt])
 }
@@ -72,7 +75,7 @@ model Club {
 
   members        ClubMember[]
   teams          Team[]
-  calendarEvents CalendarEvent[] // ✅ Relación inversa para eventos
+  calendarEvents CalendarEvent[]
 }
 
 model ClubMember {
@@ -84,7 +87,7 @@ model ClubMember {
   joinedAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  club Club @relation(fields: [clubId], references: [id], onDelete: Cascade) // ✅ Añadido
+  club Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
 
   @@unique([userId, clubId])
 }
@@ -96,34 +99,34 @@ model Team {
   category       String?
   season         String?
   clubId         String
-  primaryColor   String? // Si es null, hereda del club
-  secondaryColor String? // Si es null, hereda del club
+  primaryColor   String?
+  secondaryColor String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  club    Club         @relation(fields: [clubId], references: [id], onDelete: Cascade)
-  
+  club Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
 
-  sessions           Session[]
-  calendarEvents     CalendarEvent[] // ✅ Relación inversa para eventos
-  matches            Match[] // ✅ NUEVO
-  seasons            Season[]
-  favoritedBy        FavoriteTeam[]
-  memberships        TeamMembership[]
-  pendingInvitations PendingInvitation[]
+  sessions               Session[]
+  calendarEvents         CalendarEvent[]
+  matches                Match[]
+  seasons                Season[]
+  favoritedBy            FavoriteTeam[]
+  memberships            TeamMembership[]
+  pendingInvitations     PendingInvitation[]
   statsVisibilityConfigs StatsVisibilityConfig[]
+
+  // ✅ NUEVO — Jugadas del equipo (Playbook)
+  plays Play[]
 }
 
-
-
 model TeamMembership {
-  id           String    @id @default(cuid())
-  userId       String
-  teamId       String
-  
+  id     String @id @default(cuid())
+  userId String
+  teamId String
+
   jerseyNumber Int?
   position     String?
-  status       String    @default("ACTIVE") // ACTIVE | PENDING | INACTIVE | LEFT
+  status       String    @default("ACTIVE")
   seasonId     String?
   joinedAt     DateTime  @default(now())
   leftAt       DateTime?
@@ -136,30 +139,30 @@ model TeamMembership {
   season    Season? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
   invitedBy User?   @relation("MembershipInviter", fields: [invitedById], references: [id], onDelete: SetNull)
 
-  roles MembershipRole[] 
+  roles MembershipRole[]
 
-  @@unique([userId, teamId]) 
+  @@unique([userId, teamId])
   @@index([userId])
   @@index([teamId])
   @@index([status])
 }
 
 model PendingInvitation {
-  id          String    @id @default(cuid())
-  code        String    @unique
+  id          String             @id @default(cuid())
+  code        String             @unique
   email       String?
   phone       String?
   userId      String?
   teamId      String
   role        MembershipRoleType @default(PLAYER)
-  channel     String    @default("LINK") // EMAIL | WHATSAPP | LINK
-  status      String    @default("PENDING") // PENDING | USED | EXPIRED | REVOKED
-  sentAt      DateTime  @default(now())
+  channel     String             @default("LINK")
+  status      String             @default("PENDING")
+  sentAt      DateTime           @default(now())
   expiresAt   DateTime
   usedAt      DateTime?
   invitedById String
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
 
   user      User? @relation(fields: [userId], references: [id], onDelete: Cascade)
   team      Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -175,10 +178,10 @@ model TutorRelationship {
   id                 String   @id @default(cuid())
   tutorUserId        String
   playerUserId       String
-  relationship       String // padre | madre | tutor_legal | otro
+  relationship       String
   canPickUp          Boolean  @default(true)
   isEmergencyContact Boolean  @default(false)
-  status             String   @default("PENDING") // PENDING | ACTIVE | REVOKED
+  status             String   @default("PENDING")
   requestedById      String
   approvedById       String?
   createdAt          DateTime @default(now())
@@ -220,7 +223,7 @@ model Session {
   updatedAt   DateTime @updatedAt
 
   team        Team         @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  createdBy   User?        @relation(fields: [createdById], references: [id], onDelete: SetNull) 
+  createdBy   User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
   exercises   Exercise[]
   attendances Attendance[]
 
@@ -296,7 +299,7 @@ model CalendarEvent {
   location    String?
   clubId      String
   teamId      String?
-  createdById String? 
+  createdById String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -339,14 +342,12 @@ enum InvitationStatus {
   MAYBE
 }
 
-// ✅ Enums de roles por ámbito
 enum ClubRole {
   ADMIN_CLUB
   COACH
   ASSISTANT
   MEMBER
 }
-
 
 enum MembershipRoleType {
   PLAYER
@@ -379,50 +380,48 @@ enum GlobalRole {
 // ============================================
 
 enum MatchType {
-  LEAGUE // Liga
-  FRIENDLY // Amistoso
-  CUP // Copa
-  PLAYOFF // Playoff
-  TOURNAMENT // Torneo
+  LEAGUE
+  FRIENDLY
+  CUP
+  PLAYOFF
+  TOURNAMENT
 }
 
 enum MatchLocation {
-  HOME // Casa
-  AWAY // Fuera
-  NEUTRAL // Neutral
+  HOME
+  AWAY
+  NEUTRAL
 }
 
 enum MatchStatus {
-  SCHEDULED // Programado
-  IN_PROGRESS // En curso
-  FINISHED // Finalizado
-  CANCELLED // Cancelado
-  POSTPONED // Aplazado
+  SCHEDULED
+  IN_PROGRESS
+  FINISHED
+  CANCELLED
+  POSTPONED
 }
 
 model Match {
-  id          String        @id @default(cuid())
-  date        DateTime // Fecha y hora del partido
-  opponent    String // Nombre del equipo rival
-  location    MatchLocation
-  type        MatchType     @default(LEAGUE)
-  status      MatchStatus   @default(SCHEDULED)
-  venue       String? // Pabellón/ubicación
-  competition String? // Nombre de la competición
-  notes       String? // Notas adicionales
+  id              String        @id @default(cuid())
+  date            DateTime
+  opponent        String
+  location        MatchLocation
+  type            MatchType     @default(LEAGUE)
+  status          MatchStatus   @default(SCHEDULED)
+  venue           String?
+  competition     String?
+  notes           String?
   subMatchesCount Int?
   setsPerSubMatch Int?
 
-  // ✅ NUEVOS
-  gamePlan String? // Plan de partido (markdown/texto)
-  lineup   Json? // Line up: { starters: [...], bench: [...] } o similar
+  gamePlan String?
+  lineup   Json?
 
-season String?
-  // Resultado
-  teamScore     Int? // Puntos del equipo
-  opponentScore Int? // Puntos del rival
+  season String?
 
-  // Relaciones
+  teamScore     Int?
+  opponentScore Int?
+
   teamId String
   team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
 
@@ -432,7 +431,7 @@ season String?
   callups     MatchCallup[]
   playerStats MatchPlayerStats[]
 
-   padelSubMatches PadelSubMatch[]
+  padelSubMatches PadelSubMatch[]
 
   liveStream LiveStream?
 
@@ -469,10 +468,10 @@ model MatchCallup {
 }
 
 enum CallupStatus {
-  PENDING // Pendiente de confirmar
-  CONFIRMED // Confirmado
-  DECLINED // Rechazado
-  MAYBE // Quizás
+  PENDING
+  CONFIRMED
+  DECLINED
+  MAYBE
 }
 
 model MatchPlayerStats {
@@ -497,10 +496,9 @@ model MatchPlayerStats {
   freeThrowsMade         Int @default(0)
   freeThrowsAttempted    Int @default(0)
 
-    // ✅ NUEVOS (2026-10)
-  blocksAgainst Int  @default(0)  // tapones recibidos
-  foulsDrawn    Int  @default(0)  // faltas recibidas
-  plusMinus     Int? @default(0)  // +/-
+  blocksAgainst Int  @default(0)
+  foulsDrawn    Int  @default(0)
+  plusMinus     Int? @default(0)
 
   match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
 
@@ -529,7 +527,6 @@ model LiveStream {
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  // ✅ Scoreboard
   scoreboardEnabled Boolean   @default(false)
   clockEnabled      Boolean   @default(false)
   homeTeamName      String?
@@ -560,7 +557,7 @@ model LiveViewer {
   id           String   @id @default(cuid())
   liveStreamId String
   userId       String
-  peerId       String // ID de PeerJS del espectador
+  peerId       String
   joinedAt     DateTime @default(now())
 
   liveStream LiveStream @relation(fields: [liveStreamId], references: [id], onDelete: Cascade)
@@ -683,23 +680,22 @@ enum CallupFlagStatus {
   NO
 }
 
-
 // ============================================
-// PÁDEL — SUBPARTIDOS (PISTAS)
+// PÁDEL — SUBPARTIDOS
 // ============================================
 
 model PadelSubMatch {
   id        String   @id @default(cuid())
   matchId   String
-  order     Int      // 1, 2, 3… (para "Pista 1", "Pista 2"…)
-  player1Id String?  // jugador nuestro (derecha)
-  player2Id String?  // jugador nuestro (izquierda)
+  order     Int
+  player1Id String?
+  player2Id String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  match   Match       @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  player1 User?       @relation("PadelSubMatchPlayer1", fields: [player1Id], references: [id], onDelete: SetNull)
-  player2 User?       @relation("PadelSubMatchPlayer2", fields: [player2Id], references: [id], onDelete: SetNull)
+  match   Match      @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  player1 User?      @relation("PadelSubMatchPlayer1", fields: [player1Id], references: [id], onDelete: SetNull)
+  player2 User?      @relation("PadelSubMatchPlayer2", fields: [player2Id], references: [id], onDelete: SetNull)
   sets    PadelSet[]
 
   @@unique([matchId, order])
@@ -709,9 +705,9 @@ model PadelSubMatch {
 model PadelSet {
   id         String   @id @default(cuid())
   subMatchId String
-  order      Int      // 1, 2, 3…
-  homeScore  Int      @default(0)  // nuestro equipo
-  awayScore  Int      @default(0)  // rival
+  order      Int
+  homeScore  Int      @default(0)
+  awayScore  Int      @default(0)
   played     Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -727,9 +723,9 @@ model PadelSet {
 // ============================================
 
 enum StatsScope {
-  MATCH   // hoja de stats del partido
-  TEAM    // hoja de stats agregadas del equipo
-  PLAYER  // hoja de stats individual del jugador (futuro 3.2)
+  MATCH
+  TEAM
+  PLAYER
 }
 
 enum StatsAudienceRole {
@@ -741,14 +737,14 @@ enum StatsAudienceRole {
 }
 
 model StatsVisibilityConfig {
-  id        String             @id @default(cuid())
+  id        String            @id @default(cuid())
   teamId    String
-  team      Team               @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  sport     Sport              // informativo; el team ya tiene sport fijo
+  team      Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  sport     Sport
   scope     StatsScope
   role      StatsAudienceRole
-  metricKey String             // ej. "PTS", "REB", "WIN_RATE", "MIN"
-  visible   Boolean            @default(true)
+  metricKey String
+  visible   Boolean           @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -759,7 +755,7 @@ model StatsVisibilityConfig {
 }
 
 // ============================================
-// PERFIL DEL JUGADOR (Fase 4)
+// PERFIL DEL JUGADOR
 // ============================================
 
 model PlayerProfile {
@@ -767,7 +763,6 @@ model PlayerProfile {
   userId String @unique
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // ─── Personales ───
   birthDate       DateTime?
   dni             String?
   fatherName      String?
@@ -778,20 +773,16 @@ model PlayerProfile {
   schoolOrCompany String?
   allergies       String?
 
-  // ─── Deportivos ───
-  height   Int? // cm
-  wingspan Int? // envergadura en cm
-  weight   Int? // kg
+  height   Int?
+  wingspan Int?
+  weight   Int?
 
-  // ─── Emergencia ───
   emergencyContactName  String?
   emergencyContactPhone String?
 
-  // ─── Seguro médico ───
   medicalInsurance       String?
   medicalInsuranceNumber String?
 
-  // ─── Tallas ───
   shirtSize String?
   pantsSize String?
   shoeSize  String?
@@ -820,7 +811,7 @@ model Injury {
   date        DateTime
   description String
   bodyPart    String?
-  severity    String? // "leve" | "moderada" | "grave"
+  severity    String?
   status      InjuryStatus @default(ACTIVE)
 
   expectedReturn DateTime?
@@ -841,9 +832,9 @@ model Injury {
 // ============================================
 
 model LibraryExercise {
-  id          String   @id @default(cuid())
-  ownerId     String
-  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  id      String @id @default(cuid())
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
@@ -852,10 +843,10 @@ model LibraryExercise {
   duration    Int?
   difficulty  String?
 
-  media       LibraryMedia[]
+  media LibraryMedia[]
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([ownerId])
   @@index([ownerId, category])
@@ -874,4 +865,43 @@ model LibraryMedia {
   libraryExercise LibraryExercise @relation(fields: [libraryExerciseId], references: [id], onDelete: Cascade)
 
   @@index([libraryExerciseId])
+}
+
+// ============================================
+// PLAYBOOK — JUGADAS POR EQUIPO
+// ============================================
+
+model Play {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+
+  teamId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  createdById String?
+  createdBy   User?   @relation("PlayCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  steps PlayStep[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teamId])
+  @@index([teamId, createdAt])
+}
+
+model PlayStep {
+  id     String @id @default(cuid())
+  playId String
+  play   Play   @relation(fields: [playId], references: [id], onDelete: Cascade)
+
+  order       Int     @default(0)
+  description String?
+  imageUrl    String? // data URL (base64) de la pizarra o imagen subida
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([playId, order])
 }
