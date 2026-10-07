@@ -7,6 +7,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { generateUniqueUsername } from '../user/utils/generate-username';
 import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member';
+import { OAuth2Client } from 'google-auth-library'
 
 @Injectable()
 export class AuthService {
@@ -215,8 +216,10 @@ export class AuthService {
       throw new UnauthorizedException('Esta cuenta ha sido eliminada');
     }
 
-    if (!user.password) {
-      throw new UnauthorizedException('Credenciales inválidas');
+        if (!user.password) {
+      throw new UnauthorizedException(
+        'Esta cuenta usa inicio de sesión con Google. Por favor, inicia sesión con Google.',
+      );
     }
 
     const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
@@ -253,6 +256,89 @@ export class AuthService {
     const tokens = await this.generateTokens(user);
 
     return tokens;
+  }
+
+    async loginWithGoogle(idToken: string) {
+    const clientId = process.env.GOOGLE_CLIENT_ID
+    if (!clientId) {
+      throw new UnauthorizedException(
+        'Google login no está configurado en el servidor',
+      )
+    }
+
+    const client = new OAuth2Client(clientId)
+
+    let payload
+    try {
+      const ticket = await client.verifyIdToken({
+        idToken,
+        audience: clientId,
+      })
+      payload = ticket.getPayload()
+    } catch (err) {
+      console.error('Google verifyIdToken error:', err)
+      throw new UnauthorizedException('Token de Google inválido o expirado')
+    }
+
+    if (!payload || !payload.email) {
+      throw new UnauthorizedException('No se pudo obtener el email de Google')
+    }
+
+    if (!payload.email_verified) {
+      throw new UnauthorizedException('El email de Google no está verificado')
+    }
+
+    const email = payload.email
+    const googleName = payload.given_name ?? payload.name ?? ''
+    const googleLastName = payload.family_name ?? ''
+    const googleAvatar = payload.picture ?? null
+
+    // Buscar usuario por email
+    let user = await this.prisma.user.findUnique({
+      where: { email },
+    })
+
+    if (user) {
+      // Usuario existente: no permitir login si está soft-deleted
+      if (user.deletedAt) {
+        throw new UnauthorizedException('Esta cuenta ha sido eliminada')
+      }
+
+      // Si no tiene avatar, aprovechamos el de Google
+      if (!user.avatar && googleAvatar) {
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: { avatar: googleAvatar },
+        })
+      }
+    } else {
+      // Usuario nuevo: crearlo con datos de Google
+      const username = await generateUniqueUsername(
+        this.prisma,
+        googleName,
+        googleLastName,
+      )
+
+      user = await this.prisma.user.create({
+        data: {
+          email,
+          password: null,
+          name: googleName || email.split('@')[0],
+          lastName: googleLastName,
+          avatar: googleAvatar,
+          username,
+          isGhost: false,
+          role: 'USER',
+        },
+      })
+    }
+
+    const tokens = await this.generateTokens(user)
+
+    return {
+      user: this.excludePassword(user),
+      ...tokens,
+    }
   }
 
   async logout(userId: string, refreshToken: string) {

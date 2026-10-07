@@ -37,6 +37,7 @@
     "cloudinary": "^2.11.0",
     "dotenv": "^16.0.0",
     "express": "^5.2.1",
+    "google-auth-library": "^11.1.0",
     "passport": "^0.6.0",
     "passport-jwt": "^4.0.0",
     "pg": "^8.11.0",
