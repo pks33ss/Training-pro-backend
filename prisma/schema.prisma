@@ -50,7 +50,10 @@ model User {
 
   playerProfile       PlayerProfile?
   injuries            Injury[]
-  
+
+  // ✅ NUEVO — Biblioteca de ejercicios del usuario
+  libraryExercises    LibraryExercise[]
+
   @@index([deletedAt])
 }
 
@@ -831,4 +834,44 @@ model Injury {
 
   @@index([userId])
   @@index([status])
+}
+
+// ============================================
+// BIBLIOTECA DE EJERCICIOS (por usuario)
+// ============================================
+
+model LibraryExercise {
+  id          String   @id @default(cuid())
+  ownerId     String
+  owner       User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  category    String?
+  tags        String[] @default([])
+  duration    Int?
+  difficulty  String?
+
+  media       LibraryMedia[]
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([ownerId])
+  @@index([ownerId, category])
+  @@index([ownerId, createdAt])
+}
+
+model LibraryMedia {
+  id                String    @id @default(cuid())
+  url               String
+  type              MediaType
+  title             String?
+  description       String?
+  libraryExerciseId String
+  createdAt         DateTime  @default(now())
+
+  libraryExercise LibraryExercise @relation(fields: [libraryExerciseId], references: [id], onDelete: Cascade)
+
+  @@index([libraryExerciseId])
 }

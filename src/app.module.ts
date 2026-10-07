@@ -20,6 +20,7 @@ import { MembershipsModule } from './memberships/memberships.module';
 import { TutorRelationshipsModule } from './tutor-relationships/tutor-relationships.module';
 import { StatsModule } from './stats/stats.module';
 import { HealthModule } from './health/health.module';
+import { LibraryModule } from './library/library.module';
 
 @Module({
   imports: [
@@ -45,6 +46,8 @@ import { HealthModule } from './health/health.module';
     MembershipsModule,
     TutorRelationshipsModule,
     StatsModule,
+
+    LibraryModule,
 
     HealthModule,
   ],

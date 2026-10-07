@@ -1,0 +1,1 @@
+-- Reconstruida como parte del baseline. El SQL completo está en 20260819104819_init.
