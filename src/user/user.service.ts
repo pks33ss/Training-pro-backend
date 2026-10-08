@@ -471,6 +471,9 @@ export class UserService {
         role: true,
         isGhost: true,
         createdAt: true,
+        // ✅ NUEVO — flags de notificaciones por email
+        emailNotificationsEnabled: true,
+        emailOptOut: true,
         memberships: {
           include: {
             team: {
@@ -555,6 +558,35 @@ export class UserService {
         bio: true,
         role: true,
         createdAt: true,
+      },
+    })
+  }
+
+  // ============================================
+  // PREFERENCIAS DE EMAIL (opt-out del propio usuario)
+  // ============================================
+
+  /**
+   * Actualiza el flag `emailOptOut` del usuario logueado.
+   * - `emailOptOut = true`  → el usuario NO recibe emails, aunque el admin le tenga ON.
+   * - `emailOptOut = false` → recibe según `emailNotificationsEnabled` (norma del admin).
+   */
+  async updateEmailOptOut(userId: string, optOut: boolean) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    })
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado')
+    }
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { emailOptOut: optOut },
+      select: {
+        id: true,
+        emailOptOut: true,
+        emailNotificationsEnabled: true,
       },
     })
   }
@@ -1020,11 +1052,6 @@ export class UserService {
   ) {
     await assertCanEditPlayerProfile(this.prisma, viewerId, targetUserId)
 
-    // ─── Normalización ───
-    // undefined  → no tocar el campo
-    // null       → borrar el campo
-    // ""         → borrar el campo
-    // valor      → aplicar
     const str = (
       v: string | null | undefined,
     ): string | null | undefined => {

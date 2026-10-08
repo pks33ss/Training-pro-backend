@@ -5,6 +5,7 @@ import { CreateGhostDto } from './dto/create-ghost.dto'
 import { UpdatePlayerProfileDto } from './dto/update-player-profile.dto'
 import { CreateInjuryDto } from './dto/create-injury.dto'
 import { UpdateInjuryDto } from './dto/update-injury.dto'
+import { UpdateEmailOptOutDto } from './dto/update-email-optout.dto'
 
 @Controller('users')
 @UseGuards(AuthGuard)
@@ -42,6 +43,12 @@ export class UserController {
   @Put('me')
   updateMe(@Request() req, @Body() data: any) {
     return this.userService.updateMe(req.user.id, data)
+  }
+
+  // ✅ NUEVO — Preferencia de opt-out del propio usuario
+  @Put('me/email-optout')
+  updateEmailOptOut(@Request() req, @Body() dto: UpdateEmailOptOutDto) {
+    return this.userService.updateEmailOptOut(req.user.id, dto.optOut)
   }
 
   @Delete('me')
@@ -181,7 +188,6 @@ async findAll(@Request() req, @Query('includeDeleted') includeDeleted?: string) 
     return this.userService.updateGhostProfile(req.user.id, id, data)
   }
 
-  // ✅ DELETE /users/:id — soft o hard (solo SUPER_ADMIN)
   @Delete(':id')
   async remove(
     @Request() req,

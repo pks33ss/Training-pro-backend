@@ -22,6 +22,10 @@ model User {
   isGhost   Boolean    @default(false)
   deletedAt DateTime?
 
+    // ✅ NUEVO — Preferencias de notificaciones por email
+  emailNotificationsEnabled Boolean @default(true)   
+  emailOptOut               Boolean @default(false)
+
   clubs               ClubMember[]
   refreshTokens       RefreshToken[]
   sessions            Session[]
@@ -30,6 +34,8 @@ model User {
 
   padelSubMatchesAsPlayer1 PadelSubMatch[] @relation("PadelSubMatchPlayer1") // ✅ NUEVA
   padelSubMatchesAsPlayer2 PadelSubMatch[] @relation("PadelSubMatchPlayer2") // ✅ NUEVA
+
+  
 
   createdMatches      Match[] // ✅ NUEVO
   favoriteTeams       FavoriteTeam[]
