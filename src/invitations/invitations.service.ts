@@ -4,8 +4,10 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  Logger,
 } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import { MailService } from '../mail/mail.service'
 import { generateInvitationCode } from './utils/generate-code'
 import { CreateInvitationDto } from './dto'
 import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member'
@@ -15,10 +17,34 @@ const INVITATION_EXPIRY_DAYS = 7
 
 @Injectable()
 export class InvitationsService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(InvitationsService.name)
+
+  constructor(
+    private prisma: PrismaService,
+    private mailService: MailService,
+  ) {}
 
   private async verifyCanInvite(userId: string, teamId: string) {
     await assertCanManageMembers(this.prisma, userId, teamId)
+  }
+
+  // ============================================
+  // REGLA DE RESOLUCIÓN DE ENVÍO
+  // ============================================
+
+  /**
+   * Decide si se debe enviar un email a un usuario concreto según sus flags:
+   *  - emailOptOut === true               → NO enviar
+   *  - emailNotificationsEnabled === false → NO enviar
+   *  - en cualquier otro caso             → enviar
+   */
+  private shouldSendEmailToUser(user: {
+    emailNotificationsEnabled: boolean
+    emailOptOut: boolean
+  }): boolean {
+    if (user.emailOptOut) return false
+    if (!user.emailNotificationsEnabled) return false
+    return true
   }
 
   // ============================================
@@ -142,19 +168,73 @@ export class InvitationsService {
       },
     })
 
-    if (resolvedChannel === 'IN_APP' || resolvedChannel === 'EMAIL') {
-      const targetEmail = dto.email || invitation.user?.username || targetUserId
-      console.log(
-        `📧 [PENDIENTE SMTP] Invitación a ${targetEmail}: ` +
-          `te han invitado al equipo "${invitation.team.name}" (rol ${invitation.role}). ` +
-          `Entra en la app para aceptarla.`,
-      )
+    // ============================================
+    // ENVÍO DE EMAIL
+    // ============================================
+
+    let emailSent = false
+    let emailError: string | undefined = undefined
+
+    if (resolvedChannel === 'EMAIL') {
+      // Determinamos el email destino
+      const targetEmail = dto.email || invitation.user?.username || null
+
+      if (!targetEmail) {
+        this.logger.warn(
+          `Invitación ${invitation.id} marcada como EMAIL pero no hay dirección destino`,
+        )
+      } else {
+        // Consultamos los flags si es un usuario registrado
+        let shouldSend = true
+        let recipientName = 'amigo/a'
+
+        if (targetUserId) {
+          const userWithPrefs = await this.prisma.user.findUnique({
+            where: { id: targetUserId },
+            select: {
+              name: true,
+              lastName: true,
+              emailNotificationsEnabled: true,
+              emailOptOut: true,
+            },
+          })
+
+          if (userWithPrefs) {
+            shouldSend = this.shouldSendEmailToUser(userWithPrefs)
+            recipientName = userWithPrefs.name
+              ? `${userWithPrefs.name}${userWithPrefs.lastName ? ' ' + userWithPrefs.lastName : ''}`
+              : recipientName
+          }
+        }
+
+        if (shouldSend) {
+          const invitationLink = this.buildInvitationLink(code)
+          const result = await this.mailService.sendInvitationEmail(targetEmail, {
+            recipientName,
+            teamName: invitation.team.name,
+            clubName: invitation.team.club?.name ?? '',
+            role: invitation.role,
+            inviterName: `${invitation.invitedBy.name} ${invitation.invitedBy.lastName}`,
+            invitationLink,
+            expiresAt: invitation.expiresAt,
+          })
+
+          emailSent = result.sent
+          emailError = result.reason
+        } else {
+          this.logger.log(
+            `Invitación ${invitation.id} NO enviada: usuario tiene emails desactivados o hizo opt-out`,
+          )
+        }
+      }
     }
 
     return {
       ...invitation,
       invitationLink:
         resolvedChannel === 'LINK' ? this.buildInvitationLink(code) : null,
+      emailSent,
+      ...(emailError ? { emailError } : {}),
     }
   }
 

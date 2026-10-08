@@ -23,6 +23,7 @@ import { HealthModule } from './health/health.module';
 import { LibraryModule } from './library/library.module';
 import { PlaybookModule } from './playbook/playbook.module';
 import { AdminModule } from './admin/admin.module';
+import { MailModule } from './mail/mail.module';
 
 @Module({
   imports: [
@@ -53,6 +54,8 @@ import { AdminModule } from './admin/admin.module';
     PlaybookModule,
 
     AdminModule,
+
+    MailModule,
 
     HealthModule,
   ],
