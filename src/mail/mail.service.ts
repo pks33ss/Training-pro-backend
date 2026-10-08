@@ -1,7 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
-import type { Transporter } from 'nodemailer';
 import { renderInvitationEmail, InvitationTemplateData } from './templates/invitation';
 import { renderAdminEventEmail, AdminEventData } from './templates/admin-event';
 
@@ -10,12 +8,13 @@ interface SendResult {
   reason?: string;
 }
 
-const SMTP_TIMEOUT_MS = 10_000;
+const RESEND_API_URL = 'https://api.resend.com/emails';
+const RESEND_TIMEOUT_MS = 15_000;
 
 @Injectable()
 export class MailService implements OnModuleInit {
   private readonly logger = new Logger(MailService.name);
-  private transporter: Transporter | null = null;
+  private apiKey: string | null = null;
   private fromAddress: string = '';
   private fromName: string = '';
   private replyTo: string | null = null;
@@ -24,11 +23,7 @@ export class MailService implements OnModuleInit {
   constructor(private readonly config: ConfigService) {}
 
   onModuleInit() {
-    const host = this.config.get<string>('SMTP_HOST');
-    const port = Number(this.config.get<string>('SMTP_PORT') ?? 0);
-    const user = this.config.get<string>('SMTP_USER');
-    const pass = this.config.get<string>('SMTP_PASS');
-
+    this.apiKey = this.config.get<string>('SMTP_PASS') ?? null;
     this.fromAddress = this.config.get<string>('SMTP_FROM') ?? '';
     this.fromName =
       this.config.get<string>('SMTP_FROM_NAME') ?? 'Join Sport Management';
@@ -36,108 +31,114 @@ export class MailService implements OnModuleInit {
     this.adminTo =
       this.config.get<string>('SMTP_ADMIN_TO') ?? 'support@joinsportapp.com';
 
-    if (!host || !port || !user || !pass || !this.fromAddress) {
+    if (!this.apiKey || !this.fromAddress) {
       this.logger.warn(
-        'SMTP no está configurado (faltan variables). Los emails NO se enviarán.',
+        'Resend no está configurado (faltan SMTP_PASS o SMTP_FROM). Los emails NO se enviarán.',
       );
       return;
     }
 
+    this.logger.log(
+      `MailService inicializado (API HTTPS Resend): ${this.fromName} <${this.fromAddress}>` +
+        (this.replyTo ? ` (reply-to: ${this.replyTo})` : '') +
+        ` (admin-to: ${this.adminTo})`,
+    );
+  }
+
+  private async sendViaResend(params: {
+    to: string;
+    subject: string;
+    html: string;
+    text: string;
+  }): Promise<SendResult> {
+    if (!this.apiKey) {
+      return { sent: false, reason: 'Resend not configured' };
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RESEND_TIMEOUT_MS);
+
     try {
-      this.transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure: port === 465,
-        auth: { user, pass },
-        connectionTimeout: SMTP_TIMEOUT_MS,
-        greetingTimeout: SMTP_TIMEOUT_MS,
-        socketTimeout: SMTP_TIMEOUT_MS,
+      const body: Record<string, any> = {
+        from: `${this.fromName} <${this.fromAddress}>`,
+        to: [params.to],
+        subject: params.subject,
+        html: params.html,
+        text: params.text,
+      };
+      if (this.replyTo) body.reply_to = this.replyTo;
+
+      const res = await fetch(RESEND_API_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
       });
 
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => '');
+        let parsed: any = null;
+        try {
+          parsed = JSON.parse(errorText);
+        } catch {}
+        const reason = parsed?.message || parsed?.error || `HTTP ${res.status}`;
+        this.logger.error(
+          `❌ Error enviando email a ${params.to}: ${reason}`,
+        );
+        return { sent: false, reason };
+      }
+
+      const data = await res.json().catch(() => ({}));
       this.logger.log(
-        `MailService inicializado: ${this.fromName} <${this.fromAddress}> vía ${host}:${port}` +
-          (this.replyTo ? ` (reply-to: ${this.replyTo})` : '') +
-          ` (admin-to: ${this.adminTo})`,
+        `✅ Email enviado a ${params.to} (id: ${data?.id ?? 'sin id'})`,
       );
+      return { sent: true };
     } catch (err: any) {
-      this.logger.error(`Error al crear el transporter SMTP: ${err.message}`);
-      this.transporter = null;
+      const reason =
+        err.name === 'AbortError'
+          ? 'Connection timeout'
+          : err.message || 'Unknown error';
+      this.logger.error(
+        `❌ Error enviando email a ${params.to}: ${reason}`,
+      );
+      return { sent: false, reason };
+    } finally {
+      clearTimeout(timer);
     }
   }
 
-  /**
-   * Envía un email con la plantilla de invitación.
-   * NO lanza excepciones: si falla, devuelve { sent: false, reason }.
-   */
   async sendInvitationEmail(
     to: string,
     data: InvitationTemplateData,
   ): Promise<SendResult> {
-    if (!this.transporter) {
+    if (!this.apiKey) {
       this.logger.warn(
-        `No se envía email de invitación a ${to}: SMTP no configurado.`,
+        `No se envía email de invitación a ${to}: Resend no configurado.`,
       );
-      return { sent: false, reason: 'SMTP not configured' };
+      return { sent: false, reason: 'Resend not configured' };
     }
 
     const { subject, html, text } = renderInvitationEmail(data);
-
-    try {
-      const info = await this.transporter.sendMail({
-        from: `"${this.fromName}" <${this.fromAddress}>`,
-        to,
-        replyTo: this.replyTo ?? undefined,
-        subject,
-        html,
-        text,
-      });
-
-      this.logger.log(
-        `✅ Email de invitación enviado a ${to} (id: ${info.messageId})`,
-      );
-      return { sent: true };
-    } catch (err: any) {
-      this.logger.error(
-        `❌ Error enviando email de invitación a ${to}: ${err.message}`,
-      );
-      return { sent: false, reason: err.message };
-    }
+    return this.sendViaResend({ to, subject, html, text });
   }
 
-  /**
-   * Envía una notificación administrativa a `SMTP_ADMIN_TO` (por defecto
-   * `support@joinsportapp.com`).
-   * NO lanza excepciones: si falla, devuelve { sent: false, reason }.
-   */
   async sendAdminNotification(data: AdminEventData): Promise<SendResult> {
-    if (!this.transporter) {
+    if (!this.apiKey) {
       this.logger.warn(
-        `No se envía notificación admin "${data.eventTitle}": SMTP no configurado.`,
+        `No se envía notificación admin "${data.eventTitle}": Resend no configurado.`,
       );
-      return { sent: false, reason: 'SMTP not configured' };
+      return { sent: false, reason: 'Resend not configured' };
     }
 
     const { subject, html, text } = renderAdminEventEmail(data);
-
-    try {
-      const info = await this.transporter.sendMail({
-        from: `"${this.fromName}" <${this.fromAddress}>`,
-        to: this.adminTo,
-        replyTo: this.replyTo ?? undefined,
-        subject,
-        html,
-        text,
-      });
-
-      this.logger.log(
-        `✅ Notificación admin enviada a ${this.adminTo}: ${data.eventTitle} (id: ${info.messageId})`,
-      );
-      return { sent: true };
-    } catch (err: any) {
-      this.logger.error(
-        `❌ Error enviando notificación admin "${data.eventTitle}": ${err.message}`,
-      );
-      return { sent: false, reason: err.message };
-    }
+    return this.sendViaResend({
+      to: this.adminTo,
+      subject,
+      html,
+      text,
+    });
   }
 }
