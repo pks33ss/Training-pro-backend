@@ -15,10 +15,16 @@ import {
 import { UpdatePlayerProfileDto } from './dto/update-player-profile.dto'
 import { CreateInjuryDto } from './dto/create-injury.dto'
 import { UpdateInjuryDto } from './dto/update-injury.dto'
+import { MailService } from '../mail/mail.service'
+import { MailModule } from '../mail/mail.module'
+import { generateInvitationCode } from '../invitations/utils/generate-code'
 
 @Injectable()
 export class UserService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+  private prisma: PrismaService,
+  private mailService: MailService,
+) {}
 
   async findAll(includeDeleted = false) {
     return this.prisma.user.findMany({
@@ -793,7 +799,7 @@ export class UserService {
   // CREAR USUARIO FANTASMA Y AÑADIRLO A UN EQUIPO
   // ============================================
 
-  async createGhost(requesterId: string, dto: CreateGhostDto) {
+      async createGhost(requesterId: string, dto: CreateGhostDto) {
     const team = await this.prisma.team.findUnique({
       where: { id: dto.teamId },
       include: { club: true },
@@ -829,7 +835,20 @@ export class UserService {
             isGhost: true,
           },
         })
-        return ghost
+
+        let invitationSent = false
+        if (dto.sendInvitation && ghost?.email) {
+          invitationSent = await this.sendGhostInvitation(
+            ghost.id,
+            ghost.email,
+            ghost.name,
+            ghost.lastName,
+            dto.teamId,
+            requesterId,
+          )
+        }
+
+        return { ...ghost, invitationSent }
       }
 
       if (existing && !existing.isGhost) {
@@ -885,6 +904,18 @@ export class UserService {
       return user
     })
 
+    let invitationSent = false
+    if (dto.sendInvitation && newUser.email) {
+      invitationSent = await this.sendGhostInvitation(
+        newUser.id,
+        newUser.email,
+        newUser.name,
+        newUser.lastName,
+        dto.teamId,
+        requesterId,
+      )
+    }
+
     return {
       id: newUser.id,
       username: newUser.username,
@@ -892,6 +923,7 @@ export class UserService {
       lastName: newUser.lastName,
       email: newUser.email,
       isGhost: newUser.isGhost,
+      invitationSent,
     }
   }
 
@@ -1001,6 +1033,74 @@ export class UserService {
       },
       update: { isActive: true },
     })
+  }
+
+    /**
+   * Crea una invitación pendiente para un fantasma y envía el email.
+   * Devuelve true si el email se envió correctamente.
+   */
+  private async sendGhostInvitation(
+    ghostUserId: string,
+    email: string,
+    name: string,
+    lastName: string,
+    teamId: string,
+    requesterId: string,
+  ): Promise<boolean> {
+    try {
+      // Marcar invitaciones previas como revocadas
+      await this.prisma.pendingInvitation.updateMany({
+        where: { userId: ghostUserId, teamId, status: 'PENDING' },
+        data: { status: 'REVOKED' },
+      })
+
+      // Generar código
+      const { generateInvitationCode } = await import(
+        '../invitations/utils/generate-code'
+      )
+      const code = generateInvitationCode()
+      const expiresAt = new Date()
+      expiresAt.setDate(expiresAt.getDate() + 7)
+
+      const invitation = await this.prisma.pendingInvitation.create({
+        data: {
+          code,
+          email,
+          userId: ghostUserId,
+          teamId,
+          role: 'PLAYER',
+          channel: 'EMAIL',
+          expiresAt,
+          invitedById: requesterId,
+        },
+        include: {
+          team: { include: { club: true } },
+          invitedBy: {
+            select: { id: true, name: true, lastName: true, username: true },
+          },
+        },
+      })
+
+      // Enviar email
+      const baseUrl =
+        process.env.FRONTEND_URL || 'https://joinsportapp.com'
+      const invitationLink = `${baseUrl}/register?invitation=${code}`
+
+      const result = await this.mailService.sendInvitationEmail(email, {
+        recipientName: `${name} ${lastName}`.trim() || 'amigo/a',
+        teamName: invitation.team.name,
+        clubName: invitation.team.club?.name ?? '',
+        role: invitation.role,
+        inviterName: `${invitation.invitedBy.name} ${invitation.invitedBy.lastName}`,
+        invitationLink,
+        expiresAt: invitation.expiresAt,
+      })
+
+      return result.sent
+    } catch (err: any) {
+      console.error('Error enviando invitación a ghost:', err)
+      return false
+    }
   }
 
   // ============================================

@@ -5,6 +5,7 @@ import { TeamController } from './team.controller';
 import { TeamService } from './team.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { AuthModule } from '../auth/auth.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { AuthModule } from '../auth/auth.module';
       }),
       inject: [ConfigService],
     }),
+    MailModule,
   ],
   controllers: [TeamController],
   providers: [TeamService, AuthGuard],

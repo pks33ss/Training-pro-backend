@@ -5,6 +5,7 @@ import { ClubController } from './club.controller';
 import { ClubService } from './club.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
+import { MailModule } from '../mail/mail.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { CloudinaryModule } from '../cloudinary/cloudinary.module';
       inject: [ConfigService],
     }),
     CloudinaryModule,
+    MailModule,
   ],
   controllers: [ClubController],
   providers: [ClubService, AuthGuard],

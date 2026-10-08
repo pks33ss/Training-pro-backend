@@ -2,12 +2,13 @@ import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/co
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { RefreshTokenService } from './refresh-token.service';
+import { MailService } from '../mail/mail.service';
 import * as bcrypt from 'bcrypt';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { generateUniqueUsername } from '../user/utils/generate-username';
 import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member';
-import { OAuth2Client } from 'google-auth-library'
+import { OAuth2Client } from 'google-auth-library';
 
 @Injectable()
 export class AuthService {
@@ -15,13 +16,15 @@ export class AuthService {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private refreshTokenService: RefreshTokenService,
+    private mailService: MailService,
   ) {}
 
   async register(registerDto: RegisterDto) {
-    const hashedPassword = await bcrypt.hash(registerDto.password, 10)
+    const hashedPassword = await bcrypt.hash(registerDto.password, 10);
 
-    let user: any
-    let invitation: any = null
+    let user: any;
+    let invitation: any = null;
+    let wasExistingGhost = false;
 
     if (registerDto.invitationCode) {
       invitation = await this.prisma.pendingInvitation.findUnique({
@@ -38,23 +41,24 @@ export class AuthService {
             },
           },
         },
-      })
+      });
 
-      if (invitation && invitation.status !== 'PENDING') invitation = null
+      if (invitation && invitation.status !== 'PENDING') invitation = null;
 
       if (invitation && invitation.expiresAt < new Date()) {
         await this.prisma.pendingInvitation.update({
           where: { id: invitation.id },
           data: { status: 'EXPIRED' },
-        })
-        invitation = null
+        });
+        invitation = null;
       }
 
-      if (invitation?.user?.deletedAt) invitation = null
+      if (invitation?.user?.deletedAt) invitation = null;
     }
 
     if (invitation?.user?.isGhost) {
-      const ghost = invitation.user
+      const ghost = invitation.user;
+      wasExistingGhost = true;
 
       const finalUsername = ghost.username
         ? ghost.username
@@ -63,7 +67,7 @@ export class AuthService {
             registerDto.name || ghost.name,
             registerDto.lastName || ghost.lastName,
             ghost.id,
-          )
+          );
 
       user = await this.prisma.user.update({
         where: { id: ghost.id },
@@ -75,13 +79,14 @@ export class AuthService {
           isGhost: false,
           username: finalUsername,
         },
-      })
+      });
     } else {
       const existingUser = await this.prisma.user.findUnique({
         where: { email: registerDto.email },
-      })
+      });
 
       if (existingUser?.isGhost) {
+        wasExistingGhost = true;
         const finalUsername = existingUser.username
           ? existingUser.username
           : await generateUniqueUsername(
@@ -89,7 +94,7 @@ export class AuthService {
               registerDto.name || existingUser.name,
               registerDto.lastName || existingUser.lastName,
               existingUser.id,
-            )
+            );
 
         user = await this.prisma.user.update({
           where: { id: existingUser.id },
@@ -100,15 +105,15 @@ export class AuthService {
             isGhost: false,
             username: finalUsername,
           },
-        })
+        });
       } else if (existingUser) {
-        throw new ConflictException('El usuario ya existe')
+        throw new ConflictException('El usuario ya existe');
       } else {
         const username = await generateUniqueUsername(
           this.prisma,
           registerDto.name,
           registerDto.lastName,
-        )
+        );
 
         user = await this.prisma.user.create({
           data: {
@@ -119,41 +124,65 @@ export class AuthService {
             isGhost: false,
             username,
           },
-        })
+        });
       }
     }
 
     if (invitation) {
       try {
-        await this.applyInvitation(invitation, user)
+        await this.applyInvitation(invitation, user);
       } catch (err: any) {
         console.warn(
           `⚠️ Invitación ${invitation.code} no aplicable: ${err.message}`,
-        )
+        );
       }
     }
 
-    const tokens = await this.generateTokens(user)
+    // ✅ Notificación admin (no bloquea la respuesta si falla)
+    this.mailService
+      .sendAdminNotification({
+        eventTitle: 'Nuevo usuario registrado',
+        icon: '🆕',
+        fields: [
+          { label: 'Nombre', value: `${user.name} ${user.lastName}` },
+          { label: 'Email', value: user.email ?? '(sin email)' },
+          { label: 'Username', value: user.username ?? '(pendiente)' },
+          ...(wasExistingGhost
+            ? [{ label: 'Origen', value: 'Antiguo jugador sin cuenta (ghost)' }]
+            : [{ label: 'Origen', value: 'Registro público' }]),
+          ...(invitation
+            ? [{ label: 'Invitación', value: invitation.code }]
+            : []),
+        ],
+        note: wasExistingGhost
+          ? 'Este usuario existía como jugador sin cuenta y se ha registrado.'
+          : undefined,
+      })
+      .catch((err) =>
+        console.error('Error notificando registro de usuario:', err),
+      );
+
+    const tokens = await this.generateTokens(user);
 
     return {
       user: this.excludePassword(user),
       ...tokens,
-    }
+    };
   }
 
   private async applyInvitation(
     invitation: {
-      id: string
-      code: string
-      teamId: string
-      role: any
-      invitedById: string
-      email: string | null
+      id: string;
+      code: string;
+      teamId: string;
+      role: any;
+      invitedById: string;
+      email: string | null;
     },
     user: { id: string; email: string | null },
   ) {
     if (invitation.email && invitation.email !== user.email) {
-      throw new Error('El email no coincide con el de la invitación')
+      throw new Error('El email no coincide con el de la invitación');
     }
 
     const membership = await this.prisma.teamMembership.upsert({
@@ -172,7 +201,7 @@ export class AuthService {
         leftAt: null,
       },
       include: { roles: true },
-    })
+    });
 
     if (!membership.roles.some((r) => r.role === invitation.role)) {
       await this.prisma.membershipRole.upsert({
@@ -187,10 +216,10 @@ export class AuthService {
           role: invitation.role,
         },
         update: {},
-      })
+      });
     }
 
-    await ensureClubMemberForTeam(this.prisma, user.id, invitation.teamId)
+    await ensureClubMemberForTeam(this.prisma, user.id, invitation.teamId);
 
     await this.prisma.pendingInvitation.update({
       where: { id: invitation.id },
@@ -199,7 +228,7 @@ export class AuthService {
         usedAt: new Date(),
         userId: user.id,
       },
-    })
+    });
   }
 
   async login(loginDto: LoginDto) {
@@ -211,18 +240,20 @@ export class AuthService {
       throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    // ✅ Bloquear login de usuarios soft-deleted
     if (user.deletedAt) {
       throw new UnauthorizedException('Esta cuenta ha sido eliminada');
     }
 
-        if (!user.password) {
+    if (!user.password) {
       throw new UnauthorizedException(
         'Esta cuenta usa inicio de sesión con Google. Por favor, inicia sesión con Google.',
       );
     }
 
-    const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
+    const isPasswordValid = await bcrypt.compare(
+      loginDto.password,
+      user.password,
+    );
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciales inválidas');
     }
@@ -236,7 +267,8 @@ export class AuthService {
   }
 
   async refreshToken(refreshToken: string) {
-    const tokenData = await this.refreshTokenService.validateRefreshToken(refreshToken);
+    const tokenData =
+      await this.refreshTokenService.validateRefreshToken(refreshToken);
 
     await this.refreshTokenService.revokeRefreshToken(refreshToken);
 
@@ -248,7 +280,6 @@ export class AuthService {
       throw new UnauthorizedException('Usuario no encontrado');
     }
 
-    // ✅ Bloquear refresh de usuarios soft-deleted
     if (user.deletedAt) {
       throw new UnauthorizedException('Esta cuenta ha sido eliminada');
     }
@@ -258,66 +289,64 @@ export class AuthService {
     return tokens;
   }
 
-    async loginWithGoogle(idToken: string) {
-    const clientId = process.env.GOOGLE_CLIENT_ID
+  async loginWithGoogle(idToken: string) {
+    const clientId = process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {
       throw new UnauthorizedException(
         'Google login no está configurado en el servidor',
-      )
+      );
     }
 
-    const client = new OAuth2Client(clientId)
+    const client = new OAuth2Client(clientId);
 
-    let payload
+    let payload;
     try {
       const ticket = await client.verifyIdToken({
         idToken,
         audience: clientId,
-      })
-      payload = ticket.getPayload()
+      });
+      payload = ticket.getPayload();
     } catch (err) {
-      console.error('Google verifyIdToken error:', err)
-      throw new UnauthorizedException('Token de Google inválido o expirado')
+      console.error('Google verifyIdToken error:', err);
+      throw new UnauthorizedException('Token de Google inválido o expirado');
     }
 
     if (!payload || !payload.email) {
-      throw new UnauthorizedException('No se pudo obtener el email de Google')
+      throw new UnauthorizedException('No se pudo obtener el email de Google');
     }
 
     if (!payload.email_verified) {
-      throw new UnauthorizedException('El email de Google no está verificado')
+      throw new UnauthorizedException('El email de Google no está verificado');
     }
 
-    const email = payload.email
-    const googleName = payload.given_name ?? payload.name ?? ''
-    const googleLastName = payload.family_name ?? ''
-    const googleAvatar = payload.picture ?? null
+    const email = payload.email;
+    const googleName = payload.given_name ?? payload.name ?? '';
+    const googleLastName = payload.family_name ?? '';
+    const googleAvatar = payload.picture ?? null;
 
-    // Buscar usuario por email
     let user = await this.prisma.user.findUnique({
       where: { email },
-    })
+    });
+
+    let isNewGoogleUser = false;
 
     if (user) {
-      // Usuario existente: no permitir login si está soft-deleted
       if (user.deletedAt) {
-        throw new UnauthorizedException('Esta cuenta ha sido eliminada')
+        throw new UnauthorizedException('Esta cuenta ha sido eliminada');
       }
 
-      // Si no tiene avatar, aprovechamos el de Google
       if (!user.avatar && googleAvatar) {
         user = await this.prisma.user.update({
           where: { id: user.id },
           data: { avatar: googleAvatar },
-        })
+        });
       }
     } else {
-      // Usuario nuevo: crearlo con datos de Google
       const username = await generateUniqueUsername(
         this.prisma,
         googleName,
         googleLastName,
-      )
+      );
 
       user = await this.prisma.user.create({
         data: {
@@ -330,15 +359,35 @@ export class AuthService {
           isGhost: false,
           role: 'USER',
         },
-      })
+      });
+
+      isNewGoogleUser = true;
     }
 
-    const tokens = await this.generateTokens(user)
+    // ✅ Notificación admin solo si es usuario nuevo
+    if (isNewGoogleUser) {
+      this.mailService
+        .sendAdminNotification({
+          eventTitle: 'Nuevo usuario registrado (Google)',
+          icon: '🆕',
+          fields: [
+            { label: 'Nombre', value: `${user.name} ${user.lastName}` },
+            { label: 'Email', value: user.email ?? '(sin email)' },
+            { label: 'Username', value: user.username ?? '(pendiente)' },
+            { label: 'Origen', value: 'Registro con Google' },
+          ],
+        })
+        .catch((err) =>
+          console.error('Error notificando registro Google:', err),
+        );
+    }
+
+    const tokens = await this.generateTokens(user);
 
     return {
       user: this.excludePassword(user),
       ...tokens,
-    }
+    };
   }
 
   async logout(userId: string, refreshToken: string) {
@@ -358,15 +407,17 @@ export class AuthService {
         email: user.email,
         role: user.role,
       },
-      { expiresIn: '15m' }
-    )
+      { expiresIn: '15m' },
+    );
 
-    const refreshToken = await this.refreshTokenService.createRefreshToken(user.id);
+    const refreshToken = await this.refreshTokenService.createRefreshToken(
+      user.id,
+    );
 
     return {
       accessToken,
       refreshToken,
-    }
+    };
   }
 
   private excludePassword(user: any) {

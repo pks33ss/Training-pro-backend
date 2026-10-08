@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service'
 import { CreateTeamDto } from './dto/create-team.dto'
 import { UpdateTeamDto } from './dto/update-team.dto'
+import { MailService } from '../mail/mail.service';
 import {
   canViewTeam,
   canEditTeam,
@@ -15,18 +16,18 @@ import {
 
 @Injectable()
 export class TeamService {
-  constructor(private prisma: PrismaService) {}
+
 
   // ============================================
   // CRUD EQUIPOS
   // ============================================
 
-  async create(userId: string, createTeamDto: CreateTeamDto) {
+    async create(userId: string, createTeamDto: CreateTeamDto) {
     if (!(await isActiveClubMember(this.prisma, userId, createTeamDto.clubId))) {
-      throw new ForbiddenException('No tienes acceso a este club')
+      throw new ForbiddenException('No tienes acceso a este club');
     }
 
-    return this.prisma.team.create({
+    const team = await this.prisma.team.create({
       data: {
         name: createTeamDto.name,
         sport: createTeamDto.sport || 'BASKETBALL',
@@ -37,8 +38,42 @@ export class TeamService {
       include: {
         club: true,
       },
-    })
+    });
+
+    // ✅ Notificación admin
+    const creator = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, lastName: true, email: true },
+    });
+
+    this.mailService
+      .sendAdminNotification({
+        eventTitle: 'Nuevo equipo creado',
+        icon: '🏆',
+        fields: [
+          { label: 'Equipo', value: team.name },
+          { label: 'Deporte', value: team.sport },
+          ...(team.category ? [{ label: 'Categoría', value: team.category }] : []),
+          ...(team.season ? [{ label: 'Temporada', value: team.season }] : []),
+          { label: 'Club', value: team.club?.name ?? '(sin club)' },
+          {
+            label: 'Creador',
+            value: creator
+              ? `${creator.name} ${creator.lastName}`
+              : '(desconocido)',
+          },
+          { label: 'ID', value: team.id },
+        ],
+      })
+      .catch((err) => console.error('Error notificando creación de equipo:', err));
+
+    return team;
   }
+
+    constructor(
+    private prisma: PrismaService,
+    private mailService: MailService,
+  ) {}
 
   async findAllByClub(userId: string, clubId: string) {
     if (!(await isActiveClubMember(this.prisma, userId, clubId))) {

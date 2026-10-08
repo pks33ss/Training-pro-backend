@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 import { renderInvitationEmail, InvitationTemplateData } from './templates/invitation';
+import { renderAdminEventEmail, AdminEventData } from './templates/admin-event';
 
 interface SendResult {
   sent: boolean;
@@ -18,6 +19,7 @@ export class MailService implements OnModuleInit {
   private fromAddress: string = '';
   private fromName: string = '';
   private replyTo: string | null = null;
+  private adminTo: string = 'support@joinsportapp.com';
 
   constructor(private readonly config: ConfigService) {}
 
@@ -28,8 +30,11 @@ export class MailService implements OnModuleInit {
     const pass = this.config.get<string>('SMTP_PASS');
 
     this.fromAddress = this.config.get<string>('SMTP_FROM') ?? '';
-    this.fromName = this.config.get<string>('SMTP_FROM_NAME') ?? 'Join Sport Management';
+    this.fromName =
+      this.config.get<string>('SMTP_FROM_NAME') ?? 'Join Sport Management';
     this.replyTo = this.config.get<string>('SMTP_REPLY_TO') ?? null;
+    this.adminTo =
+      this.config.get<string>('SMTP_ADMIN_TO') ?? 'support@joinsportapp.com';
 
     if (!host || !port || !user || !pass || !this.fromAddress) {
       this.logger.warn(
@@ -51,7 +56,8 @@ export class MailService implements OnModuleInit {
 
       this.logger.log(
         `MailService inicializado: ${this.fromName} <${this.fromAddress}> vía ${host}:${port}` +
-          (this.replyTo ? ` (reply-to: ${this.replyTo})` : ''),
+          (this.replyTo ? ` (reply-to: ${this.replyTo})` : '') +
+          ` (admin-to: ${this.adminTo})`,
       );
     } catch (err: any) {
       this.logger.error(`Error al crear el transporter SMTP: ${err.message}`);
@@ -59,6 +65,10 @@ export class MailService implements OnModuleInit {
     }
   }
 
+  /**
+   * Envía un email con la plantilla de invitación.
+   * NO lanza excepciones: si falla, devuelve { sent: false, reason }.
+   */
   async sendInvitationEmail(
     to: string,
     data: InvitationTemplateData,
@@ -89,6 +99,43 @@ export class MailService implements OnModuleInit {
     } catch (err: any) {
       this.logger.error(
         `❌ Error enviando email de invitación a ${to}: ${err.message}`,
+      );
+      return { sent: false, reason: err.message };
+    }
+  }
+
+  /**
+   * Envía una notificación administrativa a `SMTP_ADMIN_TO` (por defecto
+   * `support@joinsportapp.com`).
+   * NO lanza excepciones: si falla, devuelve { sent: false, reason }.
+   */
+  async sendAdminNotification(data: AdminEventData): Promise<SendResult> {
+    if (!this.transporter) {
+      this.logger.warn(
+        `No se envía notificación admin "${data.eventTitle}": SMTP no configurado.`,
+      );
+      return { sent: false, reason: 'SMTP not configured' };
+    }
+
+    const { subject, html, text } = renderAdminEventEmail(data);
+
+    try {
+      const info = await this.transporter.sendMail({
+        from: `"${this.fromName}" <${this.fromAddress}>`,
+        to: this.adminTo,
+        replyTo: this.replyTo ?? undefined,
+        subject,
+        html,
+        text,
+      });
+
+      this.logger.log(
+        `✅ Notificación admin enviada a ${this.adminTo}: ${data.eventTitle} (id: ${info.messageId})`,
+      );
+      return { sent: true };
+    } catch (err: any) {
+      this.logger.error(
+        `❌ Error enviando notificación admin "${data.eventTitle}": ${err.message}`,
       );
       return { sent: false, reason: err.message };
     }

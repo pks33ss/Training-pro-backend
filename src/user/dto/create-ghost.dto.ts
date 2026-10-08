@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEmail, IsInt, Min, Max } from 'class-validator'
+import { IsString, IsNotEmpty, IsOptional, IsEmail, IsInt, Min, Max, IsBoolean } from 'class-validator'
 
 export class CreateGhostDto {
   @IsString()
@@ -33,5 +33,10 @@ export class CreateGhostDto {
 
   @IsString()
   @IsOptional()
-  role?: string // PLAYER | COACH | ASSISTANT | ADMIN_TEAM (default PLAYER)
+  role?: string
+
+  // ✅ NUEVO — Si es true y hay email, se envía invitación de registro
+  @IsBoolean()
+  @IsOptional()
+  sendInvitation?: boolean
 }

@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateClubDto } from './dto/create-club.dto';
 import { UpdateClubDto } from './dto/update-club.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service'
+import { MailService } from '../mail/mail.service';
 import * as bcrypt from 'bcrypt'
 import {
   isSuperAdmin,
@@ -13,12 +14,9 @@ import {
 
 @Injectable()
 export class ClubService {
-  constructor(
-    private prisma: PrismaService,
-    private cloudinaryService: CloudinaryService,
-  ) {}
 
-  async create(userId: string, createClubDto: CreateClubDto) {
+
+    async create(userId: string, createClubDto: CreateClubDto) {
     const club = await this.prisma.club.create({
       data: {
         name: createClubDto.name,
@@ -49,8 +47,29 @@ export class ClubService {
       },
     });
 
+    // ✅ Notificación admin
+    const creator = club.members.find((m) => m.userId === userId)?.user;
+    this.mailService
+      .sendAdminNotification({
+        eventTitle: 'Nuevo club creado',
+        icon: '🏛️',
+        fields: [
+          { label: 'Club', value: club.name },
+          { label: 'Creador', value: creator ? `${creator.name} ${creator.lastName}` : '(desconocido)' },
+          { label: 'Email creador', value: creator?.email ?? '(sin email)' },
+          { label: 'ID', value: club.id },
+        ],
+      })
+      .catch((err) => console.error('Error notificando creación de club:', err));
+
     return club;
   }
+
+    constructor(
+    private prisma: PrismaService,
+    private cloudinaryService: CloudinaryService,
+    private mailService: MailService,
+  ) {}
 
   async findAll(userId: string) {
     if (await isSuperAdmin(this.prisma, userId)) {
