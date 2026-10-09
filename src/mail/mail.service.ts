@@ -2,6 +2,14 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { renderInvitationEmail, InvitationTemplateData } from './templates/invitation';
 import { renderAdminEventEmail, AdminEventData } from './templates/admin-event';
+import {
+  renderPaymentReceivedEmail,
+  PaymentReceivedTemplateData,
+} from './templates/payment-received';
+import {
+  renderPaymentReminderEmail,
+  PaymentReminderTemplateData,
+} from './templates/payment-reminder';
 
 interface SendResult {
   sent: boolean;
@@ -43,6 +51,17 @@ export class MailService implements OnModuleInit {
         (this.replyTo ? ` (reply-to: ${this.replyTo})` : '') +
         ` (admin-to: ${this.adminTo})`,
     );
+  }
+
+  /**
+   * Comprueba si una dirección de email es "real" (no ghost).
+   * Los ghosts tienen el sufijo @joinsportapp.local.
+   */
+  isRealEmail(email: string | null | undefined): boolean {
+    if (!email) return false;
+    if (!email.includes('@')) return false;
+    if (email.endsWith('@joinsportapp.local')) return false;
+    return true;
   }
 
   private async sendViaResend(params: {
@@ -140,5 +159,51 @@ export class MailService implements OnModuleInit {
       html,
       text,
     });
+  }
+
+  // ─────────────────────────────────────────────
+  // PAYMENTS
+  // ─────────────────────────────────────────────
+
+  async sendPaymentReceivedEmail(
+    to: string,
+    data: PaymentReceivedTemplateData,
+  ): Promise<SendResult> {
+    if (!this.apiKey) {
+      this.logger.warn(
+        `No se envía email de pago recibido a ${to}: Resend no configurado.`,
+      );
+      return { sent: false, reason: 'Resend not configured' };
+    }
+    if (!this.isRealEmail(to)) {
+      this.logger.debug(
+        `No se envía email de pago recibido a ${to}: email no válido (ghost).`,
+      );
+      return { sent: false, reason: 'Invalid or ghost email' };
+    }
+
+    const { subject, html, text } = renderPaymentReceivedEmail(data);
+    return this.sendViaResend({ to, subject, html, text });
+  }
+
+  async sendPaymentReminderEmail(
+    to: string,
+    data: PaymentReminderTemplateData,
+  ): Promise<SendResult> {
+    if (!this.apiKey) {
+      this.logger.warn(
+        `No se envía recordatorio de pago a ${to}: Resend no configurado.`,
+      );
+      return { sent: false, reason: 'Resend not configured' };
+    }
+    if (!this.isRealEmail(to)) {
+      this.logger.debug(
+        `No se envía recordatorio de pago a ${to}: email no válido (ghost).`,
+      );
+      return { sent: false, reason: 'Invalid or ghost email' };
+    }
+
+    const { subject, html, text } = renderPaymentReminderEmail(data);
+    return this.sendViaResend({ to, subject, html, text });
   }
 }

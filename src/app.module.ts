@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ScheduleModule } from '@nestjs/schedule';
+
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -24,12 +26,15 @@ import { LibraryModule } from './library/library.module';
 import { PlaybookModule } from './playbook/playbook.module';
 import { AdminModule } from './admin/admin.module';
 import { MailModule } from './mail/mail.module';
+import { PaymentsModule } from './payments/payments.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    ScheduleModule.forRoot(),
+
     PrismaModule,
     AuthModule,
     UserModule,
@@ -52,6 +57,8 @@ import { MailModule } from './mail/mail.module';
 
     LibraryModule,
     PlaybookModule,
+
+    PaymentsModule,
 
     AdminModule,
 

@@ -28,6 +28,33 @@ export class CloudinaryService {
     }
   }
 
+  /**
+   * Sube un archivo genérico (imagen o PDF) a Cloudinary.
+   * `resource_type: 'auto'` permite tanto imágenes como PDFs.
+   * Útil para justificantes de pago.
+   */
+  async uploadFile(
+    base64File: string,
+    folder: string = 'training-pro',
+    resourceType: 'auto' | 'image' | 'raw' = 'auto',
+  ) {
+    try {
+      const result = await cloudinary.uploader.upload(base64File, {
+        folder,
+        resource_type: resourceType,
+      });
+      return {
+        url: result.secure_url,
+        publicId: result.public_id,
+        format: result.format,
+        bytes: result.bytes,
+      };
+    } catch (error) {
+      console.error('Error uploading file to Cloudinary:', error);
+      throw error;
+    }
+  }
+
   async deleteImage(publicId: string) {
     try {
       await cloudinary.uploader.destroy(publicId);

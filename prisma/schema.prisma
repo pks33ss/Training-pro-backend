@@ -22,8 +22,8 @@ model User {
   isGhost   Boolean    @default(false)
   deletedAt DateTime?
 
-    // ✅ NUEVO — Preferencias de notificaciones por email
-  emailNotificationsEnabled Boolean @default(true)   
+  // ✅ NUEVO — Preferencias de notificaciones por email
+  emailNotificationsEnabled Boolean @default(true)
   emailOptOut               Boolean @default(false)
 
   clubs               ClubMember[]
@@ -32,10 +32,14 @@ model User {
   calendarEvents      CalendarEvent[]
   calendarInvitations CalendarInvitation[]
 
-  padelSubMatchesAsPlayer1 PadelSubMatch[] @relation("PadelSubMatchPlayer1") // ✅ NUEVA
-  padelSubMatchesAsPlayer2 PadelSubMatch[] @relation("PadelSubMatchPlayer2") // ✅ NUEVA
+  padelSubMatchesAsPlayer1 PadelSubMatch[]   @relation("PadelSubMatchPlayer1") // ✅ NUEVA
+  padelSubMatchesAsPlayer2 PadelSubMatch[]   @relation("PadelSubMatchPlayer2") // ✅ NUEVA
+  paymentReminders         PaymentReminder[] @relation("PaymentReminders")
 
-  
+  paymentConceptsCreated PaymentConcept[]    @relation("PaymentConceptCreatedBy")
+  paymentAssignments     PaymentAssignment[] @relation("PaymentAssignments")
+  payments               Payment[]           @relation("Payments")
+  paymentsCreated        Payment[]           @relation("PaymentCreatedBy")
 
   createdMatches      Match[] // ✅ NUEVO
   favoriteTeams       FavoriteTeam[]
@@ -67,21 +71,23 @@ model User {
 }
 
 model Club {
-  id             String   @id @default(cuid())
-  name           String
-  description    String?
-  address        String?
-  phone          String?
-  email          String?
-  logo           String?
-  primaryColor   String?  @default("#00E676")
-  secondaryColor String?  @default("#0A0A0A")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                      String   @id @default(cuid())
+  name                    String
+  description             String?
+  address                 String?
+  phone                   String?
+  email                   String?
+  logo                    String?
+  primaryColor            String?  @default("#00E676")
+  secondaryColor          String?  @default("#0A0A0A")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  paymentRemindersEnabled Boolean  @default(true)
 
-  members        ClubMember[]
-  teams          Team[]
-  calendarEvents CalendarEvent[]
+  members         ClubMember[]
+  teams           Team[]
+  calendarEvents  CalendarEvent[]
+  paymentConcepts PaymentConcept[]
 }
 
 model ClubMember {
@@ -120,6 +126,7 @@ model Team {
   memberships            TeamMembership[]
   pendingInvitations     PendingInvitation[]
   statsVisibilityConfigs StatsVisibilityConfig[]
+  paymentConcepts        PaymentConcept[]
 
   // ✅ NUEVO — Jugadas del equipo (Playbook)
   plays Play[]
@@ -910,4 +917,90 @@ model PlayStep {
   updatedAt DateTime @updatedAt
 
   @@index([playId, order])
+}
+
+// ============================================================
+// PAYMENTS — Registro de pagos de membresías
+// ============================================================
+
+model PaymentConcept {
+  id                    String   @id @default(cuid())
+  clubId                String
+  teamId                String?
+  name                  String
+  description           String?
+  amount                Decimal  @db.Decimal(10, 2)
+  dueDate               DateTime
+  season                String
+  isRecurring           Boolean  @default(false)
+  emailRemindersEnabled Boolean  @default(false)
+  reminderDaysBefore    Int      @default(3)
+  createdById           String
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  club        Club                @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  team        Team?               @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  createdBy   User                @relation("PaymentConceptCreatedBy", fields: [createdById], references: [id])
+  assignments PaymentAssignment[]
+  payments    Payment[]
+
+  reminders PaymentReminder[]
+
+  @@index([clubId, season])
+  @@index([teamId, season])
+}
+
+model PaymentAssignment {
+  id         String   @id @default(cuid())
+  conceptId  String
+  userId     String
+  amountOwed Decimal  @db.Decimal(10, 2)
+  createdAt  DateTime @default(now())
+
+  concept PaymentConcept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  user    User           @relation("PaymentAssignments", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conceptId, userId])
+  @@index([userId])
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  conceptId   String
+  userId      String
+  amount      Decimal  @db.Decimal(10, 2)
+  paidAt      DateTime @default(now())
+  method      String?
+  notes       String?
+  receiptUrl  String?
+  createdById String
+  createdAt   DateTime @default(now())
+
+  concept   PaymentConcept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  user      User           @relation("Payments", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User           @relation("PaymentCreatedBy", fields: [createdById], references: [id])
+
+  @@index([conceptId, userId])
+  @@index([userId])
+}
+
+enum PaymentReminderType {
+  BEFORE_DUE
+  AFTER_DUE
+}
+
+model PaymentReminder {
+  id        String              @id @default(cuid())
+  conceptId String
+  userId    String
+  type      PaymentReminderType @default(BEFORE_DUE)
+  sentAt    DateTime            @default(now())
+
+  concept PaymentConcept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
+  user    User           @relation("PaymentReminders", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conceptId, userId, type])
+  @@index([conceptId])
+  @@index([userId])
 }

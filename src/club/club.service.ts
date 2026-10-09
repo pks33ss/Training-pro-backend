@@ -2,21 +2,25 @@ import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/commo
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateClubDto } from './dto/create-club.dto';
 import { UpdateClubDto } from './dto/update-club.dto';
-import { CloudinaryService } from '../cloudinary/cloudinary.service'
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { MailService } from '../mail/mail.service';
-import * as bcrypt from 'bcrypt'
+import * as bcrypt from 'bcrypt';
 import {
   isSuperAdmin,
   isClubAdmin,
   isActiveClubMember,
   canInviteToClub,
-} from '../common/access'
+} from '../common/access';
 
 @Injectable()
 export class ClubService {
+  constructor(
+    private prisma: PrismaService,
+    private cloudinaryService: CloudinaryService,
+    private mailService: MailService,
+  ) {}
 
-
-    async create(userId: string, createClubDto: CreateClubDto) {
+  async create(userId: string, createClubDto: CreateClubDto) {
     const club = await this.prisma.club.create({
       data: {
         name: createClubDto.name,
@@ -55,7 +59,10 @@ export class ClubService {
         icon: '🏛️',
         fields: [
           { label: 'Club', value: club.name },
-          { label: 'Creador', value: creator ? `${creator.name} ${creator.lastName}` : '(desconocido)' },
+          {
+            label: 'Creador',
+            value: creator ? `${creator.name} ${creator.lastName}` : '(desconocido)',
+          },
           { label: 'Email creador', value: creator?.email ?? '(sin email)' },
           { label: 'ID', value: club.id },
         ],
@@ -64,12 +71,6 @@ export class ClubService {
 
     return club;
   }
-
-    constructor(
-    private prisma: PrismaService,
-    private cloudinaryService: CloudinaryService,
-    private mailService: MailService,
-  ) {}
 
   async findAll(userId: string) {
     if (await isSuperAdmin(this.prisma, userId)) {
@@ -86,7 +87,7 @@ export class ClubService {
             select: { id: true, name: true, category: true, season: true },
           },
         },
-      })
+      });
     }
 
     const clubMembers = await this.prisma.clubMember.findMany({
@@ -107,7 +108,7 @@ export class ClubService {
           },
         },
       },
-    })
+    });
 
     const memberships = await this.prisma.teamMembership.findMany({
       where: { userId, status: 'ACTIVE' },
@@ -131,25 +132,25 @@ export class ClubService {
           },
         },
       },
-    })
+    });
 
-    const clubMap = new Map<string, any>()
-    for (const cm of clubMembers) clubMap.set(cm.club.id, cm.club)
+    const clubMap = new Map<string, any>();
+    for (const cm of clubMembers) clubMap.set(cm.club.id, cm.club);
     for (const m of memberships) {
-      const club = m.team.club
-      if (!clubMap.has(club.id)) clubMap.set(club.id, club)
+      const club = m.team.club;
+      if (!clubMap.has(club.id)) clubMap.set(club.id, club);
     }
 
-    return Array.from(clubMap.values())
+    return Array.from(clubMap.values());
   }
 
   async findOne(userId: string, clubId: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
-      const isActive = await isActiveClubMember(this.prisma, userId, clubId)
+      const isActive = await isActiveClubMember(this.prisma, userId, clubId);
       if (!isActive) {
         const hasMembership = await this.prisma.teamMembership.findFirst({
           where: { userId, status: 'ACTIVE', team: { clubId } },
-        })
+        });
         if (!hasMembership) {
           throw new ForbiddenException('No tienes acceso a este club');
         }
@@ -222,11 +223,11 @@ export class ClubService {
   // ============================================
 
   async getMembers(userId: string, clubId: string) {
-    const isSuper = await isSuperAdmin(this.prisma, userId)
-    const isActive = await isActiveClubMember(this.prisma, userId, clubId)
+    const isSuper = await isSuperAdmin(this.prisma, userId);
+    const isActive = await isActiveClubMember(this.prisma, userId, clubId);
 
     if (!isActive && !isSuper) {
-      throw new ForbiddenException('No tienes acceso a este club')
+      throw new ForbiddenException('No tienes acceso a este club');
     }
 
     return this.prisma.clubMember.findMany({
@@ -237,25 +238,34 @@ export class ClubService {
         },
       },
       orderBy: { joinedAt: 'asc' },
-    })
+    });
   }
 
-  async inviteMember(userId: string, clubId: string, email: string, role: string) {
+  async inviteMember(
+    userId: string,
+    clubId: string,
+    email: string,
+    role: string,
+  ) {
     if (!(await canInviteToClub(this.prisma, userId, clubId))) {
-      throw new ForbiddenException('Solo los administradores del club pueden invitar miembros')
+      throw new ForbiddenException(
+        'Solo los administradores del club pueden invitar miembros',
+      );
     }
 
     const userToInvite = await this.prisma.user.findUnique({
       where: { email },
-    })
+    });
 
     if (!userToInvite) {
-      throw new NotFoundException('Usuario no encontrado. Primero debe registrarse en la app.')
+      throw new NotFoundException(
+        'Usuario no encontrado. Primero debe registrarse en la app.',
+      );
     }
 
     const existingMember = await this.prisma.clubMember.findFirst({
       where: { userId: userToInvite.id, clubId: clubId },
-    })
+    });
 
     if (existingMember) {
       if (!existingMember.isActive) {
@@ -267,9 +277,9 @@ export class ClubService {
               select: { id: true, email: true, name: true, lastName: true },
             },
           },
-        })
+        });
       }
-      throw new ForbiddenException('El usuario ya es miembro del club')
+      throw new ForbiddenException('El usuario ya es miembro del club');
     }
 
     return this.prisma.clubMember.create({
@@ -283,13 +293,20 @@ export class ClubService {
           select: { id: true, email: true, name: true, lastName: true },
         },
       },
-    })
+    });
   }
 
-  async updateMemberRole(userId: string, clubId: string, memberId: string, newRole: string) {
+  async updateMemberRole(
+    userId: string,
+    clubId: string,
+    memberId: string,
+    newRole: string,
+  ) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('Solo los administradores del club pueden cambiar roles')
+        throw new ForbiddenException(
+          'Solo los administradores del club pueden cambiar roles',
+        );
       }
     }
 
@@ -301,26 +318,28 @@ export class ClubService {
           select: { id: true, email: true, name: true, lastName: true },
         },
       },
-    })
+    });
   }
 
   async removeMember(userId: string, clubId: string, memberId: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('Solo los administradores del club pueden eliminar miembros')
+        throw new ForbiddenException(
+          'Solo los administradores del club pueden eliminar miembros',
+        );
       }
     }
 
     const memberToDelete = await this.prisma.clubMember.findUnique({
       where: { id: memberId },
-    })
+    });
 
     if (!memberToDelete) {
-      throw new NotFoundException('Miembro no encontrado')
+      throw new NotFoundException('Miembro no encontrado');
     }
 
     if (memberToDelete.userId === userId) {
-      throw new ForbiddenException('No puedes eliminarte a ti mismo del club')
+      throw new ForbiddenException('No puedes eliminarte a ti mismo del club');
     }
 
     if (memberToDelete.role === 'ADMIN_CLUB') {
@@ -330,10 +349,12 @@ export class ClubService {
           role: 'ADMIN_CLUB',
           isActive: true,
         },
-      })
+      });
 
       if (adminCount <= 1) {
-        throw new ForbiddenException('No puedes eliminar al último administrador del club. Promueve a otro miembro primero.')
+        throw new ForbiddenException(
+          'No puedes eliminar al último administrador del club. Promueve a otro miembro primero.',
+        );
       }
     }
 
@@ -347,24 +368,27 @@ export class ClubService {
         status: 'LEFT',
         leftAt: new Date(),
       },
-    })
+    });
 
     const deletedMember = await this.prisma.clubMember.delete({
       where: { id: memberId },
-    })
+    });
 
     const remainingMembers = await this.prisma.clubMember.findMany({
       where: { clubId, isActive: true },
-    })
+    });
 
-    if (remainingMembers.length === 1 && remainingMembers[0].role !== 'ADMIN_CLUB') {
+    if (
+      remainingMembers.length === 1 &&
+      remainingMembers[0].role !== 'ADMIN_CLUB'
+    ) {
       await this.prisma.clubMember.update({
         where: { id: remainingMembers[0].id },
         data: { role: 'ADMIN_CLUB' },
-      })
+      });
     }
 
-    return deletedMember
+    return deletedMember;
   }
 
   async resetMemberPassword(
@@ -375,36 +399,38 @@ export class ClubService {
   ) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('Solo los administradores del club pueden resetear contraseñas')
+        throw new ForbiddenException(
+          'Solo los administradores del club pueden resetear contraseñas',
+        );
       }
     }
 
     const member = await this.prisma.clubMember.findUnique({
       where: { id: memberId },
       include: { user: true },
-    })
+    });
 
     if (!member) {
-      throw new NotFoundException('Miembro no encontrado')
+      throw new NotFoundException('Miembro no encontrado');
     }
 
     if (member.clubId !== clubId) {
-      throw new ForbiddenException('Este miembro no pertenece a tu club')
+      throw new ForbiddenException('Este miembro no pertenece a tu club');
     }
 
-    const hashedPassword = await bcrypt.hash(newPassword, 10)
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     await this.prisma.user.update({
       where: { id: member.userId },
       data: { password: hashedPassword },
-    })
+    });
 
     await this.prisma.refreshToken.updateMany({
       where: { userId: member.userId },
       data: { isRevoked: true },
-    })
+    });
 
-    return { message: 'Contraseña reseteada correctamente' }
+    return { message: 'Contraseña reseteada correctamente' };
   }
 
   // ============================================
@@ -414,22 +440,24 @@ export class ClubService {
   async getMemberTeams(userId: string, clubId: string, memberId: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+        throw new ForbiddenException(
+          'Solo los administradores del club pueden gestionar equipos',
+        );
       }
     }
 
     const member = await this.prisma.clubMember.findUnique({
       where: { id: memberId },
-    })
+    });
 
     if (!member) {
-      throw new NotFoundException('Miembro no encontrado')
+      throw new NotFoundException('Miembro no encontrado');
     }
 
     const allTeams = await this.prisma.team.findMany({
       where: { clubId },
       orderBy: { name: 'asc' },
-    })
+    });
 
     const memberMemberships = await this.prisma.teamMembership.findMany({
       where: {
@@ -441,14 +469,14 @@ export class ClubService {
         teamId: true,
         roles: true,
       },
-    })
+    });
 
     const membershipMap = new Map(
       memberMemberships.map((m) => [
         m.teamId,
         m.roles.map((r) => r.role).join(', ') || 'PLAYER',
       ]),
-    )
+    );
 
     return allTeams.map((team) => ({
       id: team.id,
@@ -456,39 +484,48 @@ export class ClubService {
       category: team.category,
       isAssigned: membershipMap.has(team.id),
       role: membershipMap.get(team.id) ?? null,
-    }))
+    }));
   }
 
-  async addMemberToTeam(userId: string, clubId: string, memberId: string, teamId: string) {
+  async addMemberToTeam(
+    userId: string,
+    clubId: string,
+    memberId: string,
+    teamId: string,
+  ) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+        throw new ForbiddenException(
+          'Solo los administradores del club pueden gestionar equipos',
+        );
       }
     }
 
     const team = await this.prisma.team.findFirst({
       where: { id: teamId, clubId },
-    })
+    });
 
     if (!team) {
-      throw new NotFoundException('Equipo no encontrado en este club')
+      throw new NotFoundException('Equipo no encontrado en este club');
     }
 
     const member = await this.prisma.clubMember.findUnique({
       where: { id: memberId },
-    })
+    });
 
     if (!member) {
-      throw new NotFoundException('Miembro no encontrado')
+      throw new NotFoundException('Miembro no encontrado');
     }
 
     const existing = await this.prisma.teamMembership.findFirst({
       where: { userId: member.userId, teamId },
-    })
+    });
 
     if (existing) {
       if (existing.status === 'ACTIVE') {
-        throw new ForbiddenException('El miembro ya está asignado a este equipo')
+        throw new ForbiddenException(
+          'El miembro ya está asignado a este equipo',
+        );
       }
       return this.prisma.teamMembership.update({
         where: { id: existing.id },
@@ -501,7 +538,7 @@ export class ClubService {
             create: [{ role: 'COACH' }],
           },
         },
-      })
+      });
     }
 
     return this.prisma.teamMembership.create({
@@ -511,30 +548,37 @@ export class ClubService {
         status: 'ACTIVE',
         roles: { create: [{ role: 'COACH' }] },
       },
-    })
+    });
   }
 
-  async removeMemberFromTeam(userId: string, clubId: string, memberId: string, teamId: string) {
+  async removeMemberFromTeam(
+    userId: string,
+    clubId: string,
+    memberId: string,
+    teamId: string,
+  ) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('Solo los administradores del club pueden gestionar equipos')
+        throw new ForbiddenException(
+          'Solo los administradores del club pueden gestionar equipos',
+        );
       }
     }
 
     const member = await this.prisma.clubMember.findUnique({
       where: { id: memberId },
-    })
+    });
 
     if (!member) {
-      throw new NotFoundException('Miembro no encontrado')
+      throw new NotFoundException('Miembro no encontrado');
     }
 
     const membership = await this.prisma.teamMembership.findFirst({
       where: { userId: member.userId, teamId, status: 'ACTIVE' },
-    })
+    });
 
     if (!membership) {
-      throw new NotFoundException('El miembro no está asignado a este equipo')
+      throw new NotFoundException('El miembro no está asignado a este equipo');
     }
 
     return this.prisma.teamMembership.update({
@@ -543,7 +587,7 @@ export class ClubService {
         status: 'LEFT',
         leftAt: new Date(),
       },
-    })
+    });
   }
 
   // ============================================
@@ -553,40 +597,40 @@ export class ClubService {
   async uploadLogo(userId: string, clubId: string, base64Image: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('No tienes permisos para editar este club')
+        throw new ForbiddenException('No tienes permisos para editar este club');
       }
     }
 
     const club = await this.prisma.club.findUnique({
       where: { id: clubId },
-    })
+    });
 
     if (!club) {
-      throw new NotFoundException('Club no encontrado')
+      throw new NotFoundException('Club no encontrado');
     }
 
     const { url } = await this.cloudinaryService.uploadImage(
       base64Image,
       `training-pro/clubs/${clubId}`,
-    )
+    );
 
     return this.prisma.club.update({
       where: { id: clubId },
       data: { logo: url },
-    })
+    });
   }
 
   async removeLogo(userId: string, clubId: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('No tienes permisos para editar este club')
+        throw new ForbiddenException('No tienes permisos para editar este club');
       }
     }
 
     return this.prisma.club.update({
       where: { id: clubId },
       data: { logo: null },
-    })
+    });
   }
 
   // ============================================
@@ -595,9 +639,9 @@ export class ClubService {
 
   async findClubPlayers(userId: string, clubId: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
-      const isActive = await isActiveClubMember(this.prisma, userId, clubId)
+      const isActive = await isActiveClubMember(this.prisma, userId, clubId);
       if (!isActive) {
-        throw new ForbiddenException('No tienes acceso a este club')
+        throw new ForbiddenException('No tienes acceso a este club');
       }
     }
 
@@ -639,7 +683,7 @@ export class ClubService {
         },
       },
       orderBy: [{ lastName: 'asc' }, { name: 'asc' }],
-    })
+    });
 
     return players.map((player) => ({
       id: player.id,
@@ -659,6 +703,90 @@ export class ClubService {
         position: m.position,
         joinedAt: m.joinedAt,
       })),
-    }))
+    }));
+  }
+
+  // ============================================
+  // RECORDATORIOS DE PAGO
+  // ============================================
+
+  async getRemindersConfig(viewerId: string, clubId: string) {
+    const isMember = await isActiveClubMember(this.prisma, viewerId, clubId);
+    const isSuper = await isSuperAdmin(this.prisma, viewerId);
+    if (!isMember && !isSuper) {
+      throw new ForbiddenException('No tienes acceso a este club');
+    }
+
+    const club = await this.prisma.club.findUnique({
+      where: { id: clubId },
+      select: {
+        id: true,
+        name: true,
+        paymentRemindersEnabled: true,
+      },
+    });
+    if (!club) throw new NotFoundException('Club no encontrado');
+
+    const cronExpr = process.env.PAYMENT_REMINDERS_CRON || '0 9 * * *';
+    const globalEnabled =
+      process.env.PAYMENT_REMINDERS_ENABLED === undefined
+        ? true
+        : process.env.PAYMENT_REMINDERS_ENABLED === 'true';
+
+    return {
+      clubId: club.id,
+      clubName: club.name,
+      enabled: club.paymentRemindersEnabled,
+      globalEnabled,
+      cronExpression: cronExpr,
+      scheduledHour: this.parseCronHour(cronExpr),
+      description:
+        'Los recordatorios se envían automáticamente a los jugadores con pagos pendientes. Se ejecutan una vez al día.',
+    };
+  }
+
+  async updatePaymentReminders(
+    viewerId: string,
+    clubId: string,
+    enabled: boolean,
+  ) {
+    const isSuper = await isSuperAdmin(this.prisma, viewerId);
+    const isAdmin = await isClubAdmin(this.prisma, viewerId, clubId);
+    if (!isSuper && !isAdmin) {
+      throw new ForbiddenException(
+        'Solo los administradores del club pueden cambiar esta configuración',
+      );
+    }
+
+    const club = await this.prisma.club.findUnique({
+      where: { id: clubId },
+      select: { id: true },
+    });
+    if (!club) throw new NotFoundException('Club no encontrado');
+
+    const updated = await this.prisma.club.update({
+      where: { id: clubId },
+      data: { paymentRemindersEnabled: enabled },
+      select: {
+        id: true,
+        name: true,
+        paymentRemindersEnabled: true,
+      },
+    });
+
+    return {
+      clubId: updated.id,
+      clubName: updated.name,
+      enabled: updated.paymentRemindersEnabled,
+    };
+  }
+
+  private parseCronHour(expr: string): string | null {
+    const parts = expr.trim().split(/\s+/);
+    if (parts.length < 2) return null;
+    const minute = parseInt(parts[0], 10);
+    const hour = parseInt(parts[1], 10);
+    if (Number.isNaN(minute) || Number.isNaN(hour)) return null;
+    return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
   }
 }
