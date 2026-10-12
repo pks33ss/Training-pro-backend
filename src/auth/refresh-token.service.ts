@@ -11,7 +11,7 @@ export class RefreshTokenService {
     
     // Expira en 7 días
     const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
+    expiresAt.setDate(expiresAt.getDate() + 30);
 
     const refreshToken = await this.prisma.refreshToken.create({
       data: {

@@ -401,24 +401,24 @@ export class AuthService {
   }
 
   private async generateTokens(user: any) {
-    const accessToken = this.jwtService.sign(
-      {
-        sub: user.id,
-        email: user.email,
-        role: user.role,
-      },
-      { expiresIn: '15m' },
-    );
+  const accessToken = this.jwtService.sign(
+    {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    },
+    { expiresIn: '2h' },
+  )
 
-    const refreshToken = await this.refreshTokenService.createRefreshToken(
-      user.id,
-    );
+  const refreshToken = await this.refreshTokenService.createRefreshToken(
+    user.id,
+  )
 
-    return {
-      accessToken,
-      refreshToken,
-    };
+  return {
+    accessToken,
+    refreshToken,
   }
+}
 
   private excludePassword(user: any) {
     const { password, ...result } = user;
