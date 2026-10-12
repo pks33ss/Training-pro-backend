@@ -477,9 +477,12 @@ export class UserService {
         role: true,
         isGhost: true,
         createdAt: true,
-        // ✅ NUEVO — flags de notificaciones por email
+               // ✅ NUEVO — flags de notificaciones por email
         emailNotificationsEnabled: true,
         emailOptOut: true,
+        // ✅ NUEVO — fondo personalizado de la pizarra táctica
+        tacticalBackgroundUrl: true,
+        tacticalBackgroundMode: true,
         memberships: {
           include: {
             team: {
@@ -1330,5 +1333,45 @@ export class UserService {
     await this.prisma.injury.delete({ where: { id: injuryId } })
 
     return { deleted: true, id: injuryId }
+  }
+
+    // ============================================
+  // FONDO DE PIZARRA TÁCTICA
+  // ============================================
+
+  /**
+   * Actualiza el fondo personalizado de la pizarra táctica del usuario.
+   * - Si `url` es `null` → resetea a la imagen por defecto (limpia el campo).
+   * - Si `url` es string → guarda esa URL.
+   * - `mode` cambia entre 'HALF' y 'FULL'.
+   */
+  async updateTacticalBackground(
+    userId: string,
+    data: { url?: string | null; mode?: 'HALF' | 'FULL' },
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    const updateData: any = {};
+
+    if (data.url !== undefined) {
+      updateData.tacticalBackgroundUrl = data.url; // null = reset
+    }
+    if (data.mode !== undefined) {
+      updateData.tacticalBackgroundMode = data.mode;
+    }
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: {
+        id: true,
+        tacticalBackgroundUrl: true,
+        tacticalBackgroundMode: true,
+      },
+    });
   }
 }

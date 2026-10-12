@@ -6,6 +6,8 @@ import { UpdatePlayerProfileDto } from './dto/update-player-profile.dto'
 import { CreateInjuryDto } from './dto/create-injury.dto'
 import { UpdateInjuryDto } from './dto/update-injury.dto'
 import { UpdateEmailOptOutDto } from './dto/update-email-optout.dto'
+import { UpdateTacticalBackgroundDto } from './dto/update-tactical-background.dto';
+
 
 @Controller('users')
 @UseGuards(AuthGuard)
@@ -49,6 +51,14 @@ export class UserController {
   @Put('me/email-optout')
   updateEmailOptOut(@Request() req, @Body() dto: UpdateEmailOptOutDto) {
     return this.userService.updateEmailOptOut(req.user.id, dto.optOut)
+  }
+
+    @Put('me/tactical-background')
+  updateTacticalBackground(
+    @Request() req,
+    @Body() dto: UpdateTacticalBackgroundDto,
+  ) {
+    return this.userService.updateTacticalBackground(req.user.id, dto);
   }
 
   @Delete('me')
