@@ -231,8 +231,7 @@ export class InvitationsService {
 
     return {
       ...invitation,
-      invitationLink:
-        resolvedChannel === 'LINK' ? this.buildInvitationLink(code) : null,
+      invitationLink: this.buildInvitationLink(code),
       emailSent,
       ...(emailError ? { emailError } : {}),
     }
@@ -375,10 +374,12 @@ export class InvitationsService {
   // UTILS
   // ============================================
 
-  private buildInvitationLink(code: string): string {
+    private buildInvitationLink(code: string): string {
     const baseUrl =
-      process.env.FRONTEND_URL || 'https://joinsportapp.com'
-    return `${baseUrl}/register?invitation=${code}`
+      process.env.FRONTEND_URL || 'https://app.joinsportapp.com'
+    // Quitamos barra final si la hubiera
+    const cleanBase = baseUrl.replace(/\/$/, '')
+    return `${cleanBase}/register?invitation=${code}`
   }
 
   // ============================================

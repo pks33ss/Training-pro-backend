@@ -17,27 +17,48 @@ import {
 @Injectable()
 export class TeamService {
 
+  constructor(
+    private prisma: PrismaService,
+    private mailService: MailService,
+  ) {}
 
   // ============================================
   // CRUD EQUIPOS
   // ============================================
 
-    async create(userId: string, createTeamDto: CreateTeamDto) {
+  async create(userId: string, createTeamDto: CreateTeamDto) {
     if (!(await isActiveClubMember(this.prisma, userId, createTeamDto.clubId))) {
       throw new ForbiddenException('No tienes acceso a este club');
     }
 
-    const team = await this.prisma.team.create({
-      data: {
-        name: createTeamDto.name,
-        sport: createTeamDto.sport || 'BASKETBALL',
-        category: createTeamDto.category,
-        season: createTeamDto.season,
-        clubId: createTeamDto.clubId,
-      },
-      include: {
-        club: true,
-      },
+    // Crear equipo + membership del creador (ADMIN_TEAM) en una transacción
+    const team = await this.prisma.$transaction(async (tx) => {
+      const newTeam = await tx.team.create({
+        data: {
+          name: createTeamDto.name,
+          sport: createTeamDto.sport || 'BASKETBALL',
+          category: createTeamDto.category,
+          season: createTeamDto.season,
+          clubId: createTeamDto.clubId,
+        },
+        include: {
+          club: true,
+        },
+      });
+
+      // ✅ Crear membership del creador con rol ADMIN_TEAM
+      await tx.teamMembership.create({
+        data: {
+          userId,
+          teamId: newTeam.id,
+          status: 'ACTIVE',
+          roles: {
+            create: [{ role: 'ADMIN_TEAM' }],
+          },
+        },
+      });
+
+      return newTeam;
     });
 
     // ✅ Notificación admin
@@ -69,11 +90,6 @@ export class TeamService {
 
     return team;
   }
-
-    constructor(
-    private prisma: PrismaService,
-    private mailService: MailService,
-  ) {}
 
   async findAllByClub(userId: string, clubId: string) {
     if (!(await isActiveClubMember(this.prisma, userId, clubId))) {

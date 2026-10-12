@@ -1082,9 +1082,10 @@ export class UserService {
       })
 
       // Enviar email
-      const baseUrl =
-        process.env.FRONTEND_URL || 'https://joinsportapp.com'
-      const invitationLink = `${baseUrl}/register?invitation=${code}`
+            const baseUrl =
+        process.env.FRONTEND_URL || 'https://app.joinsportapp.com'
+      const cleanBase = baseUrl.replace(/\/$/, '')
+      const invitationLink = `${cleanBase}/register?invitation=${code}`
 
       const result = await this.mailService.sendInvitationEmail(email, {
         recipientName: `${name} ${lastName}`.trim() || 'amigo/a',
