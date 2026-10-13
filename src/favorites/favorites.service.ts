@@ -17,7 +17,13 @@ export class FavoritesService {
         team: {
           include: {
             club: {
-              select: { id: true, name: true, logo: true },
+              select: {
+                id: true,
+                name: true,
+                logo: true,
+                primaryColor: true,
+                secondaryColor: true,
+              },
             },
           },
         },
@@ -37,7 +43,13 @@ export class FavoritesService {
         team: {
           include: {
             club: {
-              select: { id: true, name: true, logo: true },
+              select: {
+                id: true,
+                name: true,
+                logo: true,
+                primaryColor: true,
+                secondaryColor: true,
+              },
             },
           },
         },
@@ -74,7 +86,15 @@ export class FavoritesService {
       include: {
         team: {
           include: {
-            club: { select: { id: true, name: true, logo: true } },
+            club: {
+              select: {
+                id: true,
+                name: true,
+                logo: true,
+                primaryColor: true,
+                secondaryColor: true,
+              },
+            },
           },
         },
       },

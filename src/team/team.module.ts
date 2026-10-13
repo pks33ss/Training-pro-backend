@@ -6,6 +6,7 @@ import { TeamService } from './team.service';
 import { AuthGuard } from '../auth/auth.guard';
 import { AuthModule } from '../auth/auth.module';
 import { MailModule } from '../mail/mail.module';
+import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { MailModule } from '../mail/mail.module';
       inject: [ConfigService],
     }),
     MailModule,
+    CloudinaryModule,
   ],
   controllers: [TeamController],
   providers: [TeamService, AuthGuard],

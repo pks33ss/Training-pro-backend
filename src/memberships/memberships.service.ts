@@ -32,21 +32,27 @@ export class MembershipsService {
   // ============================================
 
   async findMine(userId: string) {
-    return this.prisma.teamMembership.findMany({
-      where: { userId },
-      include: {
-        team: {
-          include: {
-            club: {
-              select: { id: true, name: true, logo: true },
+  return this.prisma.teamMembership.findMany({
+    where: { userId },
+    include: {
+      team: {
+        include: {
+          club: {
+            select: {
+              id: true,
+              name: true,
+              logo: true,
+              primaryColor: true,
+              secondaryColor: true,
             },
           },
         },
-        season: true,
       },
-      orderBy: [{ status: 'asc' }, { joinedAt: 'desc' }],
-    })
-  }
+      season: true,
+    },
+    orderBy: [{ status: 'asc' }, { joinedAt: 'desc' }],
+  })
+}
 
   // ============================================
   // MIEMBROS DE UN EQUIPO

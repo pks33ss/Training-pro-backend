@@ -1,4 +1,15 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  Request,
+  UseGuards,
+  ForbiddenException,
+} from '@nestjs/common';
 import { TeamService } from './team.service';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
@@ -42,5 +53,26 @@ export class TeamController {
   @Delete(':id')
   remove(@Request() req, @Param('id') id: string) {
     return this.teamService.remove(req.user.id, id);
+  }
+
+  // ============================================
+  // LOGO DEL EQUIPO
+  // ============================================
+
+  @Post(':id/upload-logo')
+  uploadLogo(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('image') image: string,
+  ) {
+    if (!image) {
+      throw new ForbiddenException('Imagen requerida');
+    }
+    return this.teamService.uploadLogo(req.user.id, id, image);
+  }
+
+  @Delete(':id/logo')
+  removeLogo(@Request() req, @Param('id') id: string) {
+    return this.teamService.removeLogo(req.user.id, id);
   }
 }

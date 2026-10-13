@@ -20,4 +20,13 @@ export class CreateClubDto {
   @IsEmail()
   @IsOptional()
   email?: string;
+
+  // ✅ NUEVO — Colores de la identidad visual
+  @IsString()
+  @IsOptional()
+  primaryColor?: string;
+
+  @IsString()
+  @IsOptional()
+  secondaryColor?: string;
 }

@@ -29,4 +29,17 @@ export class CreateTeamDto {
   @IsString()
   @IsNotEmpty()
   clubId: string
+
+  // ✅ NUEVO — Identidad visual del equipo (override del club)
+  @IsString()
+  @IsOptional()
+  primaryColor?: string
+
+  @IsString()
+  @IsOptional()
+  secondaryColor?: string
+
+  @IsString()
+  @IsOptional()
+  logo?: string
 }

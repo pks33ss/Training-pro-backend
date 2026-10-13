@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import { CreateTeamDto } from './dto/create-team.dto'
 import { UpdateTeamDto } from './dto/update-team.dto'
 import { MailService } from '../mail/mail.service';
+import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import {
   canViewTeam,
   canEditTeam,
@@ -20,6 +21,7 @@ export class TeamService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
+    private cloudinaryService: CloudinaryService,
   ) {}
 
   // ============================================
@@ -31,7 +33,6 @@ export class TeamService {
       throw new ForbiddenException('No tienes acceso a este club');
     }
 
-    // Crear equipo + membership del creador (ADMIN_TEAM) en una transacción
     const team = await this.prisma.$transaction(async (tx) => {
       const newTeam = await tx.team.create({
         data: {
@@ -40,13 +41,16 @@ export class TeamService {
           category: createTeamDto.category,
           season: createTeamDto.season,
           clubId: createTeamDto.clubId,
+          // ✅ NUEVO — Identidad visual
+          primaryColor: createTeamDto.primaryColor,
+          secondaryColor: createTeamDto.secondaryColor,
+          logo: createTeamDto.logo,
         },
         include: {
           club: true,
         },
       });
 
-      // ✅ Crear membership del creador con rol ADMIN_TEAM
       await tx.teamMembership.create({
         data: {
           userId,
@@ -61,7 +65,6 @@ export class TeamService {
       return newTeam;
     });
 
-    // ✅ Notificación admin
     const creator = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { name: true, lastName: true, email: true },
@@ -247,6 +250,45 @@ export class TeamService {
 
     return this.prisma.team.delete({
       where: { id: teamId },
+    })
+  }
+
+  // ============================================
+  // LOGO DEL EQUIPO
+  // ============================================
+
+  async uploadLogo(userId: string, teamId: string, base64Image: string) {
+    if (!(await canEditTeam(this.prisma, userId, teamId))) {
+      throw new ForbiddenException('No tienes permisos para editar este equipo')
+    }
+
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+    })
+
+    if (!team) {
+      throw new NotFoundException('Equipo no encontrado')
+    }
+
+    const { url } = await this.cloudinaryService.uploadImage(
+      base64Image,
+      `training-pro/teams/${teamId}`,
+    )
+
+    return this.prisma.team.update({
+      where: { id: teamId },
+      data: { logo: url },
+    })
+  }
+
+  async removeLogo(userId: string, teamId: string) {
+    if (!(await canEditTeam(this.prisma, userId, teamId))) {
+      throw new ForbiddenException('No tienes permisos para editar este equipo')
+    }
+
+    return this.prisma.team.update({
+      where: { id: teamId },
+      data: { logo: null },
     })
   }
 }

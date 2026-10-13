@@ -486,13 +486,19 @@ export class UserService {
         tacticalBackgroundMode: true,
         // ✅ NUEVO — preferencias de navegación (pestañas ocultas)
         hiddenTabs: true,
-        memberships: {
+                memberships: {
           include: {
             team: {
               include: {
                 club: {
-                  select: { id: true, name: true, logo: true },
-                },
+  select: {
+    id: true,
+    name: true,
+    logo: true,
+    primaryColor: true,
+    secondaryColor: true,
+  },
+},
               },
             },
             season: {
