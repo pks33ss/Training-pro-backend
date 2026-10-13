@@ -26,9 +26,12 @@ model User {
   emailNotificationsEnabled Boolean @default(true)
   emailOptOut               Boolean @default(false)
 
-  // ✅ NUEVO — Fondo personalizado de la pizarra táctica
-  tacticalBackgroundUrl  String?
-  tacticalBackgroundMode String  @default("HALF")
+    // ✅ NUEVO — Fondos personalizados de la pizarra táctica (uno por modo)
+  tacticalBackgroundUrlHalf String?
+  tacticalBackgroundUrlFull String?
+  tacticalBackgroundMode   String  @default("HALF")
+
+  hiddenTabs String[] @default([])
 
   clubs               ClubMember[]
   refreshTokens       RefreshToken[]

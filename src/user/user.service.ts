@@ -480,9 +480,12 @@ export class UserService {
                // ✅ NUEVO — flags de notificaciones por email
         emailNotificationsEnabled: true,
         emailOptOut: true,
-        // ✅ NUEVO — fondo personalizado de la pizarra táctica
-        tacticalBackgroundUrl: true,
+                        // ✅ NUEVO — fondos personalizados de la pizarra táctica (uno por modo)
+        tacticalBackgroundUrlHalf: true,
+        tacticalBackgroundUrlFull: true,
         tacticalBackgroundMode: true,
+        // ✅ NUEVO — preferencias de navegación (pestañas ocultas)
+        hiddenTabs: true,
         memberships: {
           include: {
             team: {
@@ -1335,33 +1338,40 @@ export class UserService {
     return { deleted: true, id: injuryId }
   }
 
-    // ============================================
-  // FONDO DE PIZARRA TÁCTICA
+  // ============================================
+  // FONDOS DE PIZARRA TÁCTICA (uno por modo)
   // ============================================
 
   /**
-   * Actualiza el fondo personalizado de la pizarra táctica del usuario.
-   * - Si `url` es `null` → resetea a la imagen por defecto (limpia el campo).
-   * - Si `url` es string → guarda esa URL.
+   * Actualiza los fondos personalizados de la pizarra táctica.
+   * - `urlHalf: null` → resetea el fondo de media pista.
+   * - `urlFull: null` → resetea el fondo de pista completa.
    * - `mode` cambia entre 'HALF' y 'FULL'.
    */
   async updateTacticalBackground(
     userId: string,
-    data: { url?: string | null; mode?: 'HALF' | 'FULL' },
+    data: {
+      urlHalf?: string | null
+      urlFull?: string | null
+      mode?: 'HALF' | 'FULL'
+    },
   ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true },
-    });
-    if (!user) throw new NotFoundException('Usuario no encontrado');
+    })
+    if (!user) throw new NotFoundException('Usuario no encontrado')
 
-    const updateData: any = {};
+    const updateData: any = {}
 
-    if (data.url !== undefined) {
-      updateData.tacticalBackgroundUrl = data.url; // null = reset
+    if (data.urlHalf !== undefined) {
+      updateData.tacticalBackgroundUrlHalf = data.urlHalf
+    }
+    if (data.urlFull !== undefined) {
+      updateData.tacticalBackgroundUrlFull = data.urlFull
     }
     if (data.mode !== undefined) {
-      updateData.tacticalBackgroundMode = data.mode;
+      updateData.tacticalBackgroundMode = data.mode
     }
 
     return this.prisma.user.update({
@@ -1369,9 +1379,47 @@ export class UserService {
       data: updateData,
       select: {
         id: true,
-        tacticalBackgroundUrl: true,
+        tacticalBackgroundUrlHalf: true,
+        tacticalBackgroundUrlFull: true,
         tacticalBackgroundMode: true,
       },
-    });
+    })
   }
+
+    // ============================================
+  // PREFERENCIAS DEL USUARIO
+  // ============================================
+
+  /**
+   * Actualiza preferencias de navegación del usuario.
+   * - `hiddenTabs`: array de IDs de pestañas del menú superior que se ocultan.
+   *   Opt-out: por defecto vacío (todas visibles).
+   */
+  async updatePreferences(
+    userId: string,
+    data: { hiddenTabs?: string[] },
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    })
+    if (!user) throw new NotFoundException('Usuario no encontrado')
+
+    const updateData: any = {}
+    if (data.hiddenTabs !== undefined) {
+      updateData.hiddenTabs = data.hiddenTabs
+    }
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: updateData,
+      select: {
+        id: true,
+        hiddenTabs: true,
+      },
+    })
+  }
+
+
+
 }

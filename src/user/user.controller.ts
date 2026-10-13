@@ -6,8 +6,8 @@ import { UpdatePlayerProfileDto } from './dto/update-player-profile.dto'
 import { CreateInjuryDto } from './dto/create-injury.dto'
 import { UpdateInjuryDto } from './dto/update-injury.dto'
 import { UpdateEmailOptOutDto } from './dto/update-email-optout.dto'
-import { UpdateTacticalBackgroundDto } from './dto/update-tactical-background.dto';
-
+import { UpdateTacticalBackgroundDto } from './dto/update-tactical-background.dto'
+import { UpdatePreferencesDto } from './dto/update-preferences.dto'
 
 @Controller('users')
 @UseGuards(AuthGuard)
@@ -53,12 +53,21 @@ export class UserController {
     return this.userService.updateEmailOptOut(req.user.id, dto.optOut)
   }
 
-    @Put('me/tactical-background')
+  @Put('me/tactical-background')
   updateTacticalBackground(
     @Request() req,
     @Body() dto: UpdateTacticalBackgroundDto,
   ) {
-    return this.userService.updateTacticalBackground(req.user.id, dto);
+    return this.userService.updateTacticalBackground(req.user.id, dto)
+  }
+
+  // ✅ NUEVO — Preferencias del usuario (pestañas ocultas, etc.)
+  @Put('me/preferences')
+  updatePreferences(
+    @Request() req,
+    @Body() dto: UpdatePreferencesDto,
+  ) {
+    return this.userService.updatePreferences(req.user.id, dto)
   }
 
   @Delete('me')
@@ -95,12 +104,13 @@ export class UserController {
   // ============================================
 
   @Get()
-async findAll(@Request() req, @Query('includeDeleted') includeDeleted?: string) {
-  if (req.user.role !== 'SUPER_ADMIN') {
-    throw new ForbiddenException('Solo los super administradores pueden ver todos los usuarios')
+  async findAll(@Request() req, @Query('includeDeleted') includeDeleted?: string) {
+    if (req.user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException('Solo los super administradores pueden ver todos los usuarios')
+    }
+    return this.userService.findAll(includeDeleted === 'true')
   }
-  return this.userService.findAll(includeDeleted === 'true')
-}
+
   // ============================================
   // PLAYER PROFILE + INJURIES (Fase 4)
   // ============================================
@@ -151,10 +161,12 @@ async findAll(@Request() req, @Query('includeDeleted') includeDeleted?: string) 
   ) {
     return this.userService.deleteInjury(req.user.id, userId, injuryId)
   }
-    @Get(':userId/permissions')
+
+  @Get(':userId/permissions')
   getUserPermissions(@Request() req, @Param('userId') userId: string) {
     return this.userService.getUserPermissions(req.user.id, userId)
   }
+
   @Get(':id')
   async findOne(@Request() req, @Param('id') id: string) {
     if (req.user.role !== 'SUPER_ADMIN' && req.user.id !== id) {
