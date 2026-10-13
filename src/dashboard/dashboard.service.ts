@@ -56,10 +56,16 @@ export class DashboardService {
       this.prisma.session.count({ where: { teamId } }),
 
       // 5) Convocatorias pendientes
+      // ✅ FIX: contar jugadores convocados (calledUpStatus=YES) que aún
+      //        no han confirmado (confirmedStatus=PENDING), solo en partidos
+      //        futuros y programados.
+      //        Antes filtrábamos por `status: 'PENDING'`, que se queda en
+      //        ese valor para siempre porque nunca se actualiza.
       this.prisma.matchCallup.groupBy({
         by: ['matchId'],
         where: {
-          status: 'PENDING',
+          calledUpStatus: 'YES',
+          confirmedStatus: 'PENDING',
           match: { teamId, date: { gte: now }, status: 'SCHEDULED' },
         },
         _count: { _all: true },
