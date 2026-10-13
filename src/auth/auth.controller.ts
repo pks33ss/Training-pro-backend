@@ -28,13 +28,13 @@ export class AuthController {
     return this.authService.login(loginDto);
   }
 
-    @Post('google')
+  @Post('google')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Iniciar sesión con Google' })
   @ApiResponse({ status: 200, description: 'Login con Google exitoso' })
   @ApiResponse({ status: 401, description: 'Token de Google inválido' })
   async googleLogin(@Body() dto: GoogleLoginDto) {
-    return this.authService.loginWithGoogle(dto.idToken)
+    return this.authService.loginWithGoogle(dto.idToken, dto.invitationCode)
   }
 
   @Post('refresh')

@@ -289,7 +289,7 @@ export class AuthService {
     return tokens;
   }
 
-  async loginWithGoogle(idToken: string) {
+  async loginWithGoogle(idToken: string, invitationCode?: string) {
     const clientId = process.env.GOOGLE_CLIENT_ID;
     if (!clientId) {
       throw new UnauthorizedException(
@@ -324,18 +324,76 @@ export class AuthService {
     const googleLastName = payload.family_name ?? '';
     const googleAvatar = payload.picture ?? null;
 
+    // ✅ Cargar invitación (si viene) ANTES de tocar al usuario,
+    //    igual que hace `register`.
+    let invitation: any = null;
+    if (invitationCode) {
+      invitation = await this.prisma.pendingInvitation.findUnique({
+        where: { code: invitationCode },
+        include: {
+          user: {
+            select: {
+              id: true,
+              isGhost: true,
+              deletedAt: true,
+              username: true,
+              name: true,
+              lastName: true,
+            },
+          },
+        },
+      });
+
+      if (invitation && invitation.status !== 'PENDING') invitation = null;
+
+      if (invitation && invitation.expiresAt < new Date()) {
+        await this.prisma.pendingInvitation.update({
+          where: { id: invitation.id },
+          data: { status: 'EXPIRED' },
+        });
+        invitation = null;
+      }
+
+      if (invitation?.user?.deletedAt) invitation = null;
+    }
+
     let user = await this.prisma.user.findUnique({
       where: { email },
     });
 
     let isNewGoogleUser = false;
+    let wasExistingGhost = false;
 
     if (user) {
       if (user.deletedAt) {
         throw new UnauthorizedException('Esta cuenta ha sido eliminada');
       }
 
-      if (!user.avatar && googleAvatar) {
+      // ✅ Si venía como ghost y ahora entra con Google, lo "activamos"
+      //    (rellenamos email si faltaba y quitamos isGhost).
+      if (user.isGhost) {
+        wasExistingGhost = true;
+        const finalUsername = user.username
+          ? user.username
+          : await generateUniqueUsername(
+              this.prisma,
+              googleName || user.name,
+              googleLastName || user.lastName,
+              user.id,
+            );
+
+        user = await this.prisma.user.update({
+          where: { id: user.id },
+          data: {
+            email,
+            name: user.name || googleName || email.split('@')[0],
+            lastName: user.lastName || googleLastName,
+            avatar: user.avatar ?? googleAvatar,
+            isGhost: false,
+            username: finalUsername,
+          },
+        });
+      } else if (!user.avatar && googleAvatar) {
         user = await this.prisma.user.update({
           where: { id: user.id },
           data: { avatar: googleAvatar },
@@ -364,6 +422,17 @@ export class AuthService {
       isNewGoogleUser = true;
     }
 
+    // ✅ Aplicar invitación si la hay (no bloquea el login si falla)
+    if (invitation) {
+      try {
+        await this.applyInvitation(invitation, user);
+      } catch (err: any) {
+        console.warn(
+          `⚠️ Invitación ${invitation.code} no aplicable en Google login: ${err.message}`,
+        );
+      }
+    }
+
     // ✅ Notificación admin solo si es usuario nuevo
     if (isNewGoogleUser) {
       this.mailService
@@ -374,7 +443,12 @@ export class AuthService {
             { label: 'Nombre', value: `${user.name} ${user.lastName}` },
             { label: 'Email', value: user.email ?? '(sin email)' },
             { label: 'Username', value: user.username ?? '(pendiente)' },
-            { label: 'Origen', value: 'Registro con Google' },
+            ...(wasExistingGhost
+              ? [{ label: 'Origen', value: 'Antiguo jugador sin cuenta (ghost) — Google' }]
+              : [{ label: 'Origen', value: 'Registro con Google' }]),
+            ...(invitation
+              ? [{ label: 'Invitación', value: invitation.code }]
+              : []),
           ],
         })
         .catch((err) =>
