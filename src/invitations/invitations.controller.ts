@@ -11,44 +11,33 @@ import {
 import { InvitationsService } from './invitations.service'
 import { CreateInvitationDto } from './dto'
 import { AuthGuard } from '../auth/auth.guard'
+import { PermissionsGuard } from '../permissions/permissions.guard'
+import { RequirePermission } from '../permissions/require-permission.decorator'
 
 @Controller()
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, PermissionsGuard)
 export class InvitationsController {
   constructor(private readonly invitationsService: InvitationsService) {}
 
-  // ============================================
-  // CREAR INVITACIÓN
-  // ============================================
-
+  // Crear invitación: el teamId va en el body. No podemos pre-chequear
+  // sin query. El servicio (`assertCanManageMembers`) ya lo comprueba.
   @Post('invitations')
   create(@Request() req, @Body() dto: CreateInvitationDto) {
     return this.invitationsService.create(req.user.id, dto)
   }
-
-  // ============================================
-  // MIS INVITACIONES PENDIENTES
-  // IMPORTANTE: debe ir ANTES de `:code`
-  // ============================================
 
   @Get('invitations/mine')
   getMine(@Request() req) {
     return this.invitationsService.findMineForUser(req.user.id)
   }
 
-  // ============================================
-  // PREVIEW PÚBLICA POR CÓDIGO
-  // ============================================
-
+  // Público: sin chequeo.
   @Get('invitations/:code/preview')
   preview(@Param('code') code: string) {
     return this.invitationsService.previewByCode(code)
   }
 
-  // ============================================
-  // ACEPTAR / RECHAZAR INVITACIÓN
-  // ============================================
-
+  // Público (o del propio user): sin chequeo.
   @Post('invitations/:code/accept')
   accept(@Request() req, @Param('code') code: string) {
     return this.invitationsService.acceptInvitation(code, req.user.id)
@@ -59,36 +48,23 @@ export class InvitationsController {
     return this.invitationsService.rejectInvitation(code, req.user.id)
   }
 
-  // ============================================
-  // OBTENER INVITACIÓN POR CÓDIGO
-  // ============================================
-
   @Get('invitations/:code')
   findByCode(@Param('code') code: string) {
     return this.invitationsService.findByCode(code)
   }
-
-  // ============================================
-  // MARCAR COMO USADA (legacy)
-  // ============================================
 
   @Post('invitations/:code/use')
   markAsUsed(@Request() req, @Param('code') code: string) {
     return this.invitationsService.markAsUsed(code, req.user.id)
   }
 
-  // ============================================
-  // LISTAR INVITACIONES DE UN EQUIPO
-  // ============================================
-
   @Get('teams/:teamId/invitations')
+  @RequirePermission('invitation', 'view', {
+    teamIdFrom: { param: 'teamId' },
+  })
   findByTeam(@Request() req, @Param('teamId') teamId: string) {
     return this.invitationsService.findByTeam(req.user.id, teamId)
   }
-
-  // ============================================
-  // REVOCAR INVITACIÓN
-  // ============================================
 
   @Delete('invitations/:id')
   revoke(@Request() req, @Param('id') id: string) {

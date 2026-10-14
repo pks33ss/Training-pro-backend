@@ -12,6 +12,8 @@ import { generateInvitationCode } from './utils/generate-code'
 import { CreateInvitationDto } from './dto'
 import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member'
 import { assertCanManageMembers } from '../common/access'
+import { resolveTeamRoleId } from '../permissions/resolve-role-id'
+import { teamRoleNameFromLegacy } from '../permissions/role-name-maps'
 
 const INVITATION_EXPIRY_DAYS = 7
 
@@ -32,12 +34,6 @@ export class InvitationsService {
   // REGLA DE RESOLUCIÓN DE ENVÍO
   // ============================================
 
-  /**
-   * Decide si se debe enviar un email a un usuario concreto según sus flags:
-   *  - emailOptOut === true               → NO enviar
-   *  - emailNotificationsEnabled === false → NO enviar
-   *  - en cualquier otro caso             → enviar
-   */
   private shouldSendEmailToUser(user: {
     emailNotificationsEnabled: boolean
     emailOptOut: boolean
@@ -176,7 +172,6 @@ export class InvitationsService {
     let emailError: string | undefined = undefined
 
     if (resolvedChannel === 'EMAIL') {
-      // Determinamos el email destino
       const targetEmail = dto.email || invitation.user?.username || null
 
       if (!targetEmail) {
@@ -184,7 +179,6 @@ export class InvitationsService {
           `Invitación ${invitation.id} marcada como EMAIL pero no hay dirección destino`,
         )
       } else {
-        // Consultamos los flags si es un usuario registrado
         let shouldSend = true
         let recipientName = 'amigo/a'
 
@@ -299,11 +293,28 @@ export class InvitationsService {
     })
 
     if (!existingMembership) {
+      // Lote 8.1 — resolver roleId
+      const teamForRole = await this.prisma.team.findUnique({
+        where: { id: invitation.teamId },
+        select: { clubId: true },
+      })
+      const teamRoleName = teamRoleNameFromLegacy(invitation.role as any)
+      if (!teamForRole || !teamRoleName) {
+        throw new BadRequestException('Rol de equipo inválido')
+      }
+      const teamRoleId = await resolveTeamRoleId(
+        this.prisma,
+        teamForRole.clubId,
+        teamRoleName,
+      )
+
       await this.prisma.teamMembership.create({
         data: {
           userId,
           teamId: invitation.teamId,
-          roles: { create: [{ role: invitation.role as any }] },
+          roles: {
+            create: [{ role: invitation.role as any, roleId: teamRoleId }],
+          },
           status: 'ACTIVE',
           invitedById: invitation.invitedById,
         },
@@ -374,10 +385,9 @@ export class InvitationsService {
   // UTILS
   // ============================================
 
-    private buildInvitationLink(code: string): string {
+  private buildInvitationLink(code: string): string {
     const baseUrl =
       process.env.FRONTEND_URL || 'https://app.joinsportapp.com'
-    // Quitamos barra final si la hubiera
     const cleanBase = baseUrl.replace(/\/$/, '')
     return `${cleanBase}/register?invitation=${code}`
   }
@@ -506,6 +516,21 @@ export class InvitationsService {
       }
     }
 
+    // Lote 8.1 — resolver roleId
+    const teamForRole = await this.prisma.team.findUnique({
+      where: { id: invitation.teamId },
+      select: { clubId: true },
+    })
+    const teamRoleName = teamRoleNameFromLegacy(invitation.role as any)
+    if (!teamForRole || !teamRoleName) {
+      throw new BadRequestException('Rol de equipo inválido')
+    }
+    const teamRoleId = await resolveTeamRoleId(
+      this.prisma,
+      teamForRole.clubId,
+      teamRoleName,
+    )
+
     await this.prisma.teamMembership.upsert({
       where: {
         userId_teamId: { userId, teamId: invitation.teamId },
@@ -515,7 +540,9 @@ export class InvitationsService {
         teamId: invitation.teamId,
         status: 'ACTIVE',
         invitedById: invitation.invitedById,
-        roles: { create: [{ role: invitation.role as any }] },
+        roles: {
+          create: [{ role: invitation.role as any, roleId: teamRoleId }],
+        },
       },
       update: {
         status: 'ACTIVE',

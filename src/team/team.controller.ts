@@ -14,29 +14,38 @@ import { TeamService } from './team.service';
 import { CreateTeamDto } from './dto/create-team.dto';
 import { UpdateTeamDto } from './dto/update-team.dto';
 import { AuthGuard } from '../auth/auth.guard';
+import { PermissionsGuard } from '../permissions/permissions.guard';
+import { RequirePermission } from '../permissions/require-permission.decorator';
 
 @Controller('teams')
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, PermissionsGuard)
 export class TeamController {
   constructor(private readonly teamService: TeamService) {}
 
   @Post()
+  @RequirePermission('team', 'create', { clubIdFrom: { body: 'clubId' } })
   create(@Request() req, @Body() createTeamDto: CreateTeamDto) {
     return this.teamService.create(req.user.id, createTeamDto);
   }
 
   @Get('club/:clubId')
+  @RequirePermission('team', 'view', { clubIdFrom: { param: 'clubId' } })
   findAllByClub(@Request() req, @Param('clubId') clubId: string) {
     return this.teamService.findAllByClub(req.user.id, clubId);
   }
 
   @Get('club/:clubId/with-members')
+  @RequirePermission('team', 'view', { clubIdFrom: { param: 'clubId' } })
   async findAllByClubWithMembers(@Request() req, @Param('clubId') clubId: string) {
     return this.teamService.findAllByClubWithMembers(req.user.id, clubId)
   }
 
   @Get(':id')
+  @RequirePermission('team', 'view', { clubIdFrom: { param: 'clubId' } })
   findOne(@Request() req, @Param('id') id: string) {
+    // NOTA: el clubId no está en la ruta. Este endpoint resuelve el club
+    // desde el servicio. Con la matriz no podemos pre-chequear sin query.
+    // Dejamos que el servicio decida (que llama a canViewTeam → matrix).
     return this.teamService.findOne(req.user.id, id);
   }
 
@@ -54,10 +63,6 @@ export class TeamController {
   remove(@Request() req, @Param('id') id: string) {
     return this.teamService.remove(req.user.id, id);
   }
-
-  // ============================================
-  // LOGO DEL EQUIPO
-  // ============================================
 
   @Post(':id/upload-logo')
   uploadLogo(

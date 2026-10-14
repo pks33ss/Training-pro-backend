@@ -1,7 +1,14 @@
 // backend/src/common/access.ts
+// Lote 8.2 — Wrapper de autorización.
+// Mismas firmas que antes. Según PERMISSIONS_ENGINE:
+//   - 'access' → lógica legacy idéntica (DEFAULT).
+//   - 'matrix' → PermissionsService + TeamPolicyService.
 
 import { ForbiddenException, NotFoundException } from '@nestjs/common'
 import { PrismaClient } from '@prisma/client'
+import { PermissionsService } from '../permissions/permissions.service'
+import { TeamPolicyService } from '../permissions/team-policy.service'
+import { getEngine } from '../permissions/permissions.engine'
 
 type PrismaLike = PrismaClient
 
@@ -18,6 +25,12 @@ export type ClubRoleValue =
   | 'MEMBER'
 
 const STAFF_TEAM_ROLES: MembershipRoleValue[] = ['COACH', 'ASSISTANT', 'ADMIN_TEAM']
+
+// Motores instanciados localmente (sin contenedor).
+const permissionsService = new PermissionsService()
+const teamPolicy = new TeamPolicyService()
+
+const useMatrix = () => getEngine() === 'matrix'
 
 // ─────────────────────────────────────────────
 // GLOBAL
@@ -54,9 +67,9 @@ export async function getClubRole(
 ): Promise<ClubRoleValue | null> {
   const member = await prisma.clubMember.findFirst({
     where: { userId, clubId, isActive: true },
-    select: { role: true },
+    select: { roleRef: { select: { name: true } } },
   })
-  return (member?.role as ClubRoleValue | undefined) ?? null
+  return (member?.roleRef.name as ClubRoleValue | undefined) ?? null
 }
 
 export async function isClubAdmin(
@@ -81,7 +94,14 @@ export async function canInviteToClub(
   clubId: string,
 ): Promise<boolean> {
   if (await isSuperAdmin(prisma, userId)) return true
-  return isClubAdmin(prisma, userId, clubId)
+
+  if (!useMatrix()) {
+    return isClubAdmin(prisma, userId, clubId)
+  }
+
+  return permissionsService.can(prisma, userId, 'invitation', 'create', {
+    clubId,
+  })
 }
 
 // ─────────────────────────────────────────────
@@ -95,12 +115,14 @@ export async function getTeamRoles(
 ): Promise<MembershipRoleValue[]> {
   const membership = await prisma.teamMembership.findFirst({
     where: { userId, teamId, status: 'ACTIVE' },
-    select: {
-      roles: { select: { role: true } },
-    },
+    select: { roles: { select: { roleRef: { select: { name: true } } } } },
   })
   if (!membership) return []
-  return membership.roles.map((r) => r.role as MembershipRoleValue)
+  return membership.roles
+    .map((r) => r.roleRef.name as MembershipRoleValue)
+    .filter((r) =>
+      (['PLAYER', 'COACH', 'ASSISTANT', 'ADMIN_TEAM'] as string[]).includes(r),
+    )
 }
 
 async function isParentOfTeamMember(
@@ -113,9 +135,7 @@ async function isParentOfTeamMember(
       tutorUserId: userId,
       status: 'ACTIVE',
       playerUser: {
-        memberships: {
-          some: { teamId, status: 'ACTIVE' },
-        },
+        memberships: { some: { teamId, status: 'ACTIVE' } },
       },
     },
     select: { id: true },
@@ -146,11 +166,6 @@ export async function canViewTeam(
   return false
 }
 
-/**
- * Recupera el team (con su club) tras verificar que el user tiene acceso.
- * Lanza NotFoundException si el team no existe, ForbiddenException si no
- * tiene acceso.
- */
 export async function getTeamForViewer(
   prisma: PrismaLike,
   userId: string,
@@ -184,6 +199,13 @@ export async function canEditTeam(
 
   if (await isClubAdmin(prisma, userId, team.clubId)) return true
 
+  if (useMatrix()) {
+    return permissionsService.can(prisma, userId, 'team', 'edit', {
+      clubId: team.clubId,
+      teamId,
+    })
+  }
+
   const roles = await getTeamRoles(prisma, userId, teamId)
   return roles.some((r) => STAFF_TEAM_ROLES.includes(r))
 }
@@ -209,12 +231,20 @@ export async function canDeleteTeam(
   })
   if (!team) return false
 
+  if (useMatrix()) {
+    return permissionsService.can(prisma, userId, 'team', 'delete', {
+      clubId: team.clubId,
+      teamId,
+    })
+  }
+
   return isClubAdmin(prisma, userId, team.clubId)
 }
 
-/**
- * Roles que este actor puede AÑADIR a un miembro del equipo.
- */
+// ─────────────────────────────────────────────
+// ROLES DE EQUIPO
+// ─────────────────────────────────────────────
+
 export async function getAddableRoles(
   prisma: PrismaLike,
   actorId: string,
@@ -232,6 +262,18 @@ export async function getAddableRoles(
 
   if (await isClubAdmin(prisma, actorId, team.clubId)) {
     return ['PLAYER', 'ASSISTANT', 'COACH', 'ADMIN_TEAM']
+  }
+
+  if (useMatrix()) {
+    const canCreate = await permissionsService.can(
+      prisma,
+      actorId,
+      'membership_role',
+      'create',
+      { clubId: team.clubId, teamId },
+    )
+    if (canCreate) return ['PLAYER', 'ASSISTANT', 'COACH', 'ADMIN_TEAM']
+    return []
   }
 
   const actorRoles = await getTeamRoles(prisma, actorId, teamId)
@@ -342,7 +384,9 @@ export async function assertCanManageMembers(
   if (!team) throw new NotFoundException('Equipo no encontrado')
 
   if (!(await canManageMembers(prisma, userId, teamId))) {
-    throw new ForbiddenException('No tienes permisos para gestionar miembros de este equipo')
+    throw new ForbiddenException(
+      'No tienes permisos para gestionar miembros de este equipo',
+    )
   }
 }
 
@@ -358,7 +402,9 @@ export async function assertCanDeleteTeam(
   if (!team) throw new NotFoundException('Equipo no encontrado')
 
   if (!(await canDeleteTeam(prisma, userId, teamId))) {
-    throw new ForbiddenException('No tienes permisos para eliminar este equipo')
+    throw new ForbiddenException(
+      'No tienes permisos para eliminar este equipo',
+    )
   }
 }
 
@@ -375,7 +421,9 @@ export async function assertCanRemoveMember(
   if (!team) throw new NotFoundException('Equipo no encontrado')
 
   if (!(await canRemoveMember(prisma, actorId, targetUserId, teamId))) {
-    throw new ForbiddenException('No tienes permisos para quitar a este miembro del equipo')
+    throw new ForbiddenException(
+      'No tienes permisos para quitar a este miembro del equipo',
+    )
   }
 }
 
@@ -413,7 +461,7 @@ export async function canViewUserPrivateData(
       userId: actorId,
       teamId: { in: teamIds },
       status: 'ACTIVE',
-      roles: { some: { role: { in: STAFF_TEAM_ROLES } } },
+      roles: { some: { roleRef: { name: { in: STAFF_TEAM_ROLES as any } } } },
     },
     select: { id: true },
   })
@@ -425,7 +473,12 @@ export async function canViewUserPrivateData(
   })
   const clubIds = Array.from(new Set(teams.map((t) => t.clubId)))
   const adminClub = await prisma.clubMember.findFirst({
-    where: { userId: actorId, clubId: { in: clubIds }, role: 'ADMIN_CLUB', isActive: true },
+    where: {
+      userId: actorId,
+      clubId: { in: clubIds },
+      isActive: true,
+      roleRef: { name: 'ADMIN_CLUB' },
+    },
     select: { id: true },
   })
   return !!adminClub
@@ -498,8 +551,8 @@ export async function canEditGhost(
     where: {
       userId: actorId,
       clubId: { in: clubIds },
-      role: 'ADMIN_CLUB',
       isActive: true,
+      roleRef: { name: 'ADMIN_CLUB' },
     },
     select: { id: true },
   })
@@ -510,7 +563,7 @@ export async function canEditGhost(
       userId: actorId,
       teamId: { in: teamIds },
       status: 'ACTIVE',
-      roles: { some: { role: { in: STAFF_TEAM_ROLES } } },
+      roles: { some: { roleRef: { name: { in: STAFF_TEAM_ROLES as any } } } },
     },
     select: { id: true },
   })
@@ -663,8 +716,8 @@ export async function canViewPlayerProfile(
       where: {
         userId: viewerId,
         clubId: { in: clubIds },
-        role: 'ADMIN_CLUB',
         isActive: true,
+        roleRef: { name: 'ADMIN_CLUB' },
       },
       select: { id: true },
     })
@@ -678,7 +731,7 @@ export async function canViewPlayerProfile(
         teamId: { in: teamIds },
         status: 'ACTIVE',
         roles: {
-          some: { role: { in: STAFF_TEAM_ROLES } },
+          some: { roleRef: { name: { in: STAFF_TEAM_ROLES as any } } },
         },
       },
       select: { id: true },
@@ -725,8 +778,8 @@ export async function canEditPlayerProfile(
       where: {
         userId: viewerId,
         clubId: { in: clubIds },
-        role: 'ADMIN_CLUB',
         isActive: true,
+        roleRef: { name: 'ADMIN_CLUB' },
       },
       select: { id: true },
     })
@@ -740,7 +793,7 @@ export async function canEditPlayerProfile(
         teamId: { in: teamIds },
         status: 'ACTIVE',
         roles: {
-          some: { role: { in: STAFF_TEAM_ROLES } },
+          some: { roleRef: { name: { in: STAFF_TEAM_ROLES as any } } },
         },
       },
       select: { id: true },
@@ -793,15 +846,6 @@ export async function assertCanEditPlayerProfile(
 // PAYMENTS
 // ─────────────────────────────────────────────
 
-/**
- * ¿Puede el actor gestionar (crear/editar/borrar) conceptos de pago
- * de este club?
- *
- * Reglas:
- *  - SUPER_ADMIN: siempre.
- *  - ADMIN_CLUB del club: sí.
- *  - COACH / ASSISTANT / ADMIN_TEAM de algún equipo del club: sí.
- */
 export async function canManageClubPayments(
   prisma: PrismaLike,
   userId: string,
@@ -816,7 +860,7 @@ export async function canManageClubPayments(
       status: 'ACTIVE',
       team: { clubId },
       roles: {
-        some: { role: { in: STAFF_TEAM_ROLES } },
+        some: { roleRef: { name: { in: STAFF_TEAM_ROLES as any } } },
       },
     },
     select: { id: true },
@@ -824,16 +868,6 @@ export async function canManageClubPayments(
   return !!staffMembership
 }
 
-/**
- * ¿Puede el actor ver un concepto de pago?
- *
- * Reglas:
- *  - Concepto de equipo (teamId != null): canViewTeam sobre el team.
- *  - Concepto de club (teamId == null):
- *      - SUPER_ADMIN, o
- *      - miembro activo del club, o
- *      - staff de algún equipo del club.
- */
 export async function canViewPaymentConcept(
   prisma: PrismaLike,
   userId: string,
@@ -849,13 +883,6 @@ export async function canViewPaymentConcept(
   return canViewTeam(prisma, userId, concept.teamId)
 }
 
-/**
- * ¿Puede el actor gestionar (editar/borrar) un concepto de pago?
- *
- * Reglas:
- *  - Concepto de equipo (teamId != null): canEditTeam sobre el team.
- *  - Concepto de club (teamId == null): ADMIN_CLUB o SUPER_ADMIN.
- */
 export async function canManagePaymentConcept(
   prisma: PrismaLike,
   userId: string,
@@ -869,13 +896,6 @@ export async function canManagePaymentConcept(
   return canEditTeam(prisma, userId, concept.teamId)
 }
 
-/**
- * ¿Puede el actor ver el resumen de pagos?
- *
- * Reglas:
- *  - Si hay teamId: canViewTeam sobre el team.
- *  - Si hay clubId: miembro activo del club, o staff/admin.
- */
 export async function canViewPaymentsSummary(
   prisma: PrismaLike,
   userId: string,
@@ -895,15 +915,6 @@ export async function canViewPaymentsSummary(
   return false
 }
 
-/**
- * ¿Puede el actor borrar un pago concreto?
- *
- * Reglas:
- *  - SUPER_ADMIN: siempre.
- *  - ADMIN_CLUB del club del concepto: sí.
- *  - Staff del team del concepto: sí.
- *  - Creador del pago: sí (si aún puede ver el concepto).
- */
 export async function canDeletePayment(
   prisma: PrismaLike,
   userId: string,
@@ -921,15 +932,12 @@ export async function canDeletePayment(
 
   if (await isSuperAdmin(prisma, userId)) return true
 
-  // ADMIN_CLUB del club del concepto
   if (await isClubAdmin(prisma, userId, payment.concept.clubId)) return true
 
-  // Staff del team (si el concepto es de team)
   if (payment.concept.teamId) {
     if (await canEditTeam(prisma, userId, payment.concept.teamId)) return true
   }
 
-  // Creador del pago (si aún puede ver el concepto)
   if (payment.createdById === userId) {
     if (
       await canViewPaymentConcept(prisma, userId, {
@@ -943,8 +951,6 @@ export async function canDeletePayment(
 
   return false
 }
-
-// ── ASSERTS ──
 
 export async function assertCanViewPaymentConcept(
   prisma: PrismaLike,

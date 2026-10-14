@@ -11,10 +11,12 @@ import {
 } from '@nestjs/common'
 import { MembershipsService } from './memberships.service'
 import { AuthGuard } from '../auth/auth.guard'
+import { PermissionsGuard } from '../permissions/permissions.guard'
+import { RequirePermission } from '../permissions/require-permission.decorator'
 import { CreateMembershipDto, UpdateMembershipDto, AddMemberDto } from './dto'
 
 @Controller()
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, PermissionsGuard)
 export class MembershipsController {
   constructor(private readonly membershipsService: MembershipsService) {}
 
@@ -24,11 +26,13 @@ export class MembershipsController {
   }
 
   @Get('teams/:teamId/members')
+  @RequirePermission('member', 'view', { teamIdFrom: { param: 'teamId' } })
   findByTeam(@Request() req, @Param('teamId') teamId: string) {
     return this.membershipsService.findByTeam(req.user.id, teamId)
   }
 
   @Post('teams/:teamId/members')
+  @RequirePermission('member', 'create', { teamIdFrom: { param: 'teamId' } })
   addMember(
     @Request() req,
     @Param('teamId') teamId: string,
@@ -58,6 +62,7 @@ export class MembershipsController {
   }
 
   @Delete('teams/:teamId/members/:membershipId')
+  @RequirePermission('member', 'delete', { teamIdFrom: { param: 'teamId' } })
   remove(
     @Request() req,
     @Param('teamId') teamId: string,
@@ -75,7 +80,6 @@ export class MembershipsController {
     return this.membershipsService.update(req.user.id, id, dto)
   }
 
-  // ✅ NUEVO: añadir rol individual
   @Post('memberships/:id/roles')
   addRole(
     @Request() req,
@@ -85,7 +89,6 @@ export class MembershipsController {
     return this.membershipsService.addRole(req.user.id, id, role as any)
   }
 
-  // ✅ NUEVO: quitar rol individual
   @Delete('memberships/:id/roles/:role')
   removeRole(
     @Request() req,

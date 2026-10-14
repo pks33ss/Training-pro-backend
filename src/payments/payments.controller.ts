@@ -19,16 +19,17 @@ import { ListConceptsDto } from './dto/list-concepts.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { SummaryQueryDto } from './dto/summary-query.dto';
 import { AuthGuard } from '../auth/auth.guard';
+import { PermissionsGuard } from '../permissions/permissions.guard';
+import { RequirePermission } from '../permissions/require-permission.decorator';
 import { MyPaymentsQueryDto } from './dto/my-payments-query.dto';
 import { AssignPlayersDto } from './dto/assign-players.dto';
 import { RunRemindersDto } from './dto/run-reminders.dto';
-
 import { UpdateAssignmentDto } from './dto/update-assignment.dto';
 
 import type { Response } from 'express';
 
 @Controller('payments')
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, PermissionsGuard)
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
@@ -37,9 +38,11 @@ export class PaymentsController {
   // ============================================
 
   @Post('concepts')
+  @RequirePermission('payment', 'create', { clubIdFrom: { body: 'clubId' } })
   createConcept(@Request() req, @Body() dto: CreateConceptDto) {
     return this.paymentsService.createConcept(req.user.id, dto);
   }
+
   // ============================================
   // MIS PAGOS (jugador)
   // ============================================
@@ -48,7 +51,6 @@ export class PaymentsController {
   getMyPayments(@Request() req, @Query() filters: MyPaymentsQueryDto) {
     return this.paymentsService.getMyPayments(req.user.id, filters);
   }
-
 
   @Get('concepts')
   listConcepts(@Request() req, @Query() filters: ListConceptsDto) {
@@ -87,7 +89,7 @@ export class PaymentsController {
     return this.paymentsService.assignPlayers(req.user.id, id, dto.userIds);
   }
 
-    @Patch('concepts/:id/assign/:userId')
+  @Patch('concepts/:id/assign/:userId')
   updateAssignment(
     @Request() req,
     @Param('id') id: string,
@@ -101,7 +103,6 @@ export class PaymentsController {
       dto.amountOwed,
     );
   }
-
 
   @Delete('concepts/:id/assign/:userId')
   unassignPlayer(
@@ -120,7 +121,6 @@ export class PaymentsController {
   syncTeam(@Request() req, @Param('id') id: string) {
     return this.paymentsService.syncTeamAssignments(req.user.id, id);
   }
-
 
   // ============================================
   // PAGOS
@@ -163,7 +163,7 @@ export class PaymentsController {
     return this.paymentsService.runReminders(req.user.id, dto);
   }
 
-    // ============================================
+  // ============================================
   // RECIBO PDF
   // ============================================
 
@@ -186,6 +186,4 @@ export class PaymentsController {
 
     res.end(buffer);
   }
-
-
 }

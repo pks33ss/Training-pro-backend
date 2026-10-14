@@ -63,14 +63,24 @@ export class EmailSettingsService {
   }
 
   /**
-   * Actualiza el flag `emailNotificationsEnabled` para varios usuarios a la vez,
-   * en una sola transacción.
+   * Actualiza el flag `emailNotificationsEnabled` para varios usuarios a la vez.
+   *
+   * Lote 8.5 — Fix: antes se hacía un `$transaction` con N updates concurrentes
+   * (uno por usuario), que con muchos usuarios superaba el timeout de 5s de
+   * las transacciones interactivas de Prisma. Ahora se hace en un único
+   * `updateMany` con `WHERE id IN (...)`, mucho más rápido y sin transacción
+   * explícita.
    *
    * Los userIds que no existen, no tienen email, son ghost, o están borrados
    * se ignoran silenciosamente. Solo se actualizan los válidos.
    */
   async updateBulk(userIds: string[], enabled: boolean) {
-    // Filtramos solo los usuarios válidos (con email, no ghost, no borrados)
+    if (userIds.length === 0) {
+      return { updated: 0, enabled };
+    }
+
+    // Filtramos solo los usuarios válidos (con email, no ghost, no borrados).
+    // Esto además protege contra IDs inexistentes o inválidos.
     const validUsers = await this.prisma.user.findMany({
       where: {
         id: { in: userIds },
@@ -87,18 +97,14 @@ export class EmailSettingsService {
       return { updated: 0, enabled };
     }
 
-    // Actualizamos todos los válidos en una transacción
-    const updates = validIds.map((id) =>
-      this.prisma.user.update({
-        where: { id },
-        data: { emailNotificationsEnabled: enabled },
-      }),
-    );
-
-    await this.prisma.$transaction(updates);
+    // Una sola query: UPDATE "User" SET ... WHERE id IN (...)
+    const result = await this.prisma.user.updateMany({
+      where: { id: { in: validIds } },
+      data: { emailNotificationsEnabled: enabled },
+    });
 
     return {
-      updated: validIds.length,
+      updated: result.count,
       enabled,
     };
   }

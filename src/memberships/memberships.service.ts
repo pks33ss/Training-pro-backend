@@ -17,11 +17,11 @@ import {
   assertCanManageMembers,
   canAddRole,
   canRemoveRole,
-  getAddableRoles,
-  getRemovableRoles,
   canViewTeam,
   MembershipRoleValue,
 } from '../common/access'
+import { resolveTeamRoleId } from '../permissions/resolve-role-id'
+import { teamRoleNameFromLegacy } from '../permissions/role-name-maps'
 
 @Injectable()
 export class MembershipsService {
@@ -32,27 +32,27 @@ export class MembershipsService {
   // ============================================
 
   async findMine(userId: string) {
-  return this.prisma.teamMembership.findMany({
-    where: { userId },
-    include: {
-      team: {
-        include: {
-          club: {
-            select: {
-              id: true,
-              name: true,
-              logo: true,
-              primaryColor: true,
-              secondaryColor: true,
+    return this.prisma.teamMembership.findMany({
+      where: { userId },
+      include: {
+        team: {
+          include: {
+            club: {
+              select: {
+                id: true,
+                name: true,
+                logo: true,
+                primaryColor: true,
+                secondaryColor: true,
+              },
             },
           },
         },
+        season: true,
       },
-      season: true,
-    },
-    orderBy: [{ status: 'asc' }, { joinedAt: 'desc' }],
-  })
-}
+      orderBy: [{ status: 'asc' }, { joinedAt: 'desc' }],
+    })
+  }
 
   // ============================================
   // MIEMBROS DE UN EQUIPO
@@ -80,18 +80,15 @@ export class MembershipsService {
           },
         },
         season: true,
-        roles: true,
+        roles: { include: { roleRef: { select: { name: true } } } },
       },
-      orderBy: [
-        { status: 'asc' },
-        { jerseyNumber: 'asc' },
-      ],
+      orderBy: [{ status: 'asc' }, { jerseyNumber: 'asc' }],
     })
 
     return memberships.map((m) => ({
       ...m,
-      role: m.roles[0]?.role ?? 'PLAYER',
-      roles: m.roles.map((r) => r.role),
+      role: m.roles[0]?.roleRef.name ?? 'PLAYER',
+      roles: m.roles.map((r) => r.roleRef.name),
     }))
   }
 
@@ -102,8 +99,13 @@ export class MembershipsService {
   async requestJoin(userId: string, dto: CreateMembershipDto) {
     const team = await this.prisma.team.findUnique({
       where: { id: dto.teamId },
+      select: { clubId: true },
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
+
+    const roleName = teamRoleNameFromLegacy((dto.role || 'PLAYER') as any)
+    if (!roleName) throw new BadRequestException('Rol inválido')
+    const roleId = await resolveTeamRoleId(this.prisma, team.clubId, roleName)
 
     const existing = await this.prisma.teamMembership.findFirst({
       where: { userId, teamId: dto.teamId },
@@ -122,7 +124,7 @@ export class MembershipsService {
           status: 'PENDING',
           roles: {
             deleteMany: {},
-            create: [{ role: (dto.role || 'PLAYER') as any }],
+            create: [{ role: roleName as any, roleId }],
           },
         },
       })
@@ -132,7 +134,7 @@ export class MembershipsService {
       data: {
         userId,
         teamId: dto.teamId,
-        roles: { create: [{ role: (dto.role || 'PLAYER') as any }] },
+        roles: { create: [{ role: roleName as any, roleId }] },
         status: 'PENDING',
       },
       include: {
@@ -203,7 +205,7 @@ export class MembershipsService {
       include: {
         team: { include: { club: true } },
         user: true,
-        roles: true,
+        roles: { include: { roleRef: { select: { name: true } } } },
       },
     })
     if (!membership) throw new NotFoundException('Membership no encontrado')
@@ -219,7 +221,7 @@ export class MembershipsService {
       membership.teamId,
     )
 
-    const targetRoles = membership.roles.map((r) => r.role)
+    const targetRoles = membership.roles.map((r) => r.roleRef.name)
 
     const memberName = membership.user
       ? `${membership.user.name ?? ''} ${membership.user.lastName ?? ''}`.trim() ||
@@ -275,7 +277,11 @@ export class MembershipsService {
   ) {
     const membership = await this.prisma.teamMembership.findUnique({
       where: { id: membershipId },
-      include: { roles: true, team: true, user: true },
+      include: {
+        roles: { include: { roleRef: { select: { name: true } } } },
+        team: { select: { id: true, clubId: true } },
+        user: true,
+      },
     })
     if (!membership) throw new NotFoundException('Membership no encontrado')
 
@@ -295,20 +301,28 @@ export class MembershipsService {
       throw new ForbiddenException('No tienes permisos para añadir este rol')
     }
 
-    if (membership.roles.some((r) => r.role === role)) {
+    if (membership.roles.some((r) => r.roleRef.name === role)) {
       throw new BadRequestException('Este miembro ya tiene ese rol')
     }
+
+    const roleName = teamRoleNameFromLegacy(role)
+    if (!roleName) throw new BadRequestException('Rol inválido')
+    const roleId = await resolveTeamRoleId(
+      this.prisma,
+      membership.team.clubId,
+      roleName,
+    )
 
     return this.prisma.teamMembership.update({
       where: { id: membershipId },
       data: {
-        roles: { create: [{ role }] },
+        roles: { create: [{ role: roleName as any, roleId }] },
       },
       include: {
         user: {
           select: { id: true, name: true, lastName: true, username: true, isGhost: true },
         },
-        roles: true,
+        roles: { include: { roleRef: { select: { name: true } } } },
       },
     })
   }
@@ -320,7 +334,11 @@ export class MembershipsService {
   ) {
     const membership = await this.prisma.teamMembership.findUnique({
       where: { id: membershipId },
-      include: { roles: true, team: { include: { club: true } }, user: true },
+      include: {
+        roles: { include: { roleRef: { select: { name: true } } } },
+        team: { include: { club: true } },
+        user: true,
+      },
     })
     if (!membership) throw new NotFoundException('Membership no encontrado')
 
@@ -340,11 +358,13 @@ export class MembershipsService {
       throw new ForbiddenException('No tienes permisos para quitar este rol')
     }
 
-    if (!membership.roles.some((r) => r.role === role)) {
+    if (!membership.roles.some((r) => r.roleRef.name === role)) {
       throw new BadRequestException('Este miembro no tiene ese rol')
     }
 
-    const remainingRoles = membership.roles.filter((r) => r.role !== role)
+    const roleRow = membership.roles.find((r) => r.roleRef.name === role)!
+
+    const remainingRoles = membership.roles.filter((r) => r.roleRef.name !== role)
 
     if (remainingRoles.length === 0) {
       const updated = await this.prisma.teamMembership.update({
@@ -358,7 +378,7 @@ export class MembershipsService {
           user: {
             select: { id: true, name: true, lastName: true, username: true, isGhost: true },
           },
-          roles: true,
+          roles: { include: { roleRef: { select: { name: true } } } },
         },
       })
 
@@ -377,13 +397,13 @@ export class MembershipsService {
     const updated = await this.prisma.teamMembership.update({
       where: { id: membershipId },
       data: {
-        roles: { delete: { membershipId_role: { membershipId, role } } },
+        roles: { delete: { id: roleRow.id } },
       },
       include: {
         user: {
           select: { id: true, name: true, lastName: true, username: true, isGhost: true },
         },
-        roles: true,
+        roles: { include: { roleRef: { select: { name: true } } } },
       },
     })
 
@@ -398,10 +418,17 @@ export class MembershipsService {
   // ACTUALIZAR MEMBERSHIP
   // ============================================
 
-  async update(userId: string, membershipId: string, dto: UpdateMembershipDto & { roles?: MembershipRoleValue[] }) {
+  async update(
+    userId: string,
+    membershipId: string,
+    dto: UpdateMembershipDto & { roles?: MembershipRoleValue[] },
+  ) {
     const membership = await this.prisma.teamMembership.findUnique({
       where: { id: membershipId },
-      include: { roles: true },
+      include: {
+        roles: { include: { roleRef: { select: { name: true } } } },
+        team: { select: { id: true, clubId: true } },
+      },
     })
     if (!membership) throw new NotFoundException('Membership no encontrado')
 
@@ -409,20 +436,38 @@ export class MembershipsService {
 
     const { role, roles, ...rest } = dto as any
 
-    const nextRoles: MembershipRoleValue[] | undefined = roles ?? (role ? [role] : undefined)
+    const nextRoles: MembershipRoleValue[] | undefined =
+      roles ?? (role ? [role] : undefined)
 
     if (nextRoles && nextRoles.length === 0) {
-      throw new BadRequestException('Debe haber al menos un rol. Para quitar todos los roles usa la opción de desvincular.')
+      throw new BadRequestException(
+        'Debe haber al menos un rol. Para quitar todos los roles usa la opción de desvincular.',
+      )
+    }
+
+    let createRoles: { role: any; roleId: string }[] | undefined
+    if (nextRoles) {
+      createRoles = []
+      for (const r of nextRoles) {
+        const roleName = teamRoleNameFromLegacy(r)
+        if (!roleName) throw new BadRequestException(`Rol inválido: ${r}`)
+        const roleId = await resolveTeamRoleId(
+          this.prisma,
+          membership.team.clubId,
+          roleName,
+        )
+        createRoles.push({ role: roleName as any, roleId })
+      }
     }
 
     return this.prisma.teamMembership.update({
       where: { id: membershipId },
       data: {
         ...rest,
-        ...(nextRoles && {
+        ...(createRoles && {
           roles: {
             deleteMany: {},
-            create: nextRoles.map((r) => ({ role: r })),
+            create: createRoles,
           },
         }),
       },
@@ -430,7 +475,7 @@ export class MembershipsService {
         user: {
           select: { id: true, name: true, lastName: true, username: true, isGhost: true },
         },
-        roles: true,
+        roles: { include: { roleRef: { select: { name: true } } } },
       },
     })
   }
@@ -445,6 +490,12 @@ export class MembershipsService {
     dto: { userId: string; role?: string; jerseyNumber?: number; position?: string },
   ) {
     await assertCanManageMembers(this.prisma, requesterId, teamId)
+
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      select: { clubId: true },
+    })
+    if (!team) throw new NotFoundException('Equipo no encontrado')
 
     const targetUser = await this.prisma.user.findUnique({
       where: { id: dto.userId },
@@ -466,15 +517,22 @@ export class MembershipsService {
       }
 
       const newRole = dto.role || null
+      let createRoles: { role: any; roleId: string }[] | undefined
+      if (newRole) {
+        const roleName = teamRoleNameFromLegacy(newRole)
+        if (!roleName) throw new BadRequestException(`Rol inválido: ${newRole}`)
+        const roleId = await resolveTeamRoleId(this.prisma, team.clubId, roleName)
+        createRoles = [{ role: roleName as any, roleId }]
+      }
 
       const membership = await this.prisma.teamMembership.update({
         where: { id: existing.id },
         data: {
           status: 'ACTIVE',
-          ...(newRole && {
+          ...(createRoles && {
             roles: {
               deleteMany: {},
-              create: [{ role: newRole as any }],
+              create: createRoles,
             },
           }),
           jerseyNumber: dto.jerseyNumber ?? existing.jerseyNumber,
@@ -496,7 +554,7 @@ export class MembershipsService {
             },
           },
           season: true,
-          roles: true,
+          roles: { include: { roleRef: { select: { name: true } } } },
         },
       })
 
@@ -505,11 +563,15 @@ export class MembershipsService {
       return membership
     }
 
+    const roleName = teamRoleNameFromLegacy(dto.role || 'PLAYER')
+    if (!roleName) throw new BadRequestException('Rol inválido')
+    const roleId = await resolveTeamRoleId(this.prisma, team.clubId, roleName)
+
     const membership = await this.prisma.teamMembership.create({
       data: {
         userId: dto.userId,
         teamId,
-        roles: { create: [{ role: (dto.role || 'PLAYER') as any }] },
+        roles: { create: [{ role: roleName as any, roleId }] },
         status: 'ACTIVE',
         jerseyNumber: dto.jerseyNumber ?? null,
         position: dto.position ?? null,
@@ -528,7 +590,7 @@ export class MembershipsService {
           },
         },
         season: true,
-        roles: true,
+        roles: { include: { roleRef: { select: { name: true } } } },
       },
     })
 
@@ -547,10 +609,11 @@ export class MembershipsService {
   ): Promise<void> {
     const clubMember = await this.prisma.clubMember.findFirst({
       where: { userId, clubId },
+      include: { roleRef: { select: { name: true } } },
     })
 
     if (!clubMember) return
-    if (clubMember.role === 'ADMIN_CLUB') return
+    if (clubMember.roleRef.name === 'ADMIN_CLUB') return
 
     const activeCount = await this.prisma.teamMembership.count({
       where: {
@@ -573,11 +636,12 @@ export class MembershipsService {
       where: {
         teamId,
         status: 'ACTIVE',
-        roles: { some: { role: 'COACH' } },
+        roles: { some: { roleRef: { name: 'COACH' } } },
       },
     })
 
-    if (coachCount > 0) return    
+    if (coachCount > 0) return
+
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
       select: { id: true, name: true, clubId: true },
@@ -588,7 +652,7 @@ export class MembershipsService {
       where: {
         teamId,
         status: 'ACTIVE',
-        roles: { some: { role: 'ADMIN_TEAM' } },
+        roles: { some: { roleRef: { name: 'ADMIN_TEAM' } } },
       },
       include: {
         user: { select: { id: true, email: true, name: true, lastName: true } },
@@ -607,7 +671,7 @@ export class MembershipsService {
     }
 
     const clubAdmins = await this.prisma.clubMember.findMany({
-      where: { clubId: team.clubId, role: 'ADMIN_CLUB', isActive: true },
+      where: { clubId: team.clubId, isActive: true, roleRef: { name: 'ADMIN_CLUB' } },
       include: {
         user: { select: { id: true, email: true, name: true, lastName: true } },
       },

@@ -6,15 +6,19 @@ datasource db {
   provider = "postgresql"
 }
 
+// ============================================
+// USERS / GLOBAL
+// ============================================
+
 model User {
   id        String     @id @default(cuid())
   email     String?    @unique
   password  String?
   name      String
   lastName  String
-  phone     String? // ✅ NUEVO
-  avatar    String? // ✅ NUEVO (URL de Cloudinary)
-  bio       String? // ✅ NUEVO
+  phone     String?
+  avatar    String?
+  bio       String?
   role      GlobalRole @default(USER)
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
@@ -22,14 +26,12 @@ model User {
   isGhost   Boolean    @default(false)
   deletedAt DateTime?
 
-  // ✅ NUEVO — Preferencias de notificaciones por email
   emailNotificationsEnabled Boolean @default(true)
   emailOptOut               Boolean @default(false)
 
-    // ✅ NUEVO — Fondos personalizados de la pizarra táctica (uno por modo)
   tacticalBackgroundUrlHalf String?
   tacticalBackgroundUrlFull String?
-  tacticalBackgroundMode   String  @default("HALF")
+  tacticalBackgroundMode    String  @default("HALF")
 
   hiddenTabs String[] @default([])
 
@@ -39,8 +41,8 @@ model User {
   calendarEvents      CalendarEvent[]
   calendarInvitations CalendarInvitation[]
 
-  padelSubMatchesAsPlayer1 PadelSubMatch[]   @relation("PadelSubMatchPlayer1") // ✅ NUEVA
-  padelSubMatchesAsPlayer2 PadelSubMatch[]   @relation("PadelSubMatchPlayer2") // ✅ NUEVA
+  padelSubMatchesAsPlayer1 PadelSubMatch[]   @relation("PadelSubMatchPlayer1")
+  padelSubMatchesAsPlayer2 PadelSubMatch[]   @relation("PadelSubMatchPlayer2")
   paymentReminders         PaymentReminder[] @relation("PaymentReminders")
 
   paymentConceptsCreated PaymentConcept[]    @relation("PaymentConceptCreatedBy")
@@ -48,7 +50,7 @@ model User {
   payments               Payment[]           @relation("Payments")
   paymentsCreated        Payment[]           @relation("PaymentCreatedBy")
 
-  createdMatches      Match[] // ✅ NUEVO
+  createdMatches      Match[]
   favoriteTeams       FavoriteTeam[]
   memberships         TeamMembership[]
   pendingInvitations  PendingInvitation[] @relation("InvitationInviter")
@@ -68,11 +70,12 @@ model User {
   playerProfile PlayerProfile?
   injuries      Injury[]
 
-  // ✅ NUEVO — Biblioteca de ejercicios del usuario
   libraryExercises LibraryExercise[]
 
-  // ✅ NUEVO — Jugadas (Playbook) creadas por el usuario
   createdPlays Play[] @relation("PlayCreatedBy")
+
+  // LOTE 8.1 — auditoría de permisos
+  permissionAuditLogs PermissionAuditLog[] @relation("PermissionAuditActor")
 
   @@index([deletedAt])
 }
@@ -95,20 +98,32 @@ model Club {
   teams           Team[]
   calendarEvents  CalendarEvent[]
   paymentConcepts PaymentConcept[]
+
+  // LOTE 8.1 — roles del club (CLUB y TEAM)
+  roles Role[]
+
+  // LOTE 8.1 — auditoría
+  permissionAuditLogs PermissionAuditLog[] @relation("PermissionAuditClub")
 }
 
 model ClubMember {
   id       String   @id @default(cuid())
   userId   String
   clubId   String
-  role     ClubRole @default(COACH)
+  // LOTE 8.1 — roleId sustituye a `role` (enum). Nullable en Fase A,
+  // NOT NULL tras Fase C. La columna `role` se mantiene hasta 8.7
+  // para no romper access.ts.
+  roleId   String
+  role     ClubRole @default(COACH) // LEGACY: se elimina en 8.7
   isActive Boolean  @default(true)
   joinedAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  club Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  user    User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  club    Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  roleRef Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
   @@unique([userId, clubId])
+  @@index([roleId])
 }
 
 model Team {
@@ -120,7 +135,7 @@ model Team {
   clubId         String
   primaryColor   String?
   secondaryColor String?
-  logo           String? 
+  logo           String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -136,7 +151,6 @@ model Team {
   statsVisibilityConfigs StatsVisibilityConfig[]
   paymentConcepts        PaymentConcept[]
 
-  // ✅ NUEVO — Jugadas del equipo (Playbook)
   plays Play[]
 }
 
@@ -175,7 +189,7 @@ model PendingInvitation {
   phone       String?
   userId      String?
   teamId      String
-  role        MembershipRoleType @default(PLAYER)
+  role        MembershipRoleType @default(PLAYER) // LEGACY hasta 8.7
   channel     String             @default("LINK")
   status      String             @default("PENDING")
   sentAt      DateTime           @default(now())
@@ -363,6 +377,7 @@ enum InvitationStatus {
   MAYBE
 }
 
+// LEGACY: se elimina en 8.7
 enum ClubRole {
   ADMIN_CLUB
   COACH
@@ -370,6 +385,7 @@ enum ClubRole {
   MEMBER
 }
 
+// LEGACY: se elimina en 8.7
 enum MembershipRoleType {
   PLAYER
   COACH
@@ -381,14 +397,19 @@ enum MembershipRoleType {
 model MembershipRole {
   id           String             @id @default(cuid())
   membershipId String
-  role         MembershipRoleType
+  // LOTE 8.1 — roleId sustituye a `role` (enum). Nullable en Fase A.
+  roleId       String
+  role         MembershipRoleType // LEGACY hasta 8.7
   createdAt    DateTime           @default(now())
 
   membership TeamMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  roleRef    Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
   @@unique([membershipId, role])
+  @@unique([membershipId, roleId])
   @@index([membershipId])
   @@index([role])
+  @@index([roleId])
 }
 
 enum GlobalRole {
@@ -397,7 +418,71 @@ enum GlobalRole {
 }
 
 // ============================================
-// PARTIDOS
+// LOTE 8.1 — ROLES Y PERMISOS
+// ============================================
+
+enum RoleScope {
+  CLUB
+  TEAM
+}
+
+model Role {
+  id          String    @id @default(cuid())
+  clubId      String
+  scope       RoleScope
+  name        String
+  description String?
+  isSystem    Boolean   @default(false)
+  isDefault   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  club            Club             @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  permissions     RolePermission[]
+  clubMembers     ClubMember[]
+  membershipRoles MembershipRole[]
+
+  @@unique([clubId, scope, name])
+  @@index([clubId, scope])
+}
+
+model RolePermission {
+  id        String   @id @default(cuid())
+  roleId    String
+  resource  String
+  action    String
+  scope     String?
+  granted   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, resource, action, scope])
+  @@index([roleId, resource, action])
+}
+
+model PermissionAuditLog {
+  id         String   @id @default(cuid())
+  clubId     String
+  actorId    String
+  targetType String
+  targetId   String
+  action     String
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  club  Club @relation("PermissionAuditClub", fields: [clubId], references: [id], onDelete: Cascade)
+  actor User @relation("PermissionAuditActor", fields: [actorId], references: [id], onDelete: Cascade)
+
+  @@index([clubId, createdAt])
+  @@index([targetId])
+  @@index([actorId])
+}
+
+// ============================================
+// MATCHES / STREAMING / ETC (sin cambios)
 // ============================================
 
 enum MatchType {
@@ -531,10 +616,6 @@ model MatchPlayerStats {
   @@index([userId])
 }
 
-// ============================================
-// LIVE STREAMING
-// ============================================
-
 model LiveStream {
   id               String    @id @default(cuid())
   matchId          String    @unique
@@ -604,10 +685,6 @@ model StreamPermission {
   @@index([liveStreamId])
   @@index([userId])
 }
-
-// ============================================
-// PLANIFICACIÓN DE TEMPORADA
-// ============================================
 
 model Season {
   id          String        @id @default(cuid())
@@ -701,10 +778,6 @@ enum CallupFlagStatus {
   NO
 }
 
-// ============================================
-// PÁDEL — SUBPARTIDOS
-// ============================================
-
 model PadelSubMatch {
   id        String   @id @default(cuid())
   matchId   String
@@ -739,10 +812,6 @@ model PadelSet {
   @@index([subMatchId])
 }
 
-// ============================================
-// CONFIGURACIÓN DE VISIBILIDAD DE ESTADÍSTICAS
-// ============================================
-
 enum StatsScope {
   MATCH
   TEAM
@@ -774,10 +843,6 @@ model StatsVisibilityConfig {
   @@index([teamId, scope, role])
   @@index([teamId, scope])
 }
-
-// ============================================
-// PERFIL DEL JUGADOR
-// ============================================
 
 model PlayerProfile {
   id     String @id @default(cuid())
@@ -814,10 +879,6 @@ model PlayerProfile {
   @@index([userId])
 }
 
-// ============================================
-// HISTORIAL DE LESIONES
-// ============================================
-
 enum InjuryStatus {
   ACTIVE
   RECOVERED
@@ -847,10 +908,6 @@ model Injury {
   @@index([userId])
   @@index([status])
 }
-
-// ============================================
-// BIBLIOTECA DE EJERCICIOS (por usuario)
-// ============================================
 
 model LibraryExercise {
   id      String @id @default(cuid())
@@ -888,10 +945,6 @@ model LibraryMedia {
   @@index([libraryExerciseId])
 }
 
-// ============================================
-// PLAYBOOK — JUGADAS POR EQUIPO
-// ============================================
-
 model Play {
   id          String  @id @default(cuid())
   name        String
@@ -919,17 +972,13 @@ model PlayStep {
 
   order       Int     @default(0)
   description String?
-  imageUrl    String? // data URL (base64) de la pizarra o imagen subida
+  imageUrl    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([playId, order])
 }
-
-// ============================================================
-// PAYMENTS — Registro de pagos de membresías
-// ============================================================
 
 model PaymentConcept {
   id                    String   @id @default(cuid())

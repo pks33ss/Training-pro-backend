@@ -27,6 +27,7 @@ import { PlaybookModule } from './playbook/playbook.module';
 import { AdminModule } from './admin/admin.module';
 import { MailModule } from './mail/mail.module';
 import { PaymentsModule } from './payments/payments.module';
+import { PermissionsModule } from './permissions/permissions.module'; // LOTE 8.2
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { PaymentsModule } from './payments/payments.module';
     ScheduleModule.forRoot(),
 
     PrismaModule,
+    PermissionsModule, // LOTE 8.2 — @Global, expone PermissionsService/TeamPolicyService
     AuthModule,
     UserModule,
     ClubModule,

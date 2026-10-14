@@ -14,6 +14,7 @@ import {
   getAddableRoles,
   isActiveClubMember,
 } from '../common/access'
+import { resolveTeamRoleId } from '../permissions/resolve-role-id'
 
 @Injectable()
 export class TeamService {
@@ -33,6 +34,13 @@ export class TeamService {
       throw new ForbiddenException('No tienes acceso a este club');
     }
 
+    // Lote 8.1 — resolver roleId de ADMIN_TEAM antes de la transacción
+    const adminTeamRoleId = await resolveTeamRoleId(
+      this.prisma,
+      createTeamDto.clubId,
+      'ADMIN_TEAM',
+    );
+
     const team = await this.prisma.$transaction(async (tx) => {
       const newTeam = await tx.team.create({
         data: {
@@ -41,7 +49,6 @@ export class TeamService {
           category: createTeamDto.category,
           season: createTeamDto.season,
           clubId: createTeamDto.clubId,
-          // ✅ NUEVO — Identidad visual
           primaryColor: createTeamDto.primaryColor,
           secondaryColor: createTeamDto.secondaryColor,
           logo: createTeamDto.logo,
@@ -57,7 +64,7 @@ export class TeamService {
           teamId: newTeam.id,
           status: 'ACTIVE',
           roles: {
-            create: [{ role: 'ADMIN_TEAM' }],
+            create: [{ role: 'ADMIN_TEAM', roleId: adminTeamRoleId }],
           },
         },
       });
@@ -149,7 +156,7 @@ export class TeamService {
             season: {
               select: { id: true, name: true, color: true },
             },
-            roles: true,
+            roles: { include: { roleRef: { select: { name: true } } } },
           },
           orderBy: [{ jerseyNumber: 'asc' }],
         },
@@ -164,21 +171,21 @@ export class TeamService {
       ...team,
       memberships: team.memberships.map((m: any) => ({
         ...m,
-        role: m.roles?.[0]?.role ?? 'PLAYER',
-        roles: (m.roles ?? []).map((r: any) => r.role),
+        role: m.roles?.[0]?.roleRef?.name ?? 'PLAYER',
+        roles: (m.roles ?? []).map((r: any) => r.roleRef?.name ?? r.role),
       })),
     }
 
     const myMembership = await this.prisma.teamMembership.findUnique({
       where: { userId_teamId: { userId, teamId } },
-      include: { roles: true },
+      include: { roles: { include: { roleRef: { select: { name: true } } } } },
     })
 
     const myMembershipPayload = myMembership
       ? {
           id: myMembership.id,
           status: myMembership.status,
-          roles: myMembership.roles.map((r) => r.role),
+          roles: myMembership.roles.map((r) => r.roleRef.name),
         }
       : null
 

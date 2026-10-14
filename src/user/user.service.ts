@@ -18,13 +18,18 @@ import { UpdateInjuryDto } from './dto/update-injury.dto'
 import { MailService } from '../mail/mail.service'
 import { MailModule } from '../mail/mail.module'
 import { generateInvitationCode } from '../invitations/utils/generate-code'
+import {
+  resolveClubRoleId,
+  resolveTeamRoleId,
+} from '../permissions/resolve-role-id'
+import { teamRoleNameFromLegacy } from '../permissions/role-name-maps'
 
 @Injectable()
 export class UserService {
   constructor(
-  private prisma: PrismaService,
-  private mailService: MailService,
-) {}
+    private prisma: PrismaService,
+    private mailService: MailService,
+  ) {}
 
   async findAll(includeDeleted = false) {
     return this.prisma.user.findMany({
@@ -265,7 +270,7 @@ export class UserService {
             memberships: {
               where: {
                 status: 'ACTIVE',
-                roles: { some: { role: 'COACH' } },
+                roles: { some: { roleRef: { name: 'COACH' } } },
                 NOT: { userId },
               },
               select: {
@@ -477,28 +482,25 @@ export class UserService {
         role: true,
         isGhost: true,
         createdAt: true,
-               // ✅ NUEVO — flags de notificaciones por email
         emailNotificationsEnabled: true,
         emailOptOut: true,
-                        // ✅ NUEVO — fondos personalizados de la pizarra táctica (uno por modo)
         tacticalBackgroundUrlHalf: true,
         tacticalBackgroundUrlFull: true,
         tacticalBackgroundMode: true,
-        // ✅ NUEVO — preferencias de navegación (pestañas ocultas)
         hiddenTabs: true,
-                memberships: {
+        memberships: {
           include: {
             team: {
               include: {
                 club: {
-  select: {
-    id: true,
-    name: true,
-    logo: true,
-    primaryColor: true,
-    secondaryColor: true,
-  },
-},
+                  select: {
+                    id: true,
+                    name: true,
+                    logo: true,
+                    primaryColor: true,
+                    secondaryColor: true,
+                  },
+                },
               },
             },
             season: {
@@ -584,11 +586,6 @@ export class UserService {
   // PREFERENCIAS DE EMAIL (opt-out del propio usuario)
   // ============================================
 
-  /**
-   * Actualiza el flag `emailOptOut` del usuario logueado.
-   * - `emailOptOut = true`  → el usuario NO recibe emails, aunque el admin le tenga ON.
-   * - `emailOptOut = false` → recibe según `emailNotificationsEnabled` (norma del admin).
-   */
   async updateEmailOptOut(userId: string, optOut: boolean) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -791,7 +788,7 @@ export class UserService {
           status: 'ACTIVE',
           roles: {
             some: {
-              role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] },
+              roleRef: { name: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } },
             },
           },
         },
@@ -811,7 +808,7 @@ export class UserService {
   // CREAR USUARIO FANTASMA Y AÑADIRLO A UN EQUIPO
   // ============================================
 
-      async createGhost(requesterId: string, dto: CreateGhostDto) {
+  async createGhost(requesterId: string, dto: CreateGhostDto) {
     const team = await this.prisma.team.findUnique({
       where: { id: dto.teamId },
       include: { club: true },
@@ -878,6 +875,24 @@ export class UserService {
       dto.lastName,
     )
 
+    // Lote 8.1 — resolver roleIds antes de la transacción
+    const ghostTeamRoleName = teamRoleNameFromLegacy(
+      (dto.role ?? 'PLAYER') as any,
+    )
+    if (!ghostTeamRoleName) {
+      throw new ConflictException('Rol de equipo inválido')
+    }
+    const ghostTeamRoleId = await resolveTeamRoleId(
+      this.prisma,
+      team.clubId,
+      ghostTeamRoleName,
+    )
+    const ghostClubRoleId = await resolveClubRoleId(
+      this.prisma,
+      team.clubId,
+      'MEMBER',
+    )
+
     const newUser = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
@@ -896,7 +911,11 @@ export class UserService {
         data: {
           userId: user.id,
           teamId: dto.teamId,
-          roles: { create: [{ role: (dto.role ?? 'PLAYER') as any }] },
+          roles: {
+            create: [
+              { role: ghostTeamRoleName as any, roleId: ghostTeamRoleId },
+            ],
+          },
           status: 'ACTIVE',
           jerseyNumber: dto.jerseyNumber ?? null,
           position: dto.position ?? null,
@@ -909,6 +928,7 @@ export class UserService {
           userId: user.id,
           clubId: team.clubId,
           role: 'MEMBER',
+          roleId: ghostClubRoleId,
           isActive: true,
         },
       })
@@ -1016,6 +1036,24 @@ export class UserService {
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
+    // Lote 8.1 — resolver roleIds
+    const ghostTeamRoleName = teamRoleNameFromLegacy(
+      (dto.role ?? 'PLAYER') as any,
+    )
+    if (!ghostTeamRoleName) {
+      throw new ConflictException('Rol de equipo inválido')
+    }
+    const ghostTeamRoleId = await resolveTeamRoleId(
+      this.prisma,
+      team.clubId,
+      ghostTeamRoleName,
+    )
+    const ghostClubRoleId = await resolveClubRoleId(
+      this.prisma,
+      team.clubId,
+      'MEMBER',
+    )
+
     await this.prisma.teamMembership.upsert({
       where: { userId_teamId: { userId: ghostId, teamId: dto.teamId } },
       create: {
@@ -1025,7 +1063,9 @@ export class UserService {
         invitedById: requesterId,
         jerseyNumber: dto.jerseyNumber ?? null,
         position: dto.position ?? null,
-        roles: { create: [{ role: (dto.role ?? 'PLAYER') as any }] },
+        roles: {
+          create: [{ role: ghostTeamRoleName as any, roleId: ghostTeamRoleId }],
+        },
       },
       update: {
         status: 'ACTIVE',
@@ -1041,15 +1081,15 @@ export class UserService {
         userId: ghostId,
         clubId: team.clubId,
         role: 'MEMBER',
+        roleId: ghostClubRoleId,
         isActive: true,
       },
       update: { isActive: true },
     })
   }
 
-    /**
+  /**
    * Crea una invitación pendiente para un fantasma y envía el email.
-   * Devuelve true si el email se envió correctamente.
    */
   private async sendGhostInvitation(
     ghostUserId: string,
@@ -1060,13 +1100,11 @@ export class UserService {
     requesterId: string,
   ): Promise<boolean> {
     try {
-      // Marcar invitaciones previas como revocadas
       await this.prisma.pendingInvitation.updateMany({
         where: { userId: ghostUserId, teamId, status: 'PENDING' },
         data: { status: 'REVOKED' },
       })
 
-      // Generar código
       const { generateInvitationCode } = await import(
         '../invitations/utils/generate-code'
       )
@@ -1093,8 +1131,7 @@ export class UserService {
         },
       })
 
-      // Enviar email
-            const baseUrl =
+      const baseUrl =
         process.env.FRONTEND_URL || 'https://app.joinsportapp.com'
       const cleanBase = baseUrl.replace(/\/$/, '')
       const invitationLink = `${cleanBase}/register?invitation=${code}`
@@ -1348,12 +1385,6 @@ export class UserService {
   // FONDOS DE PIZARRA TÁCTICA (uno por modo)
   // ============================================
 
-  /**
-   * Actualiza los fondos personalizados de la pizarra táctica.
-   * - `urlHalf: null` → resetea el fondo de media pista.
-   * - `urlFull: null` → resetea el fondo de pista completa.
-   * - `mode` cambia entre 'HALF' y 'FULL'.
-   */
   async updateTacticalBackground(
     userId: string,
     data: {
@@ -1392,15 +1423,10 @@ export class UserService {
     })
   }
 
-    // ============================================
+  // ============================================
   // PREFERENCIAS DEL USUARIO
   // ============================================
 
-  /**
-   * Actualiza preferencias de navegación del usuario.
-   * - `hiddenTabs`: array de IDs de pestañas del menú superior que se ocultan.
-   *   Opt-out: por defecto vacío (todas visibles).
-   */
   async updatePreferences(
     userId: string,
     data: { hiddenTabs?: string[] },
@@ -1425,7 +1451,4 @@ export class UserService {
       },
     })
   }
-
-
-
 }

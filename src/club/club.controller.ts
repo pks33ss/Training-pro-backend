@@ -21,10 +21,12 @@ import { CreateClubDto } from './dto/create-club.dto';
 import { UpdateClubDto } from './dto/update-club.dto';
 import { UpdatePaymentRemindersDto } from './dto/update-payment-reminders.dto';
 import { AuthGuard } from '../auth/auth.guard';
+import { PermissionsGuard } from '../permissions/permissions.guard';
+import { RequirePermission } from '../permissions/require-permission.decorator';
 
 @ApiTags('clubs')
 @Controller('clubs')
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, PermissionsGuard)
 @ApiBearerAuth('access-token')
 export class ClubController {
   constructor(private readonly clubService: ClubService) {}
@@ -48,6 +50,7 @@ export class ClubController {
   @ApiOperation({ summary: 'Obtener un club por ID' })
   @ApiResponse({ status: 200, description: 'Club encontrado' })
   @ApiResponse({ status: 404, description: 'Club no encontrado' })
+  @RequirePermission('club_settings', 'view', { clubIdFrom: { param: 'id' } })
   findOne(@Request() req, @Param('id') id: string) {
     return this.clubService.findOne(req.user.id, id);
   }
@@ -56,6 +59,7 @@ export class ClubController {
   @ApiOperation({ summary: 'Actualizar un club' })
   @ApiResponse({ status: 200, description: 'Club actualizado' })
   @ApiResponse({ status: 403, description: 'Sin permisos' })
+  @RequirePermission('club_settings', 'edit', { clubIdFrom: { param: 'id' } })
   update(
     @Request() req,
     @Param('id') id: string,
@@ -68,20 +72,20 @@ export class ClubController {
   @ApiOperation({ summary: 'Eliminar un club' })
   @ApiResponse({ status: 200, description: 'Club eliminado' })
   @ApiResponse({ status: 403, description: 'Sin permisos' })
+  // Borrar club no está en la matriz: queda solo para ADMIN_CLUB/SUPER_ADMIN
+  // vía servicio. No anotamos aquí.
   remove(@Request() req, @Param('id') id: string) {
     return this.clubService.remove(req.user.id, id);
   }
 
-  // ============================================
-  // GESTIÓN DE MIEMBROS
-  // ============================================
-
   @Get(':id/members')
+  @RequirePermission('member', 'view', { clubIdFrom: { param: 'id' } })
   getMembers(@Request() req, @Param('id') id: string) {
     return this.clubService.getMembers(req.user.id, id);
   }
 
   @Post(':id/invite')
+  @RequirePermission('invitation', 'create', { clubIdFrom: { param: 'id' } })
   inviteMember(
     @Request() req,
     @Param('id') id: string,
@@ -92,6 +96,7 @@ export class ClubController {
   }
 
   @Put(':clubId/members/:memberId')
+  @RequirePermission('member', 'edit', { clubIdFrom: { param: 'clubId' } })
   updateMemberRole(
     @Request() req,
     @Param('clubId') clubId: string,
@@ -107,6 +112,7 @@ export class ClubController {
   }
 
   @Delete(':clubId/members/:memberId')
+  @RequirePermission('member', 'delete', { clubIdFrom: { param: 'clubId' } })
   removeMember(
     @Request() req,
     @Param('clubId') clubId: string,
@@ -116,6 +122,7 @@ export class ClubController {
   }
 
   @Post(':clubId/members/:memberId/reset-password')
+  @RequirePermission('member', 'edit', { clubIdFrom: { param: 'clubId' } })
   resetMemberPassword(
     @Request() req,
     @Param('clubId') clubId: string,
@@ -137,6 +144,7 @@ export class ClubController {
   }
 
   @Get(':clubId/members/:memberId/teams')
+  @RequirePermission('member', 'view', { clubIdFrom: { param: 'clubId' } })
   getMemberTeams(
     @Request() req,
     @Param('clubId') clubId: string,
@@ -146,6 +154,7 @@ export class ClubController {
   }
 
   @Post(':clubId/members/:memberId/teams')
+  @RequirePermission('member', 'edit', { clubIdFrom: { param: 'clubId' } })
   addMemberToTeam(
     @Request() req,
     @Param('clubId') clubId: string,
@@ -161,6 +170,7 @@ export class ClubController {
   }
 
   @Delete(':clubId/members/:memberId/teams/:teamId')
+  @RequirePermission('member', 'edit', { clubIdFrom: { param: 'clubId' } })
   removeMemberFromTeam(
     @Request() req,
     @Param('clubId') clubId: string,
@@ -175,24 +185,18 @@ export class ClubController {
     );
   }
 
-  // ============================================
-  // JUGADORES DEL CLUB (vista global)
-  // ============================================
-
   @Get(':clubId/players')
   @ApiOperation({ summary: 'Listar todos los jugadores del club' })
   @ApiResponse({ status: 200, description: 'Lista de jugadores' })
   @ApiResponse({ status: 403, description: 'Sin permisos' })
+  @RequirePermission('member', 'view', { clubIdFrom: { param: 'clubId' } })
   findClubPlayers(@Request() req, @Param('clubId') clubId: string) {
     return this.clubService.findClubPlayers(req.user.id, clubId);
   }
 
-  // ============================================
-  // LOGO DEL CLUB
-  // ============================================
-
   @Post(':id/upload-logo')
   @ApiOperation({ summary: 'Subir logo del club (base64)' })
+  @RequirePermission('club_branding', 'edit', { clubIdFrom: { param: 'id' } })
   uploadLogo(
     @Request() req,
     @Param('id') id: string,
@@ -206,22 +210,21 @@ export class ClubController {
 
   @Delete(':id/logo')
   @ApiOperation({ summary: 'Eliminar logo del club' })
+  @RequirePermission('club_branding', 'edit', { clubIdFrom: { param: 'id' } })
   removeLogo(@Request() req, @Param('id') id: string) {
     return this.clubService.removeLogo(req.user.id, id);
   }
 
-  // ============================================
-  // RECORDATORIOS DE PAGO
-  // ============================================
-
   @Get(':id/reminders-config')
   @ApiOperation({ summary: 'Obtener configuración de recordatorios de pago' })
+  @RequirePermission('club_settings', 'view', { clubIdFrom: { param: 'id' } })
   getRemindersConfig(@Request() req, @Param('id') id: string) {
     return this.clubService.getRemindersConfig(req.user.id, id);
   }
 
   @Put(':id/payment-reminders')
   @ApiOperation({ summary: 'Activar/desactivar recordatorios de pago' })
+  @RequirePermission('club_settings', 'edit', { clubIdFrom: { param: 'id' } })
   updatePaymentReminders(
     @Request() req,
     @Param('id') id: string,
