@@ -40,12 +40,11 @@ export class TeamController {
     return this.teamService.findAllByClubWithMembers(req.user.id, clubId)
   }
 
+  // El clubId no está en la ruta. La autorización se resuelve dentro del
+  // servicio (`canViewTeam` → matriz). No usar @RequirePermission aquí,
+  // porque el guard no puede resolver el clubId y denegaría con 403.
   @Get(':id')
-  @RequirePermission('team', 'view', { clubIdFrom: { param: 'clubId' } })
   findOne(@Request() req, @Param('id') id: string) {
-    // NOTA: el clubId no está en la ruta. Este endpoint resuelve el club
-    // desde el servicio. Con la matriz no podemos pre-chequear sin query.
-    // Dejamos que el servicio decida (que llama a canViewTeam → matrix).
     return this.teamService.findOne(req.user.id, id);
   }
 

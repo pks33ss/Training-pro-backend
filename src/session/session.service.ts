@@ -62,6 +62,9 @@ export class SessionService {
           orderBy: { order: 'asc' },
           include: { media: true },
         },
+        // El listado de sesiones muestra un resumen de asistencia en cada
+        // card. Sin `attendances` el frontend no puede calcularlo.
+        attendances: true,
       },
       orderBy: { date: 'desc' },
     })
@@ -101,6 +104,9 @@ export class SessionService {
           include: { media: true },
         },
         attendances: true,
+        createdBy: {
+          select: { id: true, name: true, lastName: true, email: true },
+        },
       },
     })
 
@@ -273,7 +279,6 @@ export class SessionService {
    * Añade una media (imagen o link) a un ejercicio.
    *
    * - `type = 'IMAGE'` → `url` es el data URL (base64) subido desde el frontend.
-   *   Se sube a Cloudinary (si procede) — por ahora guardamos tal cual.
    * - `type = 'LINK'` → `url` es la URL tal cual.
    */
   async addMediaToExercise(

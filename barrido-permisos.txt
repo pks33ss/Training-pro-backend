@@ -1,0 +1,146 @@
+﻿
+> src\club\club.controller.ts:53:  @RequirePermission('club_settings', 'view', { 
+clubIdFrom: { param: 'id' } })
+  src\club\club.controller.ts:54:  findOne(@Request() req, @Param('id') id: string) 
+{
+  src\club\club.controller.ts:55:    return this.clubService.findOne(req.user.id, 
+id);
+  src\club\club.controller.ts:56:  }
+> src\club\club.controller.ts:62:  @RequirePermission('club_settings', 'edit', { 
+clubIdFrom: { param: 'id' } })
+  src\club\club.controller.ts:63:  update(
+  src\club\club.controller.ts:64:    @Request() req,
+  src\club\club.controller.ts:65:    @Param('id') id: string,
+> src\club\club.controller.ts:82:  @RequirePermission('member', 'view', { 
+clubIdFrom: { param: 'id' } })
+  src\club\club.controller.ts:83:  getMembers(@Request() req, @Param('id') id: 
+string) {
+  src\club\club.controller.ts:84:    return 
+this.clubService.getMembers(req.user.id, id);
+  src\club\club.controller.ts:85:  }
+> src\club\club.controller.ts:88:  @RequirePermission('invitation', 'create', { 
+clubIdFrom: { param: 'id' } })
+  src\club\club.controller.ts:89:  inviteMember(
+  src\club\club.controller.ts:90:    @Request() req,
+  src\club\club.controller.ts:91:    @Param('id') id: string,
+> src\club\club.controller.ts:99:  @RequirePermission('member', 'edit', { 
+clubIdFrom: { param: 'clubId' } })
+  src\club\club.controller.ts:100:  updateMemberRole(
+  src\club\club.controller.ts:101:    @Request() req,
+  src\club\club.controller.ts:102:    @Param('clubId') clubId: string,
+> src\club\club.controller.ts:115:  @RequirePermission('member', 'delete', { 
+clubIdFrom: { param: 'clubId' } })
+  src\club\club.controller.ts:116:  removeMember(
+  src\club\club.controller.ts:117:    @Request() req,
+  src\club\club.controller.ts:118:    @Param('clubId') clubId: string,
+> src\club\club.controller.ts:125:  @RequirePermission('member', 'edit', { 
+clubIdFrom: { param: 'clubId' } })
+  src\club\club.controller.ts:126:  resetMemberPassword(
+  src\club\club.controller.ts:127:    @Request() req,
+  src\club\club.controller.ts:128:    @Param('clubId') clubId: string,
+> src\club\club.controller.ts:147:  @RequirePermission('member', 'view', { 
+clubIdFrom: { param: 'clubId' } })
+  src\club\club.controller.ts:148:  getMemberTeams(
+  src\club\club.controller.ts:149:    @Request() req,
+  src\club\club.controller.ts:150:    @Param('clubId') clubId: string,
+> src\club\club.controller.ts:157:  @RequirePermission('member', 'edit', { 
+clubIdFrom: { param: 'clubId' } })
+  src\club\club.controller.ts:158:  addMemberToTeam(
+  src\club\club.controller.ts:159:    @Request() req,
+  src\club\club.controller.ts:160:    @Param('clubId') clubId: string,
+> src\club\club.controller.ts:173:  @RequirePermission('member', 'edit', { 
+clubIdFrom: { param: 'clubId' } })
+  src\club\club.controller.ts:174:  removeMemberFromTeam(
+  src\club\club.controller.ts:175:    @Request() req,
+  src\club\club.controller.ts:176:    @Param('clubId') clubId: string,
+> src\club\club.controller.ts:192:  @RequirePermission('member', 'view', { 
+clubIdFrom: { param: 'clubId' } })
+  src\club\club.controller.ts:193:  findClubPlayers(@Request() req, 
+@Param('clubId') clubId: string) {
+  src\club\club.controller.ts:194:    return 
+this.clubService.findClubPlayers(req.user.id, clubId);
+  src\club\club.controller.ts:195:  }
+> src\club\club.controller.ts:199:  @RequirePermission('club_branding', 'edit', { 
+clubIdFrom: { param: 'id' } })
+  src\club\club.controller.ts:200:  uploadLogo(
+  src\club\club.controller.ts:201:    @Request() req,
+  src\club\club.controller.ts:202:    @Param('id') id: string,
+> src\club\club.controller.ts:213:  @RequirePermission('club_branding', 'edit', { 
+clubIdFrom: { param: 'id' } })
+  src\club\club.controller.ts:214:  removeLogo(@Request() req, @Param('id') id: 
+string) {
+  src\club\club.controller.ts:215:    return 
+this.clubService.removeLogo(req.user.id, id);
+  src\club\club.controller.ts:216:  }
+> src\club\club.controller.ts:220:  @RequirePermission('club_settings', 'view', { 
+clubIdFrom: { param: 'id' } })
+  src\club\club.controller.ts:221:  getRemindersConfig(@Request() req, @Param('id') 
+id: string) {
+  src\club\club.controller.ts:222:    return 
+this.clubService.getRemindersConfig(req.user.id, id);
+  src\club\club.controller.ts:223:  }
+> src\club\club.controller.ts:227:  @RequirePermission('club_settings', 'edit', { 
+clubIdFrom: { param: 'id' } })
+  src\club\club.controller.ts:228:  updatePaymentReminders(
+  src\club\club.controller.ts:229:    @Request() req,
+  src\club\club.controller.ts:230:    @Param('id') id: string,
+> src\invitations\invitations.controller.ts:62:  @RequirePermission('invitation', 
+'view', {
+  src\invitations\invitations.controller.ts:63:    teamIdFrom: { param: 'teamId' },
+  src\invitations\invitations.controller.ts:64:  })
+  src\invitations\invitations.controller.ts:65:  findByTeam(@Request() req, 
+@Param('teamId') teamId: string) {
+> src\memberships\memberships.controller.ts:29:  @RequirePermission('member', 
+'view', { teamIdFrom: { param: 'teamId' } })
+  src\memberships\memberships.controller.ts:30:  findByTeam(@Request() req, 
+@Param('teamId') teamId: string) {
+  src\memberships\memberships.controller.ts:31:    return 
+this.membershipsService.findByTeam(req.user.id, teamId)
+  src\memberships\memberships.controller.ts:32:  }
+> src\memberships\memberships.controller.ts:35:  @RequirePermission('member', 
+'create', { teamIdFrom: { param: 'teamId' } })
+  src\memberships\memberships.controller.ts:36:  addMember(
+  src\memberships\memberships.controller.ts:37:    @Request() req,
+  src\memberships\memberships.controller.ts:38:    @Param('teamId') teamId: string,
+> src\memberships\memberships.controller.ts:65:  @RequirePermission('member', 
+'delete', { teamIdFrom: { param: 'teamId' } })
+  src\memberships\memberships.controller.ts:66:  remove(
+  src\memberships\memberships.controller.ts:67:    @Request() req,
+  src\memberships\memberships.controller.ts:68:    @Param('teamId') teamId: string,
+> src\payments\payments.controller.ts:41:  @RequirePermission('payment', 'create', 
+{ clubIdFrom: { body: 'clubId' } })
+  src\payments\payments.controller.ts:42:  createConcept(@Request() req, @Body() 
+dto: CreateConceptDto) {
+  src\payments\payments.controller.ts:43:    return 
+this.paymentsService.createConcept(req.user.id, dto);
+  src\payments\payments.controller.ts:44:  }
+> src\team\team.controller.ts:26:  @RequirePermission('team', 'create', { 
+clubIdFrom: { body: 'clubId' } })
+  src\team\team.controller.ts:27:  create(@Request() req, @Body() createTeamDto: 
+CreateTeamDto) {
+  src\team\team.controller.ts:28:    return this.teamService.create(req.user.id, 
+createTeamDto);
+  src\team\team.controller.ts:29:  }
+> src\team\team.controller.ts:32:  @RequirePermission('team', 'view', { clubIdFrom: 
+{ param: 'clubId' } })
+  src\team\team.controller.ts:33:  findAllByClub(@Request() req, @Param('clubId') 
+clubId: string) {
+  src\team\team.controller.ts:34:    return 
+this.teamService.findAllByClub(req.user.id, clubId);
+  src\team\team.controller.ts:35:  }
+> src\team\team.controller.ts:38:  @RequirePermission('team', 'view', { clubIdFrom: 
+{ param: 'clubId' } })
+  src\team\team.controller.ts:39:  async findAllByClubWithMembers(@Request() req, 
+@Param('clubId') clubId: string) {
+  src\team\team.controller.ts:40:    return 
+this.teamService.findAllByClubWithMembers(req.user.id, clubId)
+  src\team\team.controller.ts:41:  }
+> src\team\team.controller.ts:44:  // servicio (`canViewTeam` → matriz). No usar 
+@RequirePermission aquí,
+  src\team\team.controller.ts:45:  // porque el guard no puede resolver el clubId y 
+denegaría con 403.
+  src\team\team.controller.ts:46:  @Get(':id')
+  src\team\team.controller.ts:47:  findOne(@Request() req, @Param('id') id: string) 
+{
+
+

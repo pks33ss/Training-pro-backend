@@ -1,8 +1,9 @@
 # Permisos y derechos por rol
 
-> Estado: **vigente desde Lote 8 (8.0–8.5)**.
-> `access.ts` sigue vivo como motor legacy hasta 8.7, tras lo cual se retira.
+> Estado: **vigente desde Lote 8 completo (8.0–8.7)**.
 > Fuente de verdad de los recursos, acciones y precedencia.
+> El motor legacy (`PERMISSIONS_ENGINE=access`, enums `ClubRole` y
+> `MembershipRoleType`) fue retirado en 8.7.
 
 ## 1. Visión general
 
@@ -15,12 +16,11 @@ La autorización se expresa como una **matriz de permisos por rol**:
 - **Reglas de negocio** (`TeamPolicyService`): reglas que NO son permisos puros
   (último COACH, restrictiva con multi-rol, auto-salida).
 
-Durante 8.x conviven dos motores según `PERMISSIONS_ENGINE`:
+El motor es **siempre** `PermissionsService`. No hay flag de motor dual.
 
-- `access` (DEFAULT): lógica legacy, comportamiento actual.
-- `matrix`: nuevo motor basado en la matriz.
-
-En 8.7 se retira el flag y `access.ts` queda como thin wrapper sobre `PermissionsService`.
+`access.ts` es una capa de conveniencia con funciones helper que delegan en
+`PermissionsService`. Los servicios del backend pueden usar `access.ts` o
+`PermissionsService` directamente. **Misma fuente de verdad**.
 
 ## 2. Ámbitos y roles de sistema
 
@@ -32,29 +32,29 @@ En 8.7 se retira el flag y `access.ts` queda como thin wrapper sobre `Permission
 
 ### Roles de CLUB (9)
 
-| Nombre | Descripción | ¿Editable? | ¿Default? |
+| Nombre | Descripción | ¿Renombrable? | ¿Default? |
 |---|---|---|---|
-| ADMIN_CLUB | Administrador del club (bypass total) | ❌ (bypass) | ❌ |
-| DIRECTOR_DEPORTIVO | Dirección deportiva del club | ✅ | ❌ |
-| COORDINADOR | Coordina todas las categorías del club | ✅ | ❌ |
-| COACH | Entrenador del club | ✅ | ❌ |
-| ASSISTANT | Entrenador ayudante del club | ✅ | ❌ |
-| OJEADOR | Solo lectura de perfiles y estadísticas | ✅ | ❌ |
-| SECRETARIO | Documentación y altas/bajas | ✅ | ❌ |
-| TESORERO | Gestiona pagos y cuotas del club | ✅ | ❌ |
-| MEMBER | Miembro del club | ✅ | ✅ |
+| ADMIN_CLUB | Administrador del club (bypass total) | ❌ | ❌ |
+| DIRECTOR_DEPORTIVO | Dirección deportiva del club | ❌ | ❌ |
+| COORDINADOR | Coordina todas las categorías del club | ❌ | ❌ |
+| COACH | Entrenador del club | ❌ | ❌ |
+| ASSISTANT | Entrenador ayudante del club | ❌ | ❌ |
+| OJEADOR | Solo lectura de perfiles y estadísticas | ❌ | ❌ |
+| SECRETARIO | Documentación y altas/bajas | ❌ | ❌ |
+| TESORERO | Gestiona pagos y cuotas del club | ❌ | ❌ |
+| MEMBER | Miembro del club | ❌ | ✅ |
 
 ### Roles de EQUIPO (7)
 
-| Nombre | Descripción | ¿Editable? | ¿Default? |
+| Nombre | Descripción | ¿Renombrable? | ¿Default? |
 |---|---|---|---|
-| ADMIN_TEAM | Administrador de equipo | ✅ | ❌ |
-| COACH | Entrenador de equipo | ✅ | ❌ |
-| ASSISTANT | Entrenador ayudante de equipo | ✅ | ❌ |
-| DELEGADO | Logística del equipo | ✅ | ❌ |
-| PLAYER | Jugador | ✅ | ✅ |
-| ENTRENADOR_VISITANTE | Ve el equipo sin poder editar | ✅ | ❌ |
-| FISIO | Fisioterapeuta del equipo | ✅ | ❌ |
+| ADMIN_TEAM | Administrador de equipo | ❌ | ❌ |
+| COACH | Entrenador de equipo | ❌ | ❌ |
+| ASSISTANT | Entrenador ayudante de equipo | ❌ | ❌ |
+| DELEGADO | Logística del equipo | ❌ | ❌ |
+| PLAYER | Jugador | ❌ | ✅ |
+| ENTRENADOR_VISITANTE | Ve el equipo sin poder editar | ❌ | ❌ |
+| FISIO | Fisioterapeuta del equipo | ❌ | ❌ |
 
 Reglas:
 
@@ -63,13 +63,17 @@ Reglas:
 - Un user puede tener **varios roles de equipo** simultáneos (`MembershipRole`).
 - El rol de club **manda** sobre el de equipo en conflicto.
 - `PARENT` **no es un rol**: se deriva de `TutorRelationship` con `status = ACTIVE`.
-- Los **roles de sistema no son renombrables**, pero **sus permisos SÍ son editables**
-  desde la UI (es el propósito de la matriz). El nombre queda bloqueado para no
-  romper referencias.
+- **Los roles de sistema NO son renombrables** (para no romper referencias en el
+  código). **Sus permisos SÍ son editables** desde la UI. El nombre queda
+  bloqueado; la matriz, no. Es el propósito del Lote 8.
+- Los **roles custom** (creados por el club) sí se pueden renombrar y borrar
+  (siempre que no estén asignados a nadie).
 
 ## 3. Recursos y acciones
 
-Acciones por recurso: `view`, `create`, `edit`, `delete` (subconjunto según recurso).
+Acciones por recurso: `view`, `create`, `edit`, `delete`. Algunos recursos
+solo exponen un subconjunto (ver `ACTIONS_BY_RESOURCE` en
+`permissions.constants.ts`).
 
 | Recurso | Acciones | Etiqueta |
 |---|---|---|
@@ -94,22 +98,29 @@ Acciones por recurso: `view`, `create`, `edit`, `delete` (subconjunto según rec
 Dado un actor `A`, un recurso `R`, una acción `X` y opcionalmente un `teamId`:
 
 1. `A.role === SUPER_ADMIN` → **allow**.
-2. `A.ClubMember(club).role.name === ADMIN_CLUB` → **allow**.
+2. `A.ClubMember(club).roleRef.name === ADMIN_CLUB` → **allow**.
 3. Cargar permisos del rol de club de `A`:
    - si existe fila `(roleId, R, X, scope="team:<teamId>")` → gana ese `granted`.
    - si existe fila `(roleId, R, X, scope=null)` → gana ese `granted`.
-4. Si no hay fila y hay `teamId`, cargar permisos del rol de equipo de `A` en ese equipo:
+4. Si no hay fila y hay `teamId`, cargar permisos del rol de equipo de `A` en
+   ese equipo:
    - misma precedencia `scope específico > scope club`.
 5. Si sigue sin haber fila → **deny**.
 
 Precedencia entre fuentes: **club > equipo**, **scope específico > scope club**,
 **deny explícito > allow**.
 
-## 5. Defaults sin rol
+## 5. Defaults por rol de sistema
 
-Un `ClubMember` siempre tiene `roleId`. El rol `MEMBER` se siembra con permisos
-mínimos: `view` en recursos públicos del club (`team`, `member`, `event`,
-`document`, `club_settings`, `club_branding`).
+Cada rol de sistema se siembra con una matriz por defecto. Ajustable desde la UI.
+
+- `ADMIN_CLUB` no se siembra (bypass en código).
+- `MEMBER` (rol de club por defecto): solo `view` en recursos públicos del club
+  (`team`, `member`, `event`, `document`, `club_settings`, `club_branding`).
+- `PLAYER` (rol de equipo por defecto): `view` en `team`, `event`,
+  `player_profile`.
+- Los demás roles de sistema tienen sus defaults definidos en
+  `permissions/seed-roles.ts`.
 
 ## 6. Auditoría
 
@@ -132,21 +143,15 @@ Cada cambio en `Role` o `RolePermission` se registra en `PermissionAuditLog`
 
 ## 8. Normas
 
-- No se modifica `auth.guard.ts`.
-- `access.ts` se reescribe **entero** con las **mismas firmas exportadas**, delegando
-  en `PermissionsService` cuando `PERMISSIONS_ENGINE = 'matrix'`.
-- El frontend consume `GET /teams/:id/permissions/me` con la **misma forma** de JSON.
+- **No se modifica `auth.guard.ts`.** Es el guard de autenticación (JWT).
+  La autorización fina vive en `PermissionsGuard` + `PermissionsService`.
+- **No se modifica `docs/roles.md`.** Es el documento histórico del sistema
+  de roles legacy. Se conserva tal cual.
+- Los controllers pueden usar `AuthGuard` + `PermissionsGuard` compuestos.
+- El frontend consume `GET /teams/:id/permissions/me` (forma mantenida) y
+  `GET /clubs/:clubId/permissions/me` (matriz completa por club).
 
-## 9. Compatibilidad y rollback
-
-Durante Lotes 8.1–8.6 conviven dos motores:
-
-- `PERMISSIONS_ENGINE=access` → usa la lógica heredada (pre-migración).
-- `PERMISSIONS_ENGINE=matrix` → usa `PermissionsService`.
-
-En 8.7 se retira la variable y el motor heredado.
-
-## 10. Endpoints de la matriz
+## 9. Endpoints de la matriz
 
 | Método | Ruta | Para qué |
 |---|---|---|
@@ -158,21 +163,42 @@ En 8.7 se retira la variable y el motor heredado.
 | PUT | `/clubs/:clubId/roles/:roleId/permissions` | Set bulk de permisos |
 | POST | `/clubs/:clubId/roles/:roleId/preview-impact` | Preview de impacto |
 | GET | `/clubs/:clubId/permissions/me` | Permisos efectivos del usuario actual |
+| GET | `/teams/:id/permissions/me` | Permisos del usuario sobre el equipo actual |
 
-## 11. UI
+## 10. UI
 
 - `/settings/permissions` — hub con 2 tarjetas (matriz + visibilidad stats).
 - `/settings/permissions/roles` — matriz editable de roles y permisos.
 - `/settings/permissions/stats` — visibilidad de estadísticas por equipo activo.
-- El hub se muestra **dentro del tab "Permisos"** de `/settings` y también por URL directa.
+- El hub se muestra **dentro del tab "Permisos"** de `/settings` y también
+  por URL directa.
 - El tab "Permisos" aparece solo si el usuario pertenece a algún club.
 - La matriz es editable por cualquier ADMIN_CLUB del club.
 - El rol ADMIN_CLUB se muestra con 👑 y matriz deshabilitada.
 - El preview de impacto se puede consultar antes de guardar.
 
-## 12. Pendiente (8.6–8.7)
+## 11. Gating visual en frontend
 
-- 8.6: hook `usePermissions` extendido y gating visual en el frontend.
-- 8.7: retirar `PERMISSIONS_ENGINE`, borrar enums legacy `ClubRole` y
-  `MembershipRoleType`, migrar `PendingInvitation.role`, tests unitarios,
-  eliminar `ProfilePermissionsTab`.
+- `PermissionsProvider` (en `lib/permissions/permissions-provider.tsx`)
+  carga la matriz del club del `activeTeam` **una sola vez** y cachea por
+  `clubId`. Carga otros clubes bajo demanda con `ensureClubLoaded(clubId)`.
+- `usePermission(resource, action, { clubId?, teamId? })` chequea un permiso
+  puntual.
+- `<Can resource="..." action="..." clubId? teamId?>` envuelve cualquier
+  botón sensible y oculta el children si no hay permiso.
+- El frontend **nunca decide por su cuenta**: siempre consulta la matriz
+  resuelta por el backend.
+- El backend es **el único que autoriza de verdad**. El gating visual es UX,
+  no seguridad.
+
+## 12. Futuras mejoras
+
+- Endpoint extendido `/clubs/:clubId/permissions/me` con `addableRoles` /
+  `removableRoles` por equipo, para eliminar el hook legacy
+  `usePermissions(teamId)` del frontend.
+- Gating visual completo en todas las páginas (hoy está en miembros de
+  equipo, páginas de club, miembros del club, pagos y detalle de pago).
+- Tests unitarios de `PermissionsService` (resolución) y `TeamPolicyService`
+  (reglas de negocio).
+- Scope por equipo en la UI de la matriz (hoy `scope` se guarda, pero la
+  UI muestra solo el club-wide).
