@@ -4,7 +4,7 @@ import {
   getTeamForViewer,
   getTeamsForViewer,
   resolveViewerStatsRole,
-} from './access'
+} from '../access'
 
 type MockPrisma = {
   user: { findUnique: jest.Mock }
@@ -296,7 +296,7 @@ import {
   canViewPlayerProfile,
   canEditPlayerProfile,
   assertCanViewPlayerProfile,
-} from './access'
+} from '../access'
 import { ForbiddenException, NotFoundException } from '@nestjs/common'
 
 // Helper para crear un prisma mock con todos los métodos que necesitamos.

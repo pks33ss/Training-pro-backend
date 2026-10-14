@@ -1,14 +1,11 @@
 // backend/src/common/access.ts
-// Lote 8.2 — Wrapper de autorización.
-// Mismas firmas que antes. Según PERMISSIONS_ENGINE:
-//   - 'access' → lógica legacy idéntica (DEFAULT).
-//   - 'matrix' → PermissionsService + TeamPolicyService.
+// Lote 8.7 C.2 — Autorización. Todas las funciones usan el motor matrix.
+// El flag de motor dual (que existió durante la migración 8.x) ya no aplica.
 
 import { ForbiddenException, NotFoundException } from '@nestjs/common'
 import { PrismaClient } from '@prisma/client'
 import { PermissionsService } from '../permissions/permissions.service'
 import { TeamPolicyService } from '../permissions/team-policy.service'
-import { getEngine } from '../permissions/permissions.engine'
 
 type PrismaLike = PrismaClient
 
@@ -29,8 +26,6 @@ const STAFF_TEAM_ROLES: MembershipRoleValue[] = ['COACH', 'ASSISTANT', 'ADMIN_TE
 // Motores instanciados localmente (sin contenedor).
 const permissionsService = new PermissionsService()
 const teamPolicy = new TeamPolicyService()
-
-const useMatrix = () => getEngine() === 'matrix'
 
 // ─────────────────────────────────────────────
 // GLOBAL
@@ -95,10 +90,7 @@ export async function canInviteToClub(
 ): Promise<boolean> {
   if (await isSuperAdmin(prisma, userId)) return true
 
-  if (!useMatrix()) {
-    return isClubAdmin(prisma, userId, clubId)
-  }
-
+  // LOTE 8.7 C.2 — siempre matrix.
   return permissionsService.can(prisma, userId, 'invitation', 'create', {
     clubId,
   })
@@ -199,15 +191,11 @@ export async function canEditTeam(
 
   if (await isClubAdmin(prisma, userId, team.clubId)) return true
 
-  if (useMatrix()) {
-    return permissionsService.can(prisma, userId, 'team', 'edit', {
-      clubId: team.clubId,
-      teamId,
-    })
-  }
-
-  const roles = await getTeamRoles(prisma, userId, teamId)
-  return roles.some((r) => STAFF_TEAM_ROLES.includes(r))
+  // LOTE 8.7 C.2 — siempre matrix.
+  return permissionsService.can(prisma, userId, 'team', 'edit', {
+    clubId: team.clubId,
+    teamId,
+  })
 }
 
 export async function canManageMembers(
@@ -231,14 +219,11 @@ export async function canDeleteTeam(
   })
   if (!team) return false
 
-  if (useMatrix()) {
-    return permissionsService.can(prisma, userId, 'team', 'delete', {
-      clubId: team.clubId,
-      teamId,
-    })
-  }
-
-  return isClubAdmin(prisma, userId, team.clubId)
+  // LOTE 8.7 C.2 — siempre matrix.
+  return permissionsService.can(prisma, userId, 'team', 'delete', {
+    clubId: team.clubId,
+    teamId,
+  })
 }
 
 // ─────────────────────────────────────────────
@@ -264,26 +249,15 @@ export async function getAddableRoles(
     return ['PLAYER', 'ASSISTANT', 'COACH', 'ADMIN_TEAM']
   }
 
-  if (useMatrix()) {
-    const canCreate = await permissionsService.can(
-      prisma,
-      actorId,
-      'membership_role',
-      'create',
-      { clubId: team.clubId, teamId },
-    )
-    if (canCreate) return ['PLAYER', 'ASSISTANT', 'COACH', 'ADMIN_TEAM']
-    return []
-  }
-
-  const actorRoles = await getTeamRoles(prisma, actorId, teamId)
-
-  if (actorRoles.includes('ADMIN_TEAM')) {
-    return ['PLAYER', 'ASSISTANT', 'COACH', 'ADMIN_TEAM']
-  }
-  if (actorRoles.includes('COACH')) {
-    return ['PLAYER', 'ASSISTANT', 'COACH']
-  }
+  // LOTE 8.7 C.2 — siempre matrix.
+  const canCreate = await permissionsService.can(
+    prisma,
+    actorId,
+    'membership_role',
+    'create',
+    { clubId: team.clubId, teamId },
+  )
+  if (canCreate) return ['PLAYER', 'ASSISTANT', 'COACH', 'ADMIN_TEAM']
   return []
 }
 

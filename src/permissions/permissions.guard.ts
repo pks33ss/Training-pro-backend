@@ -10,7 +10,6 @@ import {
 import { Reflector } from '@nestjs/core'
 import { PrismaService } from '../prisma/prisma.service'
 import { PermissionsService } from './permissions.service'
-import { getEngine } from './permissions.engine'
 import {
   PERMISSION_META_KEY,
   type IdSource,
@@ -26,8 +25,6 @@ export class PermissionsGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    if (getEngine() !== 'matrix') return true
-
     const meta = this.reflector.getAllAndOverride<PermissionMeta | undefined>(
       PERMISSION_META_KEY,
       [context.getHandler(), context.getClass()],

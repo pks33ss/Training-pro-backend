@@ -31,7 +31,6 @@ export interface RequirePermissionOptions {
 
 /**
  * Anota un endpoint con el permiso requerido.
- * Solo actúa cuando PERMISSIONS_ENGINE=matrix.
  *
  * Ejemplos:
  *   @RequirePermission('team', 'edit', { teamIdFrom: { param: 'id' }, clubIdFrom: { body: 'clubId' } })
