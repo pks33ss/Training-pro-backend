@@ -34,7 +34,6 @@ export class TeamService {
       throw new ForbiddenException('No tienes acceso a este club');
     }
 
-    // Lote 8.1 — resolver roleId de ADMIN_TEAM antes de la transacción
     const adminTeamRoleId = await resolveTeamRoleId(
       this.prisma,
       createTeamDto.clubId,
@@ -64,7 +63,7 @@ export class TeamService {
           teamId: newTeam.id,
           status: 'ACTIVE',
           roles: {
-            create: [{ role: 'ADMIN_TEAM', roleId: adminTeamRoleId }],
+            create: [{ roleId: adminTeamRoleId }],
           },
         },
       });
@@ -110,7 +109,10 @@ export class TeamService {
       where: { clubId },
       include: {
         memberships: {
-          where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
+          where: {
+            roles: { some: { roleRef: { name: 'PLAYER' } } },
+            status: 'ACTIVE',
+          },
           select: { id: true },
         },
       },
@@ -126,7 +128,10 @@ export class TeamService {
       where: { clubId },
       include: {
         memberships: {
-          where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
+          where: {
+            roles: { some: { roleRef: { name: 'PLAYER' } } },
+            status: 'ACTIVE',
+          },
           select: { id: true },
         },
       },
@@ -172,7 +177,7 @@ export class TeamService {
       memberships: team.memberships.map((m: any) => ({
         ...m,
         role: m.roles?.[0]?.roleRef?.name ?? 'PLAYER',
-        roles: (m.roles ?? []).map((r: any) => r.roleRef?.name ?? r.role),
+        roles: (m.roles ?? []).map((r: any) => r.roleRef?.name),
       })),
     }
 

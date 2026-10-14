@@ -116,7 +116,6 @@ export class TeamPolicyService {
       data: {
         userId,
         clubId: team.clubId,
-        role: 'MEMBER',
         roleId: memberRole.id,
         isActive: true,
       },

@@ -76,15 +76,18 @@ export class LiveService {
     const { match } = await this.getMatchAndUser(userId, matchId)
 
     const clubMembers = await this.prisma.clubMember.findMany({
-      where: { clubId: match.team.clubId, isActive: true },
-      include: { user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } } },
-    })
+  where: { clubId: match.team.clubId, isActive: true },
+  include: {
+    user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } },
+    roleRef: { select: { name: true } },
+  },
+})
 
     const teamMemberships = await this.prisma.teamMembership.findMany({
       where: { teamId: match.teamId, status: 'ACTIVE' },
       include: {
         user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } },
-        roles: true,
+        roles: { include: { roleRef: { select: { name: true } } } },
       },
     })
 
@@ -110,12 +113,12 @@ export class LiveService {
     for (const m of clubMembers) {
       map.set(m.user.id, {
         userId: m.user.id, name: m.user.name, lastName: m.user.lastName,
-        email: m.user.email, avatar: m.user.avatar, role: `Club · ${m.role}`,
+        email: m.user.email, avatar: m.user.avatar, role: `Club · ${m.roleRef.name}`,
       })
     }
 
     for (const m of teamMemberships) {
-      const roleLabel = `Equipo · ${m.roles.map((r) => r.role).join(', ')}`
+      const roleLabel = `Equipo · ${m.roles.map((r) => r.roleRef.name).join(', ')}`
       if (map.has(m.user.id)) {
         const existing = map.get(m.user.id)
         if (!existing.role.startsWith('Club · ADMIN')) {

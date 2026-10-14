@@ -18,7 +18,6 @@ export class DashboardService {
       pendingCallupsRaw,
       matchBalanceRaw,
     ] = await Promise.all([
-      // 1) Próximo entrenamiento
       this.prisma.session.findFirst({
         where: { teamId, date: { gte: now } },
         orderBy: { date: 'asc' },
@@ -31,7 +30,6 @@ export class DashboardService {
         },
       }),
 
-      // 2) Próximo partido
       this.prisma.match.findFirst({
         where: { teamId, date: { gte: now }, status: 'SCHEDULED' },
         orderBy: { date: 'asc' },
@@ -45,22 +43,14 @@ export class DashboardService {
         },
       }),
 
-      // 3) Asistencia total del equipo
       this.prisma.attendance.groupBy({
         by: ['status'],
         where: { session: { teamId } },
         _count: { _all: true },
       }),
 
-      // 4) Total de entrenamientos
       this.prisma.session.count({ where: { teamId } }),
 
-      // 5) Convocatorias pendientes
-      // ✅ FIX: contar jugadores convocados (calledUpStatus=YES) que aún
-      //        no han confirmado (confirmedStatus=PENDING), solo en partidos
-      //        futuros y programados.
-      //        Antes filtrábamos por `status: 'PENDING'`, que se queda en
-      //        ese valor para siempre porque nunca se actualiza.
       this.prisma.matchCallup.groupBy({
         by: ['matchId'],
         where: {
@@ -71,7 +61,6 @@ export class DashboardService {
         _count: { _all: true },
       }),
 
-      // 6) Balance de partidos
       this.prisma.match.findMany({
         where: { teamId, status: 'FINISHED' },
         select: { teamScore: true, opponentScore: true, date: true },
@@ -176,7 +165,7 @@ export class DashboardService {
         where: {
           userId: { in: userIds },
           teamId,
-          roles: { some: { role: 'PLAYER' } },
+          roles: { some: { roleRef: { name: 'PLAYER' } } },
           status: 'ACTIVE',
         },
         select: { userId: true, jerseyNumber: true },
@@ -313,7 +302,7 @@ export class DashboardService {
         where: {
           userId: { in: userIds },
           teamId,
-          roles: { some: { role: 'PLAYER' } },
+          roles: { some: { roleRef: { name: 'PLAYER' } } },
           status: 'ACTIVE',
         },
         select: { userId: true, jerseyNumber: true },

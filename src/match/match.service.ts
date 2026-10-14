@@ -1,4 +1,12 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException, } from '@nestjs/common'
+// backend/src/match/match.service.ts
+
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+  ConflictException,
+} from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { CreateMatchDto } from './dto/create-match.dto'
 import { UpdateMatchDto } from './dto/update-match.dto'
@@ -8,7 +16,6 @@ import { getTeamForViewer, resolveViewerStatsRole } from '../common/access'
 import { computePadelStatsFromMatch } from '../stats/padel-stats.helper'
 import { computeBasketballStatsFromMatch } from '../stats/basketball-stats.helper'
 import { buildVisibleKeys, filterStatsPayload } from '../stats/stats-filter'
-
 
 const USER_SELECT = {
   id: true,
@@ -29,11 +36,15 @@ export class MatchService {
   // ============================================
 
   async create(userId: string, createMatchDto: CreateMatchDto) {
-    const team = await getTeamForViewer(this.prisma, userId, createMatchDto.teamId)
+    const team = await getTeamForViewer(
+      this.prisma,
+      userId,
+      createMatchDto.teamId,
+    )
 
     const isPadel = team.sport === 'PADEL'
-    const subMatchesCount = isPadel ? (createMatchDto.subMatchesCount ?? 3) : null
-    const setsPerSubMatch = isPadel ? (createMatchDto.setsPerSubMatch ?? 3) : null
+    const subMatchesCount = isPadel ? createMatchDto.subMatchesCount ?? 3 : null
+    const setsPerSubMatch = isPadel ? createMatchDto.setsPerSubMatch ?? 3 : null
 
     const match = await this.prisma.match.create({
       data: {
@@ -105,10 +116,6 @@ export class MatchService {
     })
   }
 
-  /**
-   * Devuelve las temporadas (strings) distintas de los partidos del equipo.
-   * Ordenadas de más reciente a más antigua.
-   */
   async findSeasonsByTeam(userId: string, teamId: string): Promise<string[]> {
     await getTeamForViewer(this.prisma, userId, teamId)
 
@@ -118,12 +125,8 @@ export class MatchService {
       distinct: ['season'],
     })
 
-    const seasons = rows
-      .map((r) => r.season)
-      .filter((s): s is string => !!s)
+    const seasons = rows.map((r) => r.season).filter((s): s is string => !!s)
 
-    // Orden descendente (más reciente primero).
-    // Asume formato "YYYY-YYYY" o similar. Si no, orden lexicográfico inverso.
     seasons.sort((a, b) => b.localeCompare(a))
 
     return seasons
@@ -137,10 +140,13 @@ export class MatchService {
           include: {
             club: true,
             memberships: {
-              where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
+              where: {
+                roles: { some: { roleRef: { name: 'PLAYER' } } },
+                status: 'ACTIVE',
+              },
               include: {
                 user: { select: USER_SELECT },
-                roles: true,
+                roles: { include: { roleRef: { select: { name: true } } } },
               },
               orderBy: { user: { lastName: 'asc' } },
             },
@@ -177,8 +183,8 @@ export class MatchService {
         ...match.team,
         memberships: (match.team.memberships ?? []).map((m: any) => ({
           ...m,
-          role: m.roles?.[0]?.role ?? 'PLAYER',
-          roles: (m.roles ?? []).map((r: any) => r.role),
+          role: m.roles?.[0]?.roleRef?.name ?? 'PLAYER',
+          roles: (m.roles ?? []).map((r: any) => r.roleRef?.name),
         })),
       },
     }
@@ -226,7 +232,11 @@ export class MatchService {
   // RESULTADO
   // ============================================
 
-  async updateResult(userId: string, matchId: string, updateResultDto: UpdateResultDto) {
+  async updateResult(
+    userId: string,
+    matchId: string,
+    updateResultDto: UpdateResultDto,
+  ) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
     })
@@ -387,7 +397,7 @@ export class MatchService {
 
     const memberships = await this.prisma.teamMembership.findMany({
       where: {
-        roles: { some: { role: 'PLAYER' } },
+        roles: { some: { roleRef: { name: 'PLAYER' } } },
         status: 'ACTIVE',
         team: {
           clubId: match.team.clubId,
@@ -400,10 +410,7 @@ export class MatchService {
           select: { id: true, name: true, category: true, sport: true },
         },
       },
-      orderBy: [
-        { team: { name: 'asc' } },
-        { user: { lastName: 'asc' } },
-      ],
+      orderBy: [{ team: { name: 'asc' } }, { user: { lastName: 'asc' } }],
     })
 
     return memberships.map((m) => ({
@@ -536,14 +543,24 @@ export class MatchService {
     })
 
     const totalMatches = matches.length
-    const wins = matches.filter((m) => (m.teamScore || 0) > (m.opponentScore || 0)).length
-    const losses = matches.filter((m) => (m.teamScore || 0) < (m.opponentScore || 0)).length
-    const draws = matches.filter((m) => (m.teamScore || 0) === (m.opponentScore || 0)).length
+    const wins = matches.filter(
+      (m) => (m.teamScore || 0) > (m.opponentScore || 0),
+    ).length
+    const losses = matches.filter(
+      (m) => (m.teamScore || 0) < (m.opponentScore || 0),
+    ).length
+    const draws = matches.filter(
+      (m) => (m.teamScore || 0) === (m.opponentScore || 0),
+    ).length
 
     const totalPoints = matches.reduce((acc, m) => acc + (m.teamScore || 0), 0)
-    const totalOpponentPoints = matches.reduce((acc, m) => acc + (m.opponentScore || 0), 0)
+    const totalOpponentPoints = matches.reduce(
+      (acc, m) => acc + (m.opponentScore || 0),
+      0,
+    )
     const avgPoints = totalMatches > 0 ? totalPoints / totalMatches : 0
-    const avgOpponentPoints = totalMatches > 0 ? totalOpponentPoints / totalMatches : 0
+    const avgOpponentPoints =
+      totalMatches > 0 ? totalOpponentPoints / totalMatches : 0
 
     return {
       totalMatches,
@@ -792,11 +809,11 @@ export class MatchService {
     return { ok: true, deletedSetOrder: lastSet.order }
   }
 
-   // ============================================
+  // ============================================
   // ESTADÍSTICAS DE PÁDEL POR PARTIDO
   // ============================================
 
-    async getPadelStats(userId: string, matchId: string) {
+  async getPadelStats(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
@@ -829,10 +846,18 @@ export class MatchService {
         id: sm.id,
         order: sm.order,
         player1: sm.player1
-          ? { id: sm.player1.id, name: sm.player1.name, lastName: sm.player1.lastName }
+          ? {
+              id: sm.player1.id,
+              name: sm.player1.name,
+              lastName: sm.player1.lastName,
+            }
           : null,
         player2: sm.player2
-          ? { id: sm.player2.id, name: sm.player2.name, lastName: sm.player2.lastName }
+          ? {
+              id: sm.player2.id,
+              name: sm.player2.name,
+              lastName: sm.player2.lastName,
+            }
           : null,
         sets: sm.sets.map((s) => ({
           id: s.id,
@@ -844,7 +869,6 @@ export class MatchService {
       })),
     })
 
-    // Filtrado por config de visibilidad
     const viewerRole = await resolveViewerStatsRole(
       this.prisma,
       userId,
@@ -860,7 +884,7 @@ export class MatchService {
       configRows as any,
     )
 
-        const visibleMetrics = filterStatsPayload('PADEL', visibleKeys, payload)
+    const visibleMetrics = filterStatsPayload('PADEL', visibleKeys, payload)
 
     return {
       ...payload,
@@ -868,11 +892,11 @@ export class MatchService {
     }
   }
 
-    // ============================================
+  // ============================================
   // ESTADÍSTICAS DE BALONCESTO POR PARTIDO
   // ============================================
 
-    async getBasketballStats(userId: string, matchId: string) {
+  async getBasketballStats(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
       include: {
@@ -923,7 +947,6 @@ export class MatchService {
       })),
     })
 
-    // Filtrado por config de visibilidad
     const viewerRole = await resolveViewerStatsRole(
       this.prisma,
       userId,
@@ -939,7 +962,7 @@ export class MatchService {
       configRows as any,
     )
 
-        const visibleMetrics = filterStatsPayload(
+    const visibleMetrics = filterStatsPayload(
       'BASKETBALL',
       visibleKeys,
       payload,
@@ -951,19 +974,21 @@ export class MatchService {
     }
   }
 
-  async removePlayerStats(userId: string, matchId: string, targetUserId: string) {
+  async removePlayerStats(
+    userId: string,
+    matchId: string,
+    targetUserId: string,
+  ) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
     })
     if (!match) throw new NotFoundException('Partido no encontrado')
     await getTeamForViewer(this.prisma, userId, match.teamId)
 
-    // Borra las stats si existen; no falla si no existen
     await this.prisma.matchPlayerStats.deleteMany({
       where: { matchId, userId: targetUserId },
     })
 
-    // Opcional: borrar también el callup de ese partido
     await this.prisma.matchCallup.deleteMany({
       where: { matchId, userId: targetUserId },
     })

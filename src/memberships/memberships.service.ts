@@ -21,7 +21,6 @@ import {
   MembershipRoleValue,
 } from '../common/access'
 import { resolveTeamRoleId } from '../permissions/resolve-role-id'
-import { teamRoleNameFromLegacy } from '../permissions/role-name-maps'
 
 @Injectable()
 export class MembershipsService {
@@ -103,8 +102,7 @@ export class MembershipsService {
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
-    const roleName = teamRoleNameFromLegacy((dto.role || 'PLAYER') as any)
-    if (!roleName) throw new BadRequestException('Rol inválido')
+    const roleName = (dto.role || 'PLAYER') as MembershipRoleValue
     const roleId = await resolveTeamRoleId(this.prisma, team.clubId, roleName)
 
     const existing = await this.prisma.teamMembership.findFirst({
@@ -124,7 +122,7 @@ export class MembershipsService {
           status: 'PENDING',
           roles: {
             deleteMany: {},
-            create: [{ role: roleName as any, roleId }],
+            create: [{ roleId }],
           },
         },
       })
@@ -134,7 +132,7 @@ export class MembershipsService {
       data: {
         userId,
         teamId: dto.teamId,
-        roles: { create: [{ role: roleName as any, roleId }] },
+        roles: { create: [{ roleId }] },
         status: 'PENDING',
       },
       include: {
@@ -305,18 +303,16 @@ export class MembershipsService {
       throw new BadRequestException('Este miembro ya tiene ese rol')
     }
 
-    const roleName = teamRoleNameFromLegacy(role)
-    if (!roleName) throw new BadRequestException('Rol inválido')
     const roleId = await resolveTeamRoleId(
       this.prisma,
       membership.team.clubId,
-      roleName,
+      role,
     )
 
     return this.prisma.teamMembership.update({
       where: { id: membershipId },
       data: {
-        roles: { create: [{ role: roleName as any, roleId }] },
+        roles: { create: [{ roleId }] },
       },
       include: {
         user: {
@@ -445,18 +441,16 @@ export class MembershipsService {
       )
     }
 
-    let createRoles: { role: any; roleId: string }[] | undefined
+    let createRoles: { roleId: string }[] | undefined
     if (nextRoles) {
       createRoles = []
       for (const r of nextRoles) {
-        const roleName = teamRoleNameFromLegacy(r)
-        if (!roleName) throw new BadRequestException(`Rol inválido: ${r}`)
         const roleId = await resolveTeamRoleId(
           this.prisma,
           membership.team.clubId,
-          roleName,
+          r,
         )
-        createRoles.push({ role: roleName as any, roleId })
+        createRoles.push({ roleId })
       }
     }
 
@@ -517,12 +511,10 @@ export class MembershipsService {
       }
 
       const newRole = dto.role || null
-      let createRoles: { role: any; roleId: string }[] | undefined
+      let createRoles: { roleId: string }[] | undefined
       if (newRole) {
-        const roleName = teamRoleNameFromLegacy(newRole)
-        if (!roleName) throw new BadRequestException(`Rol inválido: ${newRole}`)
-        const roleId = await resolveTeamRoleId(this.prisma, team.clubId, roleName)
-        createRoles = [{ role: roleName as any, roleId }]
+        const roleId = await resolveTeamRoleId(this.prisma, team.clubId, newRole)
+        createRoles = [{ roleId }]
       }
 
       const membership = await this.prisma.teamMembership.update({
@@ -563,15 +555,14 @@ export class MembershipsService {
       return membership
     }
 
-    const roleName = teamRoleNameFromLegacy(dto.role || 'PLAYER')
-    if (!roleName) throw new BadRequestException('Rol inválido')
+    const roleName = dto.role || 'PLAYER'
     const roleId = await resolveTeamRoleId(this.prisma, team.clubId, roleName)
 
     const membership = await this.prisma.teamMembership.create({
       data: {
         userId: dto.userId,
         teamId,
-        roles: { create: [{ role: roleName as any, roleId }] },
+        roles: { create: [{ roleId }] },
         status: 'ACTIVE',
         jerseyNumber: dto.jerseyNumber ?? null,
         position: dto.position ?? null,

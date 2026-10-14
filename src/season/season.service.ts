@@ -25,7 +25,7 @@ export class SeasonService {
         userId,
         clubId: team.clubId,
         isActive: true,
-        role: 'ADMIN_CLUB',
+        roleRef: { name: 'ADMIN_CLUB' },
       },
     })
     if (clubAdmin) return team
@@ -36,8 +36,7 @@ export class SeasonService {
     })
     if (clubMember) return team
 
-    // 3) TeamMembership activa (modelo nuevo)
-    // 3) TeamMembership activa (modelo nuevo)
+    // 3) TeamMembership activa
     const membership = await this.prisma.teamMembership.findFirst({
       where: {
         userId,
@@ -59,18 +58,26 @@ export class SeasonService {
 
     // 1) ADMIN_CLUB del club
     const adminClub = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: team.clubId, isActive: true, role: 'ADMIN_CLUB' },
+      where: {
+        userId,
+        clubId: team.clubId,
+        isActive: true,
+        roleRef: { name: 'ADMIN_CLUB' },
+      },
     })
     if (adminClub) return true
 
-    // 2) TeamMembership con rol de gestión (modelo nuevo)
-    // 2) TeamMembership con rol de gestión (modelo nuevo)
+    // 2) TeamMembership con rol de gestión
     const membership = await this.prisma.teamMembership.findFirst({
       where: {
         userId,
         teamId,
         status: 'ACTIVE',
-        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
+        roles: {
+          some: {
+            roleRef: { name: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } },
+          },
+        },
       },
     })
     return !!membership
@@ -131,7 +138,6 @@ export class SeasonService {
     await this.verifyTeamAccess(userId, season.teamId)
     const canManage = await this.canManage(userId, season.teamId)
 
-    // ✅ Lista PLANA de bloques + secciones (el frontend monta el árbol)
     const blocks = await this.prisma.seasonBlock.findMany({
       where: { seasonId },
       include: {
@@ -210,7 +216,6 @@ export class SeasonService {
       throw new ForbiddenException('No tienes permiso para crear bloques')
     }
 
-    // Validar parentId si existe
     if (data.parentId) {
       const parent = await this.prisma.seasonBlock.findUnique({
         where: { id: data.parentId },
@@ -220,7 +225,6 @@ export class SeasonService {
       }
     }
 
-    // Calcular el siguiente order entre los hermanos
     const siblings = await this.prisma.seasonBlock.findMany({
       where: { seasonId, parentId: data.parentId ?? null },
       orderBy: { order: 'desc' },
@@ -288,7 +292,6 @@ export class SeasonService {
       throw new ForbiddenException('No tienes permiso para eliminar este bloque')
     }
 
-    // ✅ Cascade borra hijos y secciones automáticamente
     return this.prisma.seasonBlock.delete({ where: { id: blockId } })
   }
 

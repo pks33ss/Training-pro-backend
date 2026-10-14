@@ -5,8 +5,6 @@ import { canViewTeam, getTeamsForViewer } from '../common/access'
 jest.mock('../common/access', () => ({
   canViewTeam: jest.fn(),
   getTeamsForViewer: jest.fn(),
-  // Añade aquí los demás helpers de access.ts que use stats.service.ts,
-  // aunque no los uses en estos tests, para que el mock sea completo.
   resolveViewerStatsRole: jest.fn(),
   isSuperAdmin: jest.fn(),
   isClubAdmin: jest.fn(),
@@ -127,7 +125,7 @@ describe('TeamStatsService.getPlayerTeamsForTeamContext', () => {
             status: 'ACTIVE',
             jerseyNumber: 7,
             position: 'Base',
-            roles: [{ role: 'PLAYER' }],
+            roles: [{ roleRef: { name: 'PLAYER' } }],
           },
         ],
       },
@@ -179,7 +177,7 @@ describe('TeamStatsService.getPlayerTeamsForTeamContext', () => {
             status: 'LEFT',
             jerseyNumber: null,
             position: null,
-            roles: [{ role: 'PLAYER' }],
+            roles: [{ roleRef: { name: 'PLAYER' } }],
           },
         ],
       },

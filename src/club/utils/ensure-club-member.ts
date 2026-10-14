@@ -10,8 +10,6 @@ import { resolveClubRoleId } from '../../permissions/resolve-role-id'
  *
  * Se debe llamar SIEMPRE que se cree una TeamMembership nueva.
  * Es idempotente: puedes llamarlo varias veces sin problema.
- *
- * Lote 8.1: escribe `role` (legacy) y `roleId` (nuevo) simultáneamente.
  */
 export async function ensureClubMemberForTeam(
   prisma: PrismaService,
@@ -48,8 +46,7 @@ export async function ensureClubMemberForTeam(
     data: {
       userId,
       clubId: team.clubId,
-      role: 'MEMBER',        // legacy
-      roleId: memberRoleId,  // nuevo
+      roleId: memberRoleId,
       isActive: true,
     },
   })

@@ -19,18 +19,10 @@ export class TutorRelationshipsService {
   // HELPERS
   // ============================================
 
-  /**
-   * Normaliza un username: siempre empieza por @.
-   */
   private normalizeUsername(username: string): string {
     return username.startsWith('@') ? username : `@${username}`
   }
 
-  /**
-   * Verifica si un usuario es tutor existente de un jugador.
-   * Se usa para permitir que un tutor apruebe la relación de otro tutor
-   * (por ejemplo, la madre aprueba al padre).
-   */
   private async isExistingTutor(
     userId: string,
     playerUserId: string,
@@ -45,42 +37,38 @@ export class TutorRelationshipsService {
     return !!existing
   }
 
-  /**
-   * Verifica si un usuario es coach/admin del equipo donde está el jugador.
-   * Se usa para permitir que un entrenador apruebe relaciones
-   * de jugadores fantasma (sin cuenta).
-   */
   private async isCoachOfPlayerTeam(
     userId: string,
     playerUserId: string,
   ): Promise<boolean> {
-    // Buscamos los equipos del jugador
     const memberships = await this.prisma.teamMembership.findMany({
-  where: {
-    userId: playerUserId,
-    status: 'ACTIVE',
-    roles: { some: { role: 'PLAYER' } },
-  },
-  select: { teamId: true },
-})
+      where: {
+        userId: playerUserId,
+        status: 'ACTIVE',
+        roles: { some: { roleRef: { name: 'PLAYER' } } },
+      },
+      select: { teamId: true },
+    })
 
     if (memberships.length === 0) return false
 
     const teamIds = memberships.map((m) => m.teamId)
 
-    // Buscamos si el user es coach/assistant/admin de alguno de esos equipos
     const myMembership = await this.prisma.teamMembership.findFirst({
       where: {
         userId,
         teamId: { in: teamIds },
         status: 'ACTIVE',
-        roles: { some: { role: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } } },
+        roles: {
+          some: {
+            roleRef: { name: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } },
+          },
+        },
       },
     })
 
     if (myMembership) return true
 
-    // O si es admin del club
     const teams = await this.prisma.team.findMany({
       where: { id: { in: teamIds } },
       select: { clubId: true },
@@ -91,7 +79,7 @@ export class TutorRelationshipsService {
       where: {
         userId,
         clubId: { in: clubIds },
-        role: 'ADMIN_CLUB',
+        roleRef: { name: 'ADMIN_CLUB' },
         isActive: true,
       },
     })
@@ -145,7 +133,10 @@ export class TutorRelationshipsService {
             avatar: true,
             isGhost: true,
             memberships: {
-              where: { status: 'ACTIVE', roles: { some: { role: 'PLAYER' } } },
+              where: {
+                status: 'ACTIVE',
+                roles: { some: { roleRef: { name: 'PLAYER' } } },
+              },
               include: {
                 team: {
                   select: {
@@ -171,7 +162,6 @@ export class TutorRelationshipsService {
   async create(userId: string, dto: CreateTutorRelationshipDto) {
     const playerUsername = this.normalizeUsername(dto.playerUsername)
 
-    // 1) Buscar al jugador por username
     const player = await this.prisma.user.findUnique({
       where: { username: playerUsername },
     })
@@ -186,7 +176,6 @@ export class TutorRelationshipsService {
       )
     }
 
-    // 2) Verificar que no existe ya una relación
     const existing = await this.prisma.tutorRelationship.findUnique({
       where: {
         tutorUserId_playerUserId: {
@@ -202,7 +191,6 @@ export class TutorRelationshipsService {
       )
     }
 
-    // 3) Si existe y estaba REVOKED, la reactivamos
     if (existing && existing.status === 'REVOKED') {
       return this.prisma.tutorRelationship.update({
         where: { id: existing.id },
@@ -217,7 +205,6 @@ export class TutorRelationshipsService {
       })
     }
 
-    // 4) Crear la nueva relación
     return this.prisma.tutorRelationship.create({
       data: {
         tutorUserId: userId,
@@ -248,10 +235,6 @@ export class TutorRelationshipsService {
       throw new BadRequestException('La solicitud no está pendiente')
     }
 
-    // ¿Quién puede aprobar?
-    // A) El propio jugador
-    // B) Otro tutor existente del jugador
-    // C) Un coach/admin del equipo del jugador (solo si el jugador es fantasma)
     const player = await this.prisma.user.findUnique({
       where: { id: rel.playerUserId },
     })
@@ -306,7 +289,6 @@ export class TutorRelationshipsService {
       throw new BadRequestException('La solicitud no está pendiente')
     }
 
-    // Mismos permisos que para aprobar
     const player = await this.prisma.user.findUnique({
       where: { id: rel.playerUserId },
     })
@@ -322,7 +304,6 @@ export class TutorRelationshipsService {
       throw new ForbiddenException('No tienes permisos para rechazar esta solicitud')
     }
 
-    // La eliminamos (rechazo = no queremos guardar la solicitud)
     return this.prisma.tutorRelationship.delete({
       where: { id: relationshipId },
     })
@@ -339,7 +320,6 @@ export class TutorRelationshipsService {
 
     if (!rel) throw new NotFoundException('Relación no encontrada')
 
-    // Puede revocar: el propio tutor o el propio jugador
     if (rel.tutorUserId !== userId && rel.playerUserId !== userId) {
       throw new ForbiddenException('No puedes revocar esta relación')
     }
@@ -355,7 +335,7 @@ export class TutorRelationshipsService {
   }
 
   // ============================================
-  // ACTUALIZAR (relationship, canPickUp, isEmergencyContact)
+  // ACTUALIZAR
   // ============================================
 
   async update(
@@ -369,7 +349,6 @@ export class TutorRelationshipsService {
 
     if (!rel) throw new NotFoundException('Relación no encontrada')
 
-    // Solo el tutor de la relación puede actualizarla
     if (rel.tutorUserId !== userId) {
       throw new ForbiddenException('Solo el tutor puede actualizar la relación')
     }

@@ -22,7 +22,6 @@ import {
   resolveClubRoleId,
   resolveTeamRoleId,
 } from '../permissions/resolve-role-id'
-import { teamRoleNameFromLegacy } from '../permissions/role-name-maps'
 
 @Injectable()
 export class UserService {
@@ -875,13 +874,8 @@ export class UserService {
       dto.lastName,
     )
 
-    // Lote 8.1 — resolver roleIds antes de la transacción
-    const ghostTeamRoleName = teamRoleNameFromLegacy(
-      (dto.role ?? 'PLAYER') as any,
-    )
-    if (!ghostTeamRoleName) {
-      throw new ConflictException('Rol de equipo inválido')
-    }
+    // Lote 8.7 C.3 — resolver roleIds antes de la transacción
+    const ghostTeamRoleName = (dto.role ?? 'PLAYER') as string
     const ghostTeamRoleId = await resolveTeamRoleId(
       this.prisma,
       team.clubId,
@@ -913,7 +907,7 @@ export class UserService {
           teamId: dto.teamId,
           roles: {
             create: [
-              { role: ghostTeamRoleName as any, roleId: ghostTeamRoleId },
+              { roleId: ghostTeamRoleId },
             ],
           },
           status: 'ACTIVE',
@@ -927,7 +921,6 @@ export class UserService {
         data: {
           userId: user.id,
           clubId: team.clubId,
-          role: 'MEMBER',
           roleId: ghostClubRoleId,
           isActive: true,
         },
@@ -1036,13 +1029,8 @@ export class UserService {
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
-    // Lote 8.1 — resolver roleIds
-    const ghostTeamRoleName = teamRoleNameFromLegacy(
-      (dto.role ?? 'PLAYER') as any,
-    )
-    if (!ghostTeamRoleName) {
-      throw new ConflictException('Rol de equipo inválido')
-    }
+    // Lote 8.7 C.3 — resolver roleIds
+    const ghostTeamRoleName = (dto.role ?? 'PLAYER') as string
     const ghostTeamRoleId = await resolveTeamRoleId(
       this.prisma,
       team.clubId,
@@ -1064,7 +1052,7 @@ export class UserService {
         jerseyNumber: dto.jerseyNumber ?? null,
         position: dto.position ?? null,
         roles: {
-          create: [{ role: ghostTeamRoleName as any, roleId: ghostTeamRoleId }],
+          create: [{ roleId: ghostTeamRoleId }],
         },
       },
       update: {
@@ -1080,7 +1068,6 @@ export class UserService {
       create: {
         userId: ghostId,
         clubId: team.clubId,
-        role: 'MEMBER',
         roleId: ghostClubRoleId,
         isActive: true,
       },
@@ -1112,13 +1099,25 @@ export class UserService {
       const expiresAt = new Date()
       expiresAt.setDate(expiresAt.getDate() + 7)
 
+      // Resolver roleId del rol PLAYER del equipo
+      const team = await this.prisma.team.findUnique({
+        where: { id: teamId },
+        select: { clubId: true },
+      })
+      if (!team) throw new Error('Equipo no encontrado')
+      const playerRoleId = await resolveTeamRoleId(
+        this.prisma,
+        team.clubId,
+        'PLAYER',
+      )
+
       const invitation = await this.prisma.pendingInvitation.create({
         data: {
           code,
           email,
           userId: ghostUserId,
           teamId,
-          role: 'PLAYER',
+          roleId: playerRoleId,
           channel: 'EMAIL',
           expiresAt,
           invitedById: requesterId,
@@ -1128,6 +1127,7 @@ export class UserService {
           invitedBy: {
             select: { id: true, name: true, lastName: true, username: true },
           },
+          roleRef: { select: { id: true, name: true } },
         },
       })
 
@@ -1140,7 +1140,7 @@ export class UserService {
         recipientName: `${name} ${lastName}`.trim() || 'amigo/a',
         teamName: invitation.team.name,
         clubName: invitation.team.club?.name ?? '',
-        role: invitation.role,
+        role: invitation.roleRef.name,
         inviterName: `${invitation.invitedBy.name} ${invitation.invitedBy.lastName}`,
         invitationLink,
         expiresAt: invitation.expiresAt,

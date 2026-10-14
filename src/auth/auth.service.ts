@@ -9,8 +9,6 @@ import { LoginDto } from './dto/login.dto';
 import { generateUniqueUsername } from '../user/utils/generate-username';
 import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member';
 import { OAuth2Client } from 'google-auth-library';
-import { resolveTeamRoleId } from '../permissions/resolve-role-id';
-import { teamRoleNameFromLegacy } from '../permissions/role-name-maps';
 
 @Injectable()
 export class AuthService {
@@ -172,12 +170,12 @@ export class AuthService {
     };
   }
 
-    private async applyInvitation(
+  private async applyInvitation(
     invitation: {
       id: string;
       code: string;
       teamId: string;
-      role: any;
+      roleId: string;
       invitedById: string;
       email: string | null;
     },
@@ -187,15 +185,8 @@ export class AuthService {
       throw new Error('El email no coincide con el de la invitación');
     }
 
-    const team = await this.prisma.team.findUnique({
-      where: { id: invitation.teamId },
-      select: { clubId: true },
-    });
-    if (!team) throw new Error('Equipo no encontrado');
-
-    const teamRoleName = teamRoleNameFromLegacy(invitation.role as any);
-    if (!teamRoleName) throw new Error(`Rol de equipo inválido: ${invitation.role}`);
-    const teamRoleId = await resolveTeamRoleId(this.prisma, team.clubId, teamRoleName);
+    const teamRoleId = invitation.roleId;
+    if (!teamRoleId) throw new Error('La invitación no tiene roleId');
 
     const membership = await this.prisma.teamMembership.upsert({
       where: {
@@ -206,7 +197,7 @@ export class AuthService {
         teamId: invitation.teamId,
         status: 'ACTIVE',
         invitedById: invitation.invitedById,
-        roles: { create: [{ role: invitation.role, roleId: teamRoleId }] },
+        roles: { create: [{ roleId: teamRoleId }] },
       },
       update: {
         status: 'ACTIVE',
@@ -225,7 +216,6 @@ export class AuthService {
         },
         create: {
           membershipId: membership.id,
-          role: invitation.role,
           roleId: teamRoleId,
         },
         update: {},
@@ -488,24 +478,24 @@ export class AuthService {
   }
 
   private async generateTokens(user: any) {
-  const accessToken = this.jwtService.sign(
-    {
-      sub: user.id,
-      email: user.email,
-      role: user.role,
-    },
-    { expiresIn: '2h' },
-  )
+    const accessToken = this.jwtService.sign(
+      {
+        sub: user.id,
+        email: user.email,
+        role: user.role,
+      },
+      { expiresIn: '2h' },
+    );
 
-  const refreshToken = await this.refreshTokenService.createRefreshToken(
-    user.id,
-  )
+    const refreshToken = await this.refreshTokenService.createRefreshToken(
+      user.id,
+    );
 
-  return {
-    accessToken,
-    refreshToken,
+    return {
+      accessToken,
+      refreshToken,
+    };
   }
-}
 
   private excludePassword(user: any) {
     const { password, ...result } = user;

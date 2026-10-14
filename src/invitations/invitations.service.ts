@@ -13,7 +13,6 @@ import { CreateInvitationDto } from './dto'
 import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member'
 import { assertCanManageMembers } from '../common/access'
 import { resolveTeamRoleId } from '../permissions/resolve-role-id'
-import { teamRoleNameFromLegacy } from '../permissions/role-name-maps'
 
 const INVITATION_EXPIRY_DAYS = 7
 
@@ -49,6 +48,18 @@ export class InvitationsService {
 
   async create(userId: string, dto: CreateInvitationDto) {
     await this.verifyCanInvite(userId, dto.teamId)
+
+    // Resolver roleId antes de crear la invitación
+    const team = await this.prisma.team.findUnique({
+      where: { id: dto.teamId },
+      select: { clubId: true },
+    })
+    if (!team) {
+      throw new NotFoundException('Equipo no encontrado')
+    }
+
+    const roleName = (dto.role || 'PLAYER') as string
+    const roleId = await resolveTeamRoleId(this.prisma, team.clubId, roleName)
 
     let targetUserId: string | null = null
     let targetIsGhost = false
@@ -148,7 +159,7 @@ export class InvitationsService {
         phone: dto.phone || null,
         userId: targetUserId,
         teamId: dto.teamId,
-        role: dto.role || 'PLAYER',
+        roleId,
         channel: resolvedChannel,
         expiresAt,
         invitedById: userId,
@@ -161,6 +172,7 @@ export class InvitationsService {
         user: {
           select: { id: true, name: true, lastName: true, username: true },
         },
+        roleRef: { select: { id: true, name: true } },
       },
     })
 
@@ -207,7 +219,7 @@ export class InvitationsService {
             recipientName,
             teamName: invitation.team.name,
             clubName: invitation.team.club?.name ?? '',
-            role: invitation.role,
+            role: invitation.roleRef.name,
             inviterName: `${invitation.invitedBy.name} ${invitation.invitedBy.lastName}`,
             invitationLink,
             expiresAt: invitation.expiresAt,
@@ -243,6 +255,7 @@ export class InvitationsService {
         invitedBy: {
           select: { id: true, name: true, lastName: true, username: true },
         },
+        roleRef: { select: { id: true, name: true } },
       },
     })
 
@@ -293,27 +306,14 @@ export class InvitationsService {
     })
 
     if (!existingMembership) {
-      // Lote 8.1 — resolver roleId
-      const teamForRole = await this.prisma.team.findUnique({
-        where: { id: invitation.teamId },
-        select: { clubId: true },
-      })
-      const teamRoleName = teamRoleNameFromLegacy(invitation.role as any)
-      if (!teamForRole || !teamRoleName) {
-        throw new BadRequestException('Rol de equipo inválido')
-      }
-      const teamRoleId = await resolveTeamRoleId(
-        this.prisma,
-        teamForRole.clubId,
-        teamRoleName,
-      )
+      const teamRoleId = invitation.roleId
 
       await this.prisma.teamMembership.create({
         data: {
           userId,
           teamId: invitation.teamId,
           roles: {
-            create: [{ role: invitation.role as any, roleId: teamRoleId }],
+            create: [{ roleId: teamRoleId }],
           },
           status: 'ACTIVE',
           invitedById: invitation.invitedById,
@@ -349,6 +349,7 @@ export class InvitationsService {
         user: {
           select: { id: true, name: true, lastName: true, username: true },
         },
+        roleRef: { select: { id: true, name: true } },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -412,6 +413,7 @@ export class InvitationsService {
         invitedBy: {
           select: { id: true, name: true, lastName: true, username: true },
         },
+        roleRef: { select: { id: true, name: true } },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -429,6 +431,7 @@ export class InvitationsService {
         invitedBy: {
           select: { id: true, name: true, lastName: true, username: true },
         },
+        roleRef: { select: { id: true, name: true } },
       },
     })
 
@@ -516,20 +519,7 @@ export class InvitationsService {
       }
     }
 
-    // Lote 8.1 — resolver roleId
-    const teamForRole = await this.prisma.team.findUnique({
-      where: { id: invitation.teamId },
-      select: { clubId: true },
-    })
-    const teamRoleName = teamRoleNameFromLegacy(invitation.role as any)
-    if (!teamForRole || !teamRoleName) {
-      throw new BadRequestException('Rol de equipo inválido')
-    }
-    const teamRoleId = await resolveTeamRoleId(
-      this.prisma,
-      teamForRole.clubId,
-      teamRoleName,
-    )
+    const teamRoleId = invitation.roleId
 
     await this.prisma.teamMembership.upsert({
       where: {
@@ -541,7 +531,7 @@ export class InvitationsService {
         status: 'ACTIVE',
         invitedById: invitation.invitedById,
         roles: {
-          create: [{ role: invitation.role as any, roleId: teamRoleId }],
+          create: [{ roleId: teamRoleId }],
         },
       },
       update: {

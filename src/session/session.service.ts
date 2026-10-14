@@ -1,98 +1,70 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateSessionDto } from './dto/create-session.dto';
-import { UpdateSessionDto } from './dto/update-session.dto';
-import { AddExerciseDto } from './dto/add-exercise.dto';
-import { canViewTeam, canEditTeam } from '../common/access';
+// backend/src/session/session.service.ts
+
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common'
+import { PrismaService } from '../prisma/prisma.service'
+import { CreateSessionDto } from './dto/create-session.dto'
+import { UpdateSessionDto } from './dto/update-session.dto'
+import { AddExerciseDto } from './dto/add-exercise.dto'
+import { UpdateExerciseDto } from './dto/update-exercise.dto'
+import { canViewTeam } from '../common/access'
 
 @Injectable()
 export class SessionService {
   constructor(private prisma: PrismaService) {}
 
-  async create(userId: string, createSessionDto: CreateSessionDto) {
-    const date = new Date(createSessionDto.date);
-    if (isNaN(date.getTime())) {
-      throw new BadRequestException('La fecha proporcionada no es válida');
-    }
+  // ============================================
+  // HELPERS
+  // ============================================
 
-    const team = await this.prisma.team.findUnique({
-      where: { id: createSessionDto.teamId },
-    });
-
-    if (!team) {
-      throw new NotFoundException('Equipo no encontrado');
+  private async verifyTeamAccess(userId: string, teamId: string) {
+    if (!(await canViewTeam(this.prisma, userId, teamId))) {
+      throw new ForbiddenException('No tienes acceso a este equipo')
     }
+  }
 
-    if (!(await canEditTeam(this.prisma, userId, team.id))) {
-      throw new ForbiddenException('No tienes permisos para crear sesiones en este equipo');
-    }
+  // ============================================
+  // SESIONES
+  // ============================================
+
+  async create(userId: string, dto: CreateSessionDto) {
+    await this.verifyTeamAccess(userId, dto.teamId)
 
     return this.prisma.session.create({
       data: {
-        title: createSessionDto.title,
-        description: createSessionDto.description,
-        date: date,
-        duration: createSessionDto.duration,
-        location: createSessionDto.location,
-        teamId: createSessionDto.teamId,
+        title: dto.title,
+        description: dto.description,
+        date: new Date(dto.date),
+        duration: dto.duration,
+        location: dto.location,
+        teamId: dto.teamId,
         createdById: userId,
       },
       include: {
-        team: { include: { club: true } },
-        exercises: true,
+        exercises: {
+          orderBy: { order: 'asc' },
+          include: { media: true },
+        },
       },
-    });
+    })
   }
 
   async findAllByTeam(userId: string, teamId: string) {
-    const team = await this.prisma.team.findUnique({
-      where: { id: teamId },
-    });
+    await this.verifyTeamAccess(userId, teamId)
 
-    if (!team) {
-      throw new NotFoundException('Equipo no encontrado');
-    }
-
-    if (!(await canViewTeam(this.prisma, userId, teamId))) {
-      throw new ForbiddenException('No tienes acceso a este equipo');
-    }
-
-    const sessions = await this.prisma.session.findMany({
+    return this.prisma.session.findMany({
       where: { teamId },
-      orderBy: { date: 'desc' },
       include: {
-        exercises: { orderBy: { order: 'asc' } },
-        attendances: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                lastName: true,
-                username: true,
-                avatar: true,
-                isGhost: true,
-              },
-            },
-          },
+        exercises: {
+          orderBy: { order: 'asc' },
+          include: { media: true },
         },
       },
-    });
-
-    const activeMemberships = await this.prisma.teamMembership.findMany({
-      where: {
-        teamId,
-        status: 'ACTIVE',
-        roles: { some: { role: 'PLAYER' } },
-      },
-      select: { userId: true },
-    });
-    const activeUserIds = new Set(activeMemberships.map((m) => m.userId));
-
-    return sessions.map((s) => ({
-      ...s,
-      attendances: s.attendances.filter((a) => activeUserIds.has(a.userId)),
-    }));
+      orderBy: { date: 'desc' },
+    })
   }
 
   async findOne(userId: string, sessionId: string) {
@@ -103,7 +75,10 @@ export class SessionService {
           include: {
             club: true,
             memberships: {
-              where: { roles: { some: { role: 'PLAYER' } }, status: 'ACTIVE' },
+              where: {
+                status: 'ACTIVE',
+                roles: { some: { roleRef: { name: 'PLAYER' } } },
+              },
               include: {
                 user: {
                   select: {
@@ -112,12 +87,12 @@ export class SessionService {
                     lastName: true,
                     username: true,
                     avatar: true,
-                    isGhost: true,
                   },
                 },
-                roles: true,
+                roles: {
+                  include: { roleRef: { select: { name: true } } },
+                },
               },
-              orderBy: { user: { lastName: 'asc' } },
             },
           },
         },
@@ -125,238 +100,226 @@ export class SessionService {
           orderBy: { order: 'asc' },
           include: { media: true },
         },
-        attendances: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                lastName: true,
-                username: true,
-                avatar: true,
-                isGhost: true,
-              },
-            },
-          },
-        },
-        createdBy: {
-          select: { id: true, name: true, lastName: true, email: true },
-        },
+        attendances: true,
       },
-    });
+    })
 
     if (!session) {
-      throw new NotFoundException('Sesión no encontrada');
+      throw new NotFoundException('Sesión no encontrada')
     }
 
-    if (!(await canViewTeam(this.prisma, userId, session.teamId))) {
-      throw new ForbiddenException('No tienes acceso a esta sesión');
-    }
+    await this.verifyTeamAccess(userId, session.teamId)
 
-    return {
-      ...session,
-      team: {
-        ...session.team,
-        memberships: (session.team.memberships ?? []).map((m: any) => ({
-          ...m,
-          role: m.roles?.[0]?.role ?? 'PLAYER',
-          roles: (m.roles ?? []).map((r: any) => r.role),
-        })),
-      },
-    };
+    return session
   }
 
-  async update(userId: string, sessionId: string, updateSessionDto: UpdateSessionDto) {
+  async update(userId: string, sessionId: string, dto: UpdateSessionDto) {
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
-      include: { team: true },
-    });
+    })
 
     if (!session) {
-      throw new NotFoundException('Sesión no encontrada');
+      throw new NotFoundException('Sesión no encontrada')
     }
 
-    if (!(await canEditTeam(this.prisma, userId, session.teamId))) {
-      throw new ForbiddenException('No tienes permisos para editar esta sesión');
+    await this.verifyTeamAccess(userId, session.teamId)
+
+    const data: any = { ...dto }
+    if (data.date) {
+      data.date = new Date(data.date)
     }
 
     return this.prisma.session.update({
       where: { id: sessionId },
-      data: {
-        title: updateSessionDto.title,
-        description: updateSessionDto.description,
-        date: updateSessionDto.date ? new Date(updateSessionDto.date) : undefined,
-        duration: updateSessionDto.duration,
-        location: updateSessionDto.location,
-      },
-    });
+      data,
+    })
   }
 
   async remove(userId: string, sessionId: string) {
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
-      include: { team: true },
-    });
+    })
 
     if (!session) {
-      throw new NotFoundException('Sesión no encontrada');
+      throw new NotFoundException('Sesión no encontrada')
     }
 
-    if (!(await canEditTeam(this.prisma, userId, session.teamId))) {
-      throw new ForbiddenException('No tienes permisos para eliminar esta sesión');
-    }
+    await this.verifyTeamAccess(userId, session.teamId)
 
     return this.prisma.session.delete({
       where: { id: sessionId },
-    });
+    })
   }
 
-  async addExercise(userId: string, sessionId: string, addExerciseDto: AddExerciseDto) {
+  // ============================================
+  // EJERCICIOS
+  // ============================================
+
+  async addExercise(userId: string, sessionId: string, dto: AddExerciseDto) {
     const session = await this.prisma.session.findUnique({
       where: { id: sessionId },
-      include: { team: true },
-    });
+    })
 
     if (!session) {
-      throw new NotFoundException('Sesión no encontrada');
+      throw new NotFoundException('Sesión no encontrada')
     }
 
-    if (!(await canEditTeam(this.prisma, userId, session.teamId))) {
-      throw new ForbiddenException('No tienes permisos para añadir ejercicios');
-    }
+    await this.verifyTeamAccess(userId, session.teamId)
+
+    const lastExercise = await this.prisma.exercise.findFirst({
+      where: { sessionId },
+      orderBy: { order: 'desc' },
+      select: { order: true },
+    })
+
+    const nextOrder =
+      dto.order !== undefined ? dto.order : (lastExercise?.order ?? -1) + 1
 
     return this.prisma.exercise.create({
       data: {
-        name: addExerciseDto.name,
-        description: addExerciseDto.description,
-        category: addExerciseDto.category,
-        duration: addExerciseDto.duration,
-        difficulty: addExerciseDto.difficulty,
-        order: addExerciseDto.order || 0,
-        sessionId: sessionId,
+        sessionId,
+        name: dto.name,
+        description: dto.description,
+        category: dto.category,
+        duration: dto.duration,
+        difficulty: dto.difficulty,
+        order: nextOrder,
       },
-    });
+      include: { media: true },
+    })
   }
 
-  async updateExercise(userId: string, exerciseId: string, updateExerciseDto: any) {
+  async updateExercise(
+    userId: string,
+    exerciseId: string,
+    dto: UpdateExerciseDto,
+  ) {
     const exercise = await this.prisma.exercise.findUnique({
       where: { id: exerciseId },
-      include: { session: { include: { team: true } } },
-    });
+      include: { session: true },
+    })
 
     if (!exercise) {
-      throw new NotFoundException('Ejercicio no encontrado');
+      throw new NotFoundException('Ejercicio no encontrado')
     }
 
-    if (!(await canEditTeam(this.prisma, userId, exercise.session.teamId))) {
-      throw new ForbiddenException('No tienes permisos para editar este ejercicio');
-    }
+    await this.verifyTeamAccess(userId, exercise.session.teamId)
 
     return this.prisma.exercise.update({
       where: { id: exerciseId },
       data: {
-        name: updateExerciseDto.name,
-        description: updateExerciseDto.description,
-        category: updateExerciseDto.category,
-        duration: updateExerciseDto.duration,
-        difficulty: updateExerciseDto.difficulty,
-        order: updateExerciseDto.order,
+        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.description !== undefined && { description: dto.description }),
+        ...(dto.category !== undefined && { category: dto.category }),
+        ...(dto.duration !== undefined && { duration: dto.duration }),
+        ...(dto.difficulty !== undefined && { difficulty: dto.difficulty }),
+        ...(dto.order !== undefined && { order: dto.order }),
       },
-    });
-  }
-
-  async reorderExercises(userId: string, sessionId: string, exerciseIds: string[]) {
-    const session = await this.prisma.session.findUnique({
-      where: { id: sessionId },
-      include: { team: true },
-    });
-
-    if (!session) {
-      throw new NotFoundException('Sesión no encontrada');
-    }
-
-    if (!(await canEditTeam(this.prisma, userId, session.teamId))) {
-      throw new ForbiddenException('No tienes permisos para reordenar ejercicios');
-    }
-
-    const updates = exerciseIds.map((exerciseId, index) =>
-      this.prisma.exercise.update({
-        where: { id: exerciseId },
-        data: { order: index },
-      })
-    );
-
-    await this.prisma.$transaction(updates);
-
-    return { message: 'Ejercicios reordenados correctamente' };
+      include: { media: true },
+    })
   }
 
   async removeExercise(userId: string, exerciseId: string) {
     const exercise = await this.prisma.exercise.findUnique({
       where: { id: exerciseId },
-      include: { session: { include: { team: true } } },
-    });
+      include: { session: true },
+    })
 
     if (!exercise) {
-      throw new NotFoundException('Ejercicio no encontrado');
+      throw new NotFoundException('Ejercicio no encontrado')
     }
 
-    if (!(await canEditTeam(this.prisma, userId, exercise.session.teamId))) {
-      throw new ForbiddenException('No tienes permisos para eliminar este ejercicio');
-    }
+    await this.verifyTeamAccess(userId, exercise.session.teamId)
 
-    return this.prisma.exercise.delete({
+    await this.prisma.exercise.delete({
       where: { id: exerciseId },
-    });
+    })
+
+    return { deleted: true }
   }
 
+  async reorderExercises(
+    userId: string,
+    sessionId: string,
+    exerciseIds: string[],
+  ) {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+    })
+
+    if (!session) {
+      throw new NotFoundException('Sesión no encontrada')
+    }
+
+    await this.verifyTeamAccess(userId, session.teamId)
+
+    await this.prisma.$transaction(
+      exerciseIds.map((id, index) =>
+        this.prisma.exercise.update({
+          where: { id },
+          data: { order: index },
+        }),
+      ),
+    )
+
+    return { reordered: true }
+  }
+
+  // ============================================
+  // MEDIA DE EJERCICIOS
+  // ============================================
+
+  /**
+   * Añade una media (imagen o link) a un ejercicio.
+   *
+   * - `type = 'IMAGE'` → `url` es el data URL (base64) subido desde el frontend.
+   *   Se sube a Cloudinary (si procede) — por ahora guardamos tal cual.
+   * - `type = 'LINK'` → `url` es la URL tal cual.
+   */
   async addMediaToExercise(
     userId: string,
     exerciseId: string,
     url: string,
-    type: 'IMAGE' | 'VIDEO' | 'LINK',
+    type: 'IMAGE' | 'LINK',
     title?: string,
   ) {
     const exercise = await this.prisma.exercise.findUnique({
       where: { id: exerciseId },
-      include: { session: { include: { team: true } } },
-    });
+      include: { session: true },
+    })
 
     if (!exercise) {
-      throw new NotFoundException('Ejercicio no encontrado');
+      throw new NotFoundException('Ejercicio no encontrado')
     }
 
-    if (!(await canEditTeam(this.prisma, userId, exercise.session.teamId))) {
-      throw new ForbiddenException('No tienes permisos');
-    }
+    await this.verifyTeamAccess(userId, exercise.session.teamId)
 
     return this.prisma.media.create({
-      data: { url, type, title, exerciseId },
-    });
+      data: {
+        exerciseId,
+        url,
+        type: type as any,
+        title,
+      },
+    })
   }
 
   async removeMedia(userId: string, mediaId: string) {
     const media = await this.prisma.media.findUnique({
       where: { id: mediaId },
-      include: {
-        exercise: {
-          include: {
-            session: { include: { team: true } },
-          },
-        },
-      },
-    });
+      include: { exercise: { include: { session: true } } },
+    })
 
     if (!media) {
-      throw new NotFoundException('Media no encontrada');
+      throw new NotFoundException('Media no encontrada')
     }
 
-    if (!(await canEditTeam(this.prisma, userId, media.exercise.session.teamId))) {
-      throw new ForbiddenException('No tienes permisos');
-    }
+    await this.verifyTeamAccess(userId, media.exercise.session.teamId)
 
-    return this.prisma.media.delete({
+    await this.prisma.media.delete({
       where: { id: mediaId },
-    });
+    })
+
+    return { deleted: true }
   }
 }

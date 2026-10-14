@@ -15,12 +15,6 @@ import {
   resolveClubRoleId,
   resolveTeamRoleId,
 } from '../permissions/resolve-role-id';
-import {
-  clubRoleNameFromLegacy,
-  teamRoleNameFromLegacy,
-  type ClubRoleName,
-  type TeamRoleName,
-} from '../permissions/role-name-maps';
 
 @Injectable()
 export class ClubService {
@@ -31,9 +25,6 @@ export class ClubService {
   ) {}
 
   async create(userId: string, createClubDto: CreateClubDto) {
-    // Creamos el club, luego resolvemos el rol ADMIN_CLUB del club recién creado
-    // y añadimos el ClubMember. Todo en transacción para que no quede un club
-    // sin admin si algo falla.
     const club = await this.prisma.$transaction(async (tx) => {
       const created = await tx.club.create({
         data: {
@@ -45,11 +36,6 @@ export class ClubService {
         },
       });
 
-      // Sembrar los roles de sistema para este club recién creado.
-      // Reutilizamos el mismo listado que el seed. Aquí, para no duplicar
-      // el catálogo, sólo creamos los 8 roles mínimos con sus permisos.
-      // (En 8.7, cuando ya no exista `ClubRole`, este bloque se mueve a un
-      //  servicio `RoleSeedService` compartido con `prisma/seed-permissions.ts`.)
       const { seedSystemRolesForClub } = await import('../permissions/seed-roles');
       await seedSystemRolesForClub(tx, created.id);
 
@@ -59,8 +45,7 @@ export class ClubService {
         data: {
           userId,
           clubId: created.id,
-          role: 'ADMIN_CLUB', // legacy
-          roleId: adminRoleId, // nuevo
+          roleId: adminRoleId,
           isActive: true,
         },
       });
@@ -79,7 +64,6 @@ export class ClubService {
       });
     });
 
-    // ✅ Notificación admin
     const creator = club.members.find((m) => m.userId === userId)?.user;
     this.mailService
       .sendAdminNotification({
@@ -205,7 +189,7 @@ export class ClubService {
             memberships: {
               where: {
                 status: 'ACTIVE',
-                roles: { some: { role: 'PLAYER' } },
+                roles: { some: { roleRef: { name: 'PLAYER' } } },
               },
               select: { id: true },
             },
@@ -264,6 +248,7 @@ export class ClubService {
         user: {
           select: { id: true, email: true, name: true, lastName: true },
         },
+        roleRef: { select: { id: true, name: true } },
       },
       orderBy: { joinedAt: 'asc' },
     });
@@ -291,12 +276,7 @@ export class ClubService {
       );
     }
 
-    const roleName = clubRoleNameFromLegacy(role);
-    if (!roleName) {
-      throw new ForbiddenException(`Rol de club inválido: ${role}`);
-    }
-
-    const roleId = await resolveClubRoleId(this.prisma, clubId, roleName);
+    const roleId = await resolveClubRoleId(this.prisma, clubId, role);
 
     const existingMember = await this.prisma.clubMember.findFirst({
       where: { userId: userToInvite.id, clubId: clubId },
@@ -306,7 +286,7 @@ export class ClubService {
       if (!existingMember.isActive) {
         return this.prisma.clubMember.update({
           where: { id: existingMember.id },
-          data: { isActive: true, role: role as any, roleId },
+          data: { isActive: true, roleId },
           include: {
             user: {
               select: { id: true, email: true, name: true, lastName: true },
@@ -321,8 +301,7 @@ export class ClubService {
       data: {
         userId: userToInvite.id,
         clubId: clubId,
-        role: role as any, // legacy
-        roleId,            // nuevo
+        roleId,
       },
       include: {
         user: {
@@ -346,15 +325,11 @@ export class ClubService {
       }
     }
 
-    const roleName = clubRoleNameFromLegacy(newRole);
-    if (!roleName) {
-      throw new ForbiddenException(`Rol de club inválido: ${newRole}`);
-    }
-    const roleId = await resolveClubRoleId(this.prisma, clubId, roleName);
+    const roleId = await resolveClubRoleId(this.prisma, clubId, newRole);
 
     return this.prisma.clubMember.update({
       where: { id: memberId },
-      data: { role: newRole as any, roleId },
+      data: { roleId },
       include: {
         user: {
           select: { id: true, email: true, name: true, lastName: true },
@@ -429,7 +404,7 @@ export class ClubService {
       const adminRoleId = await resolveClubRoleId(this.prisma, clubId, 'ADMIN_CLUB');
       await this.prisma.clubMember.update({
         where: { id: remainingMembers[0].id },
-        data: { role: 'ADMIN_CLUB', roleId: adminRoleId },
+        data: { roleId: adminRoleId },
       });
     }
 
@@ -582,7 +557,7 @@ export class ClubService {
           joinedAt: new Date(),
           roles: {
             deleteMany: {},
-            create: [{ role: 'COACH', roleId: coachTeamRoleId }],
+            create: [{ roleId: coachTeamRoleId }],
           },
         },
       });
@@ -593,7 +568,7 @@ export class ClubService {
         userId: member.userId,
         teamId,
         status: 'ACTIVE',
-        roles: { create: [{ role: 'COACH', roleId: coachTeamRoleId }] },
+        roles: { create: [{ roleId: coachTeamRoleId }] },
       },
     });
   }
@@ -696,7 +671,7 @@ export class ClubService {
       where: {
         memberships: {
           some: {
-            roles: { some: { role: 'PLAYER' } },
+            roles: { some: { roleRef: { name: 'PLAYER' } } },
             status: 'ACTIVE',
             team: { clubId },
           },
@@ -712,7 +687,7 @@ export class ClubService {
         isGhost: true,
         memberships: {
           where: {
-            roles: { some: { role: 'PLAYER' } },
+            roles: { some: { roleRef: { name: 'PLAYER' } } },
             status: 'ACTIVE',
             team: { clubId },
           },

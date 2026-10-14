@@ -28,7 +28,7 @@ export class AttendanceService {
     const memberships = await this.prisma.teamMembership.findMany({
       where: {
         teamId: session.teamId,
-        roles: { some: { role: 'PLAYER' } },
+        roles: { some: { roleRef: { name: 'PLAYER' } } },
         status: 'ACTIVE',
       },
       include: {
@@ -257,7 +257,7 @@ export class AttendanceService {
     const memberships = await this.prisma.teamMembership.findMany({
       where: {
         teamId,
-        roles: { some: { role: 'PLAYER' } },
+        roles: { some: { roleRef: { name: 'PLAYER' } } },
         status: 'ACTIVE',
       },
       include: {
@@ -375,7 +375,7 @@ export class AttendanceService {
     const totalPlayers = await this.prisma.teamMembership.count({
       where: {
         teamId: session.teamId,
-        roles: { some: { role: 'PLAYER' } },
+        roles: { some: { roleRef: { name: 'PLAYER' } } },
         status: 'ACTIVE',
       },
     });

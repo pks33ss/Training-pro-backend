@@ -74,7 +74,6 @@ model User {
 
   createdPlays Play[] @relation("PlayCreatedBy")
 
-  // LOTE 8.1 — auditoría de permisos
   permissionAuditLogs PermissionAuditLog[] @relation("PermissionAuditActor")
 
   @@index([deletedAt])
@@ -99,10 +98,8 @@ model Club {
   calendarEvents  CalendarEvent[]
   paymentConcepts PaymentConcept[]
 
-  // LOTE 8.1 — roles del club (CLUB y TEAM)
   roles Role[]
 
-  // LOTE 8.1 — auditoría
   permissionAuditLogs PermissionAuditLog[] @relation("PermissionAuditClub")
 }
 
@@ -110,11 +107,7 @@ model ClubMember {
   id       String   @id @default(cuid())
   userId   String
   clubId   String
-  // LOTE 8.1 — roleId sustituye a `role` (enum). Nullable en Fase A,
-  // NOT NULL tras Fase C. La columna `role` se mantiene hasta 8.7
-  // para no romper access.ts.
   roleId   String
-  role     ClubRole @default(COACH) // LEGACY: se elimina en 8.7
   isActive Boolean  @default(true)
   joinedAt DateTime @default(now())
 
@@ -183,30 +176,32 @@ model TeamMembership {
 }
 
 model PendingInvitation {
-  id          String             @id @default(cuid())
-  code        String             @unique
+  id          String    @id @default(cuid())
+  code        String    @unique
   email       String?
   phone       String?
   userId      String?
   teamId      String
-  role        MembershipRoleType @default(PLAYER) // LEGACY hasta 8.7
-  channel     String             @default("LINK")
-  status      String             @default("PENDING")
-  sentAt      DateTime           @default(now())
+  roleId      String
+  channel     String    @default("LINK")
+  status      String    @default("PENDING")
+  sentAt      DateTime  @default(now())
   expiresAt   DateTime
   usedAt      DateTime?
   invitedById String
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   user      User? @relation(fields: [userId], references: [id], onDelete: Cascade)
   team      Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
   invitedBy User  @relation("InvitationInviter", fields: [invitedById], references: [id], onDelete: Cascade)
+  roleRef   Role  @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
   @@index([code])
   @@index([email])
   @@index([status])
   @@index([teamId])
+  @@index([roleId])
 }
 
 model TutorRelationship {
@@ -377,38 +372,17 @@ enum InvitationStatus {
   MAYBE
 }
 
-// LEGACY: se elimina en 8.7
-enum ClubRole {
-  ADMIN_CLUB
-  COACH
-  ASSISTANT
-  MEMBER
-}
-
-// LEGACY: se elimina en 8.7
-enum MembershipRoleType {
-  PLAYER
-  COACH
-  ASSISTANT
-  ADMIN_TEAM
-  VISITOR
-}
-
 model MembershipRole {
-  id           String             @id @default(cuid())
+  id           String   @id @default(cuid())
   membershipId String
-  // LOTE 8.1 — roleId sustituye a `role` (enum). Nullable en Fase A.
   roleId       String
-  role         MembershipRoleType // LEGACY hasta 8.7
-  createdAt    DateTime           @default(now())
+  createdAt    DateTime @default(now())
 
   membership TeamMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
   roleRef    Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
 
-  @@unique([membershipId, role])
   @@unique([membershipId, roleId])
   @@index([membershipId])
-  @@index([role])
   @@index([roleId])
 }
 
@@ -418,7 +392,7 @@ enum GlobalRole {
 }
 
 // ============================================
-// LOTE 8.1 — ROLES Y PERMISOS
+// ROLES Y PERMISOS
 // ============================================
 
 enum RoleScope {
@@ -437,10 +411,11 @@ model Role {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  club            Club             @relation(fields: [clubId], references: [id], onDelete: Cascade)
-  permissions     RolePermission[]
-  clubMembers     ClubMember[]
-  membershipRoles MembershipRole[]
+  club               Club                @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  permissions        RolePermission[]
+  clubMembers        ClubMember[]
+  membershipRoles    MembershipRole[]
+  pendingInvitations PendingInvitation[]
 
   @@unique([clubId, scope, name])
   @@index([clubId, scope])

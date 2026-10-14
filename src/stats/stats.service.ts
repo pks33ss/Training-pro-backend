@@ -1,3 +1,5 @@
+// backend/src/stats/stats.service.ts
+
 import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import {
@@ -43,9 +45,6 @@ export class TeamStatsService {
   ) {}
 
   async getTeamStats(userId: string, teamId: string, query: TeamStatsQueryDto) {
-    // Selección efectiva de equipos:
-    // - Si el viewer manda teamIds explícitos, se usan esos (sustituyen).
-    // - Si no, se usa el equipo activo del path.
     const explicitTeamIds = (query.teamIds ?? []).filter(Boolean)
     const effectiveTeamIds =
       explicitTeamIds.length > 0 ? explicitTeamIds : [teamId]
@@ -58,12 +57,8 @@ export class TeamStatsService {
     const mainTeam = teams[0]
     const teamIds = teams.map((t) => t.id)
 
-    // El rango de fechas se resuelve contra el teamId del path (el activo),
-    // porque las seasons pertenecen al equipo activo aunque el usuario
-    // haya cambiado la selección de equipos.
     const range = await this.resolveDateRange(teamId, query)
 
-    // Rol del viewer y config de visibilidad: SIEMPRE con el teamId del path.
     const viewerRole = await resolveViewerStatsRole(
       this.prisma,
       userId,
@@ -149,17 +144,12 @@ export class TeamStatsService {
     }
   }
 
-  // ─────────────────────────────────────────────
-  // FASE 3.4 — Stats individuales de jugador
-  // ─────────────────────────────────────────────
-
   async getPlayerStats(
     viewerId: string,
     teamId: string,
     playerUserId: string,
     query: PlayerStatsQueryDto,
   ) {
-    // Selección efectiva de equipos (mismo criterio que en getTeamStats).
     const explicitTeamIds = (query.teamIds ?? []).filter(Boolean)
     const effectiveTeamIds =
       explicitTeamIds.length > 0 ? explicitTeamIds : [teamId]
@@ -180,7 +170,6 @@ export class TeamStatsService {
       throw new NotFoundException('Jugador no encontrado')
     }
 
-    // Rango y rol: con el teamId del path.
     const range = await this.resolveDateRange(teamId, query)
 
     const viewerRole = await resolveViewerStatsRole(
@@ -277,7 +266,12 @@ export class TeamStatsService {
     playerUserId: string,
     query: PlayerStatsQueryDto,
   ) {
-    const where = this.buildBaseWhere(teamIds, range, query.matchIds, query.season)
+    const where = this.buildBaseWhere(
+      teamIds,
+      range,
+      query.matchIds,
+      query.season,
+    )
     where.padelSubMatches = {
       some: {
         OR: [{ player1Id: playerUserId }, { player2Id: playerUserId }],
@@ -313,7 +307,12 @@ export class TeamStatsService {
     playerUserId: string,
     query: PlayerStatsQueryDto,
   ) {
-    const where = this.buildBaseWhere(teamIds, range, query.matchIds, query.season)
+    const where = this.buildBaseWhere(
+      teamIds,
+      range,
+      query.matchIds,
+      query.season,
+    )
     where.playerStats = { some: { userId: playerUserId } }
 
     return this.prisma.match.findMany({
@@ -335,10 +334,6 @@ export class TeamStatsService {
       },
     })
   }
-
-  // ─────────────────────────────────────────────
-  // PÁDEL — respuesta individual de jugador
-  // ─────────────────────────────────────────────
 
   private buildPadelPlayerResponse(
     teams: Array<{ id: string; name: string; sport: string }>,
@@ -669,10 +664,6 @@ export class TeamStatsService {
       availableTrendMetrics,
     }
   }
-
-  // ─────────────────────────────────────────────
-  // BASKET — respuesta individual de jugador
-  // ─────────────────────────────────────────────
 
   private buildBasketballPlayerResponse(
     teams: Array<{ id: string; name: string; sport: string }>,
@@ -1062,7 +1053,7 @@ export class TeamStatsService {
   // Helpers comunes
   // ─────────────────────────────────────────────
 
-    private async resolveDateRange(
+  private async resolveDateRange(
     teamId: string,
     query: TeamStatsQueryDto | PlayerStatsQueryDto,
   ): Promise<{ from: Date | null; to: Date | null }> {
@@ -1082,7 +1073,7 @@ export class TeamStatsService {
     return { from, to }
   }
 
-    private buildBaseWhere(
+  private buildBaseWhere(
     teamIds: string[],
     range: { from: Date | null; to: Date | null },
     matchIds?: string[],
@@ -1112,7 +1103,12 @@ export class TeamStatsService {
     range: { from: Date | null; to: Date | null },
     query: TeamStatsQueryDto,
   ) {
-    const where = this.buildBaseWhere(teamIds, range, query.matchIds, query.season)
+    const where = this.buildBaseWhere(
+      teamIds,
+      range,
+      query.matchIds,
+      query.season,
+    )
 
     if (query.playerId) {
       where.padelSubMatches = {
@@ -1150,7 +1146,12 @@ export class TeamStatsService {
     range: { from: Date | null; to: Date | null },
     query: TeamStatsQueryDto,
   ) {
-    const where = this.buildBaseWhere(teamIds, range, query.matchIds, query.season)
+    const where = this.buildBaseWhere(
+      teamIds,
+      range,
+      query.matchIds,
+      query.season,
+    )
 
     if (query.playerId) {
       where.playerStats = {
@@ -1178,10 +1179,6 @@ export class TeamStatsService {
     })
   }
 
-  // ─────────────────────────────────────────────
-  // PÁDEL — agregado de equipo
-  // ─────────────────────────────────────────────
-
   private buildPadelResponse(
     teams: Array<{ id: string; name: string; sport: string }>,
     query: TeamStatsQueryDto,
@@ -1204,10 +1201,18 @@ export class TeamStatsService {
           id: sm.id,
           order: sm.order,
           player1: sm.player1
-            ? { id: sm.player1.id, name: sm.player1.name, lastName: sm.player1.lastName }
+            ? {
+                id: sm.player1.id,
+                name: sm.player1.name,
+                lastName: sm.player1.lastName,
+              }
             : null,
           player2: sm.player2
-            ? { id: sm.player2.id, name: sm.player2.name, lastName: sm.player2.lastName }
+            ? {
+                id: sm.player2.id,
+                name: sm.player2.name,
+                lastName: sm.player2.lastName,
+              }
             : null,
           sets: sm.sets.map((s) => ({
             id: s.id,
@@ -1584,10 +1589,6 @@ export class TeamStatsService {
     }
   }
 
-  // ─────────────────────────────────────────────
-  // FASE 3.4 — Equipos del jugador para el filtro multi-equipo
-  // ─────────────────────────────────────────────
-
   async getPlayerTeamsForTeamContext(
     viewerId: string,
     teamId: string,
@@ -1616,7 +1617,11 @@ export class TeamStatsService {
         club: { select: { id: true, name: true } },
         memberships: {
           where: { userId: playerUserId },
-          include: { roles: true },
+          include: {
+            roles: {
+              include: { roleRef: { select: { name: true } } },
+            },
+          },
         },
       },
       orderBy: { name: 'asc' },
@@ -1627,7 +1632,7 @@ export class TeamStatsService {
       if (!(await canViewTeam(this.prisma, viewerId, t.id))) continue
 
       const membership = t.memberships[0] ?? null
-      const roles = membership?.roles.map((r) => r.role) ?? []
+      const roles = membership?.roles.map((r) => r.roleRef?.name).filter((n): n is string => !!n) ?? []
       const isFormer = !membership || membership.status !== 'ACTIVE'
 
       result.push({

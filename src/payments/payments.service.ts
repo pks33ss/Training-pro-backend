@@ -120,7 +120,7 @@ return 'PENDING';
           where: {
             teamId: dto.teamId,
             status: 'ACTIVE',
-            roles: { some: { role: 'PLAYER' } },
+            roles: { some: { roleRef: { name: 'PLAYER' } } },
           },
           select: { userId: true },
         });
@@ -373,7 +373,7 @@ return 'PENDING';
         where: {
           teamId: concept.teamId,
           status: 'ACTIVE',
-          roles: { some: { role: 'PLAYER' } },
+          roles: { some: { roleRef: { name: 'PLAYER' } } },
         },
         select: {
           userId: true,
@@ -1086,7 +1086,7 @@ return 'PENDING';
       where: {
         teamId: concept.teamId,
         status: 'ACTIVE',
-        roles: { some: { role: 'PLAYER' } },
+        roles: { some: { roleRef: { name: 'PLAYER' } } },
       },
       select: { userId: true },
     });

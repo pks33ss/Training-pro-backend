@@ -20,7 +20,7 @@ export async function notifyClubAdminOfDeparture(
   const admins = await prisma.clubMember.findMany({
     where: {
       clubId: params.clubId,
-      role: 'ADMIN_CLUB',
+      roleRef: { name: 'ADMIN_CLUB' },
       isActive: true,
     },
     include: {
