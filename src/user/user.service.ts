@@ -22,12 +22,14 @@ import {
   resolveClubRoleId,
   resolveTeamRoleId,
 } from '../permissions/resolve-role-id'
+import { CloudinaryService } from '../cloudinary/cloudinary.service'
 
 @Injectable()
 export class UserService {
   constructor(
     private prisma: PrismaService,
     private mailService: MailService,
+    private cloudinaryService: CloudinaryService,
   ) {}
 
   async findAll(includeDeleted = false) {
@@ -488,9 +490,25 @@ export class UserService {
         tacticalBackgroundMode: true,
         hiddenTabs: true,
         memberships: {
-          include: {
+          where: { status: { in: ['ACTIVE', 'PENDING'] } },
+          select: {
+            id: true,
+            status: true,
+            jerseyNumber: true,
+            position: true,
+            seasonId: true,
+            joinedAt: true,
             team: {
-              include: {
+              select: {
+                id: true,
+                name: true,
+                sport: true,
+                category: true,
+                season: true,
+                clubId: true,
+                primaryColor: true,
+                secondaryColor: true,
+                logo: true,
                 club: {
                   select: {
                     id: true,
@@ -510,7 +528,12 @@ export class UserService {
         },
         tutorRelationships: {
           where: { status: { in: ['ACTIVE', 'PENDING'] } },
-          include: {
+          select: {
+            id: true,
+            status: true,
+            relationship: true,
+            canPickUp: true,
+            isEmergencyContact: true,
             playerUser: {
               select: {
                 id: true,
@@ -524,7 +547,12 @@ export class UserService {
         },
         playerRelationships: {
           where: { status: { in: ['ACTIVE', 'PENDING'] } },
-          include: {
+          select: {
+            id: true,
+            status: true,
+            relationship: true,
+            canPickUp: true,
+            isEmergencyContact: true,
             tutorUser: {
               select: {
                 id: true,
@@ -557,6 +585,29 @@ export class UserService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
     if (!user) throw new NotFoundException('Usuario no encontrado')
 
+    // ✅ NUEVO: si el avatar viene en base64 (data:...), lo subimos a
+    // Cloudinary y guardamos solo la URL resultante. Así evitamos que el
+    // payload de /users/me (y de cualquier endpoint que devuelva el avatar)
+    // se infle con imágenes embebidas.
+    let avatarToSave = data.avatar
+    if (
+      typeof avatarToSave === 'string' &&
+      avatarToSave.startsWith('data:')
+    ) {
+      try {
+        const { url } = await this.cloudinaryService.uploadImage(
+          avatarToSave,
+          `training-pro/avatars/${userId}`,
+        )
+        avatarToSave = url
+      } catch (err) {
+        console.error('Error subiendo avatar a Cloudinary:', err)
+        throw new ConflictException(
+          'No se pudo procesar el avatar. Inténtalo de nuevo más tarde.',
+        )
+      }
+    }
+
     return this.prisma.user.update({
       where: { id: userId },
       data: {
@@ -564,7 +615,7 @@ export class UserService {
         ...(data.lastName !== undefined && { lastName: data.lastName }),
         ...(data.phone !== undefined && { phone: data.phone }),
         ...(data.bio !== undefined && { bio: data.bio }),
-        ...(data.avatar !== undefined && { avatar: data.avatar }),
+        ...(avatarToSave !== undefined && { avatar: avatarToSave }),
       },
       select: {
         id: true,
@@ -874,7 +925,6 @@ export class UserService {
       dto.lastName,
     )
 
-    // Lote 8.7 C.3 — resolver roleIds antes de la transacción
     const ghostTeamRoleName = (dto.role ?? 'PLAYER') as string
     const ghostTeamRoleId = await resolveTeamRoleId(
       this.prisma,
@@ -1029,7 +1079,6 @@ export class UserService {
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
-    // Lote 8.7 C.3 — resolver roleIds
     const ghostTeamRoleName = (dto.role ?? 'PLAYER') as string
     const ghostTeamRoleId = await resolveTeamRoleId(
       this.prisma,
@@ -1075,9 +1124,6 @@ export class UserService {
     })
   }
 
-  /**
-   * Crea una invitación pendiente para un fantasma y envía el email.
-   */
   private async sendGhostInvitation(
     ghostUserId: string,
     email: string,
@@ -1099,7 +1145,6 @@ export class UserService {
       const expiresAt = new Date()
       expiresAt.setDate(expiresAt.getDate() + 7)
 
-      // Resolver roleId del rol PLAYER del equipo
       const team = await this.prisma.team.findUnique({
         where: { id: teamId },
         select: { clubId: true },
@@ -1382,7 +1427,7 @@ export class UserService {
   }
 
   // ============================================
-  // FONDOS DE PIZARRA TÁCTICA (uno por modo)
+  // FONDOS DE PIZARRA TÁCTICA
   // ============================================
 
   async updateTacticalBackground(

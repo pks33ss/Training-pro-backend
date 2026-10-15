@@ -3,9 +3,10 @@ import { UserController } from './user.controller'
 import { UserService } from './user.service'
 import { AuthModule } from '../auth/auth.module'
 import { MailModule } from '../mail/mail.module'
+import { CloudinaryModule } from '../cloudinary/cloudinary.module'
 
 @Module({
-  imports: [AuthModule, MailModule],
+  imports: [AuthModule, MailModule, CloudinaryModule],
   controllers: [UserController],
   providers: [UserService],
   exports: [UserService],
