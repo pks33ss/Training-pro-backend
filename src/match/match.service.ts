@@ -16,6 +16,7 @@ import { getTeamForViewer, resolveViewerStatsRole } from '../common/access'
 import { computePadelStatsFromMatch } from '../stats/padel-stats.helper'
 import { computeBasketballStatsFromMatch } from '../stats/basketball-stats.helper'
 import { buildVisibleKeys, filterStatsPayload } from '../stats/stats-filter'
+import { normalizeMembershipRolesList } from '../common/serialize'
 
 const USER_SELECT = {
   id: true,
@@ -181,11 +182,7 @@ export class MatchService {
       ...match,
       team: {
         ...match.team,
-        memberships: (match.team.memberships ?? []).map((m: any) => ({
-          ...m,
-          role: m.roles?.[0]?.roleRef?.name ?? 'PLAYER',
-          roles: (m.roles ?? []).map((r: any) => r.roleRef?.name),
-        })),
+        memberships: normalizeMembershipRolesList(match.team.memberships),
       },
     }
   }
@@ -488,7 +485,6 @@ export class MatchService {
     })
   }
 
-  // ✅ NUEVO — Excluir/incluir jugador del partido
   async setPlayerExclusion(
     userId: string,
     matchId: string,
@@ -504,8 +500,6 @@ export class MatchService {
     await getTeamForViewer(this.prisma, userId, match.teamId)
 
     if (excluded) {
-      // Al excluir: borra stats de este partido (no le cuenta como jugado)
-      // y crea la fila de exclusión. NO toca el callup.
       await this.prisma.$transaction([
         this.prisma.matchPlayerStats.deleteMany({
           where: { matchId, userId: targetUserId },
@@ -519,7 +513,6 @@ export class MatchService {
         }),
       ])
     } else {
-      // Al incluir: solo elimina la fila de exclusión.
       await this.prisma.matchExcludedPlayer.deleteMany({
         where: { matchId, userId: targetUserId },
       })
@@ -616,7 +609,7 @@ export class MatchService {
   }
 
   // ============================================
-  // PÁDEL — SUBPARTIDOS (PISTAS)
+  // PÁDEL
   // ============================================
 
   async addPadelSubMatch(userId: string, matchId: string) {

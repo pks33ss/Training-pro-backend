@@ -21,6 +21,7 @@ import {
   MembershipRoleValue,
 } from '../common/access'
 import { resolveTeamRoleId } from '../permissions/resolve-role-id'
+import { normalizeMembershipRolesList } from '../common/serialize'
 
 @Injectable()
 export class MembershipsService {
@@ -84,11 +85,7 @@ export class MembershipsService {
       orderBy: [{ status: 'asc' }, { jerseyNumber: 'asc' }],
     })
 
-    return memberships.map((m) => ({
-      ...m,
-      role: m.roles[0]?.roleRef.name ?? 'PLAYER',
-      roles: m.roles.map((r) => r.roleRef.name),
-    }))
+    return normalizeMembershipRolesList(memberships)
   }
 
   // ============================================

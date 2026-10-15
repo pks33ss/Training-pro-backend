@@ -15,6 +15,7 @@ import {
   isActiveClubMember,
 } from '../common/access'
 import { resolveTeamRoleId } from '../permissions/resolve-role-id'
+import { normalizeMembershipRolesList } from '../common/serialize'
 
 @Injectable()
 export class TeamService {
@@ -174,11 +175,7 @@ export class TeamService {
 
     const teamWithRoles = {
       ...team,
-      memberships: team.memberships.map((m: any) => ({
-        ...m,
-        role: m.roles?.[0]?.roleRef?.name ?? 'PLAYER',
-        roles: (m.roles ?? []).map((r: any) => r.roleRef?.name),
-      })),
+      memberships: normalizeMembershipRolesList(team.memberships),
     }
 
     const myMembership = await this.prisma.teamMembership.findUnique({

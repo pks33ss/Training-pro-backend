@@ -11,6 +11,7 @@ import { UpdateSessionDto } from './dto/update-session.dto'
 import { AddExerciseDto } from './dto/add-exercise.dto'
 import { UpdateExerciseDto } from './dto/update-exercise.dto'
 import { canViewTeam } from '../common/access'
+import { normalizeMembershipRolesList } from '../common/serialize'
 
 @Injectable()
 export class SessionService {
@@ -126,7 +127,13 @@ export class SessionService {
 
     await this.verifyTeamAccess(userId, session.teamId)
 
-    return session
+    return {
+      ...session,
+      team: {
+        ...session.team,
+        memberships: normalizeMembershipRolesList(session.team.memberships),
+      },
+    }
   }
 
   async update(userId: string, sessionId: string, dto: UpdateSessionDto) {
