@@ -15,6 +15,10 @@ import {
   resolveClubRoleId,
   resolveTeamRoleId,
 } from '../permissions/resolve-role-id';
+import {
+  normalizeClubMemberRoleList,
+  normalizeMembershipRolesList,
+} from '../common/serialize';
 
 @Injectable()
 export class ClubService {
@@ -242,7 +246,7 @@ export class ClubService {
       throw new ForbiddenException('No tienes acceso a este club');
     }
 
-    return this.prisma.clubMember.findMany({
+    const members = await this.prisma.clubMember.findMany({
       where: { clubId },
       include: {
         user: {
@@ -252,6 +256,8 @@ export class ClubService {
       },
       orderBy: { joinedAt: 'asc' },
     });
+
+    return normalizeClubMemberRoleList(members);
   }
 
   async inviteMember(
@@ -492,10 +498,10 @@ export class ClubService {
     });
 
     const membershipMap = new Map(
-      memberMemberships.map((m) => [
-        m.teamId,
-        m.roles.map((r) => r.roleRef.name).join(', ') || 'PLAYER',
-      ]),
+      memberMemberships.map((m) => {
+        const normalized = normalizeMembershipRolesList([m])[0]
+        return [m.teamId, normalized.roles.join(', ') || 'PLAYER']
+      }),
     );
 
     return allTeams.map((team) => ({

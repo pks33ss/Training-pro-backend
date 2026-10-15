@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, ForbiddenException, BadRequestException 
 import { PrismaService } from '../prisma/prisma.service'
 import { randomUUID } from 'crypto'
 import { canViewTeam, canEditTeam, isClubAdmin, isSuperAdmin } from '../common/access'
+import { normalizeMembershipRoles } from '../common/serialize'
 
 @Injectable()
 export class LiveService {
@@ -76,12 +77,12 @@ export class LiveService {
     const { match } = await this.getMatchAndUser(userId, matchId)
 
     const clubMembers = await this.prisma.clubMember.findMany({
-  where: { clubId: match.team.clubId, isActive: true },
-  include: {
-    user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } },
-    roleRef: { select: { name: true } },
-  },
-})
+      where: { clubId: match.team.clubId, isActive: true },
+      include: {
+        user: { select: { id: true, name: true, lastName: true, email: true, avatar: true } },
+        roleRef: { select: { name: true } },
+      },
+    })
 
     const teamMemberships = await this.prisma.teamMembership.findMany({
       where: { teamId: match.teamId, status: 'ACTIVE' },
@@ -118,7 +119,8 @@ export class LiveService {
     }
 
     for (const m of teamMemberships) {
-      const roleLabel = `Equipo · ${m.roles.map((r) => r.roleRef.name).join(', ')}`
+      const roles = normalizeMembershipRoles(m).roles
+      const roleLabel = `Equipo · ${roles.join(', ')}`
       if (map.has(m.user.id)) {
         const existing = map.get(m.user.id)
         if (!existing.role.startsWith('Club · ADMIN')) {

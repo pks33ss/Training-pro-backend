@@ -24,6 +24,7 @@ import {
 } from './stats-filter'
 import { findTrendMetric } from './metric-registry'
 import { buildMonthlySeries, TrendMatchInput } from './trend.helper'
+import { normalizeMembershipRoles } from '../common/serialize'
 
 const USER_SELECT = {
   id: true,
@@ -1632,7 +1633,9 @@ export class TeamStatsService {
       if (!(await canViewTeam(this.prisma, viewerId, t.id))) continue
 
       const membership = t.memberships[0] ?? null
-      const roles = membership?.roles.map((r) => r.roleRef?.name).filter((n): n is string => !!n) ?? []
+      const roles = membership
+  ? normalizeMembershipRoles(membership).roles
+  : []
       const isFormer = !membership || membership.status !== 'ACTIVE'
 
       result.push({
