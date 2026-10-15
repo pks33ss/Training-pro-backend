@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsOptional, IsEmail } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional, IsEmail, ValidateIf } from 'class-validator';
 
 export class CreateClubDto {
   @IsString()
@@ -17,9 +17,10 @@ export class CreateClubDto {
   @IsOptional()
   phone?: string;
 
+   @ValidateIf((o) => o.email !== undefined && o.email !== null && o.email !== '')
   @IsEmail()
   @IsOptional()
-  email?: string;
+  email?: string | null;
 
   // ✅ NUEVO — Colores de la identidad visual
   @IsString()

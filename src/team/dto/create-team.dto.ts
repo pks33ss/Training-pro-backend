@@ -22,15 +22,15 @@ export class CreateTeamDto {
   @IsOptional()
   category?: string
 
+  // Obligatoria al crear equipo. Se compone en el frontend como "2026-27".
   @IsString()
-  @IsOptional()
-  season?: string
+  @IsNotEmpty({ message: 'La temporada es obligatoria' })
+  season: string
 
   @IsString()
   @IsNotEmpty()
   clubId: string
 
-  // ✅ NUEVO — Identidad visual del equipo (override del club)
   @IsString()
   @IsOptional()
   primaryColor?: string

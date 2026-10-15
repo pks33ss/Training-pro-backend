@@ -488,6 +488,46 @@ export class MatchService {
     })
   }
 
+  // ✅ NUEVO — Excluir/incluir jugador del partido
+  async setPlayerExclusion(
+    userId: string,
+    matchId: string,
+    targetUserId: string,
+    excluded: boolean,
+  ): Promise<{ excluded: boolean }> {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { id: true, teamId: true },
+    })
+    if (!match) throw new NotFoundException('Partido no encontrado')
+
+    await getTeamForViewer(this.prisma, userId, match.teamId)
+
+    if (excluded) {
+      // Al excluir: borra stats de este partido (no le cuenta como jugado)
+      // y crea la fila de exclusión. NO toca el callup.
+      await this.prisma.$transaction([
+        this.prisma.matchPlayerStats.deleteMany({
+          where: { matchId, userId: targetUserId },
+        }),
+        this.prisma.matchExcludedPlayer.upsert({
+          where: {
+            matchId_userId: { matchId, userId: targetUserId },
+          },
+          update: {},
+          create: { matchId, userId: targetUserId },
+        }),
+      ])
+    } else {
+      // Al incluir: solo elimina la fila de exclusión.
+      await this.prisma.matchExcludedPlayer.deleteMany({
+        where: { matchId, userId: targetUserId },
+      })
+    }
+
+    return { excluded }
+  }
+
   // ============================================
   // LINE UP
   // ============================================
@@ -907,6 +947,9 @@ export class MatchService {
         callups: {
           include: { user: { select: USER_SELECT } },
         },
+        excludedPlayers: {
+          select: { userId: true },
+        },
       },
     })
 
@@ -971,6 +1014,7 @@ export class MatchService {
     return {
       ...payload,
       visibleMetrics: Array.from(visibleMetrics),
+      excludedPlayerIds: match.excludedPlayers.map((e) => e.userId),
     }
   }
 

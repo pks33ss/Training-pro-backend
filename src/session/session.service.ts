@@ -65,6 +65,16 @@ export class SessionService {
         // El listado de sesiones muestra un resumen de asistencia en cada
         // card. Sin `attendances` el frontend no puede calcularlo.
         attendances: true,
+        // El icono de cada card depende del deporte del equipo.
+        // Sin `team` el frontend no puede resolver el icono y cae al default.
+        team: {
+          select: {
+            id: true,
+            name: true,
+            sport: true,
+            club: { select: { id: true, name: true } },
+          },
+        },
       },
       orderBy: { date: 'desc' },
     })
@@ -275,12 +285,6 @@ export class SessionService {
   // MEDIA DE EJERCICIOS
   // ============================================
 
-  /**
-   * Añade una media (imagen o link) a un ejercicio.
-   *
-   * - `type = 'IMAGE'` → `url` es el data URL (base64) subido desde el frontend.
-   * - `type = 'LINK'` → `url` es la URL tal cual.
-   */
   async addMediaToExercise(
     userId: string,
     exerciseId: string,

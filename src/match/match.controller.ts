@@ -140,10 +140,27 @@ export class MatchController {
     return this.matchService.upsertPlayerStats(req.user.id, id, targetUserId, stats)
   }
 
+  // ✅ NUEVO — Excluir/incluir jugador del partido
+  @Put(':id/players/:userId/exclusion')
+  setPlayerExclusion(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('userId') targetUserId: string,
+    @Body('excluded') excluded: boolean,
+  ) {
+    return this.matchService.setPlayerExclusion(
+      req.user.id,
+      id,
+      targetUserId,
+      excluded,
+    )
+  }
+
   @Get(':id/stats')
   getPlayerStats(@Request() req, @Param('id') id: string) {
     return this.matchService.getPlayerStats(req.user.id, id)
   }
+
 
   // ============================================
   // LINE UP
