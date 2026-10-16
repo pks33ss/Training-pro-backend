@@ -10,6 +10,9 @@ import {
   isClubAdmin,
   isActiveClubMember,
   canInviteToClub,
+  getViewerPrivateDataScope,
+  isUserInPrivateDataScope,
+  type ViewerPrivateDataScope,
 } from '../common/access';
 import {
   resolveClubRoleId,
@@ -20,6 +23,32 @@ import {
   normalizeMembershipRolesList,
 } from '../common/serialize';
 
+/**
+ * Campos opcionales del club que queremos normalizar a `null` cuando
+ * llegan como string vacío. Evita que la BD tenga mezcla de '' y null.
+ */
+const OPTIONAL_CLUB_STRING_FIELDS = [
+  'description',
+  'address',
+  'phone',
+  'email',
+] as const
+
+function normalizeOptionalClubStrings<T extends Record<string, any>>(
+  data: T,
+): T {
+  const out: any = { ...data }
+  for (const key of OPTIONAL_CLUB_STRING_FIELDS) {
+    if (key in out) {
+      const v = out[key]
+      if (typeof v === 'string' && v.trim() === '') {
+        out[key] = null
+      }
+    }
+  }
+  return out
+}
+
 @Injectable()
 export class ClubService {
   constructor(
@@ -28,15 +57,55 @@ export class ClubService {
     private mailService: MailService,
   ) {}
 
+  // ─────────────────────────────────────────────
+  // HELPERS PRIVADOS DE PRIVACIDAD
+  // ─────────────────────────────────────────────
+
+  private buildPrivateDataFilter(
+    viewerId: string,
+    scope: ViewerPrivateDataScope,
+  ): (target: { id: string; clubId?: string; teamId?: string }) => boolean {
+    return (target) => {
+      if (viewerId === target.id) return true
+      if (scope.isSuperAdmin) return true
+      if (scope.tutorOfUserIds.includes(target.id)) return true
+      if (target.clubId && scope.adminClubIds.includes(target.clubId)) {
+        return true
+      }
+      if (target.teamId && scope.staffTeamIds.includes(target.teamId)) {
+        return true
+      }
+      return false
+    }
+  }
+
+  private filterUserPrivateFields<
+    T extends { id: string; email?: string | null; phone?: string | null },
+  >(
+    user: T,
+    canSee: (target: { id: string; clubId?: string; teamId?: string }) => boolean,
+    ctx: { clubId?: string; teamId?: string } = {},
+  ): T {
+    if (canSee({ id: user.id, ...ctx })) return user
+    const { email: _e, phone: _p, ...rest } = user
+    return rest as T
+  }
+
+  // ─────────────────────────────────────────────
+  // CRUD
+  // ─────────────────────────────────────────────
+
   async create(userId: string, createClubDto: CreateClubDto) {
+    const data = normalizeOptionalClubStrings(createClubDto)
+
     const club = await this.prisma.$transaction(async (tx) => {
       const created = await tx.club.create({
         data: {
-          name: createClubDto.name,
-          description: createClubDto.description,
-          address: createClubDto.address,
-          phone: createClubDto.phone,
-          email: createClubDto.email,
+          name: data.name,
+          description: data.description,
+          address: data.address,
+          phone: data.phone,
+          email: data.email,
         },
       });
 
@@ -62,6 +131,7 @@ export class ClubService {
               user: {
                 select: { id: true, name: true, lastName: true, email: true },
               },
+              roleRef: { select: { id: true, name: true } },
             },
           },
         },
@@ -89,14 +159,18 @@ export class ClubService {
   }
 
   async findAll(userId: string) {
-    if (await isSuperAdmin(this.prisma, userId)) {
-      return this.prisma.club.findMany({
+    const scope = await getViewerPrivateDataScope(this.prisma, userId);
+    const canSee = this.buildPrivateDataFilter(userId, scope);
+
+    if (scope.isSuperAdmin) {
+      const clubs = await this.prisma.club.findMany({
         include: {
           members: {
             include: {
               user: {
                 select: { id: true, name: true, lastName: true, email: true },
               },
+              roleRef: { select: { id: true, name: true } },
             },
           },
           teams: {
@@ -104,6 +178,11 @@ export class ClubService {
           },
         },
       });
+
+      return clubs.map((club) => ({
+        ...club,
+        members: normalizeClubMemberRoleList(club.members),
+      }));
     }
 
     const clubMembers = await this.prisma.clubMember.findMany({
@@ -116,6 +195,7 @@ export class ClubService {
                 user: {
                   select: { id: true, name: true, lastName: true, email: true },
                 },
+                roleRef: { select: { id: true, name: true } },
               },
             },
             teams: {
@@ -138,6 +218,7 @@ export class ClubService {
                     user: {
                       select: { id: true, name: true, lastName: true, email: true },
                     },
+                    roleRef: { select: { id: true, name: true } },
                   },
                 },
                 teams: {
@@ -157,11 +238,30 @@ export class ClubService {
       if (!clubMap.has(club.id)) clubMap.set(club.id, club);
     }
 
-    return Array.from(clubMap.values());
+    const result = Array.from(clubMap.values());
+
+    return result.map((club: any) => ({
+      ...club,
+      members: normalizeClubMemberRoleList(
+        (club.members ?? []).map((m: any) =>
+          m.user
+            ? {
+                ...m,
+                user: this.filterUserPrivateFields(m.user, canSee, {
+                  clubId: club.id,
+                }),
+              }
+            : m,
+        ),
+      ),
+    }));
   }
 
   async findOne(userId: string, clubId: string) {
-    if (!(await isSuperAdmin(this.prisma, userId))) {
+    const scope = await getViewerPrivateDataScope(this.prisma, userId);
+    const canSee = this.buildPrivateDataFilter(userId, scope);
+
+    if (!scope.isSuperAdmin) {
       const isActive = await isActiveClubMember(this.prisma, userId, clubId);
       if (!isActive) {
         const hasMembership = await this.prisma.teamMembership.findFirst({
@@ -186,6 +286,7 @@ export class ClubService {
                 email: true,
               },
             },
+            roleRef: { select: { id: true, name: true } },
           },
         },
         teams: {
@@ -206,7 +307,21 @@ export class ClubService {
       throw new NotFoundException('Club no encontrado');
     }
 
-    return club;
+    return {
+      ...club,
+      members: normalizeClubMemberRoleList(
+        (club.members ?? []).map((m) =>
+          m.user
+            ? {
+                ...m,
+                user: this.filterUserPrivateFields(m.user, canSee, {
+                  clubId: club.id,
+                }),
+              }
+            : m,
+        ),
+      ),
+    };
   }
 
   async update(userId: string, clubId: string, updateClubDto: UpdateClubDto) {
@@ -216,9 +331,13 @@ export class ClubService {
       }
     }
 
+    // ✅ Normalizamos '' → null para los campos opcionales. Solo afecta
+    // a los campos presentes en el DTO; los ausentes se respetan.
+    const data = normalizeOptionalClubStrings(updateClubDto)
+
     return this.prisma.club.update({
       where: { id: clubId },
-      data: updateClubDto,
+      data,
     });
   }
 
@@ -239,7 +358,10 @@ export class ClubService {
   // ============================================
 
   async getMembers(userId: string, clubId: string) {
-    const isSuper = await isSuperAdmin(this.prisma, userId);
+    const scope = await getViewerPrivateDataScope(this.prisma, userId);
+    const canSee = this.buildPrivateDataFilter(userId, scope);
+
+    const isSuper = scope.isSuperAdmin;
     const isActive = await isActiveClubMember(this.prisma, userId, clubId);
 
     if (!isActive && !isSuper) {
@@ -250,14 +372,31 @@ export class ClubService {
       where: { clubId },
       include: {
         user: {
-          select: { id: true, email: true, name: true, lastName: true },
+          select: {
+            id: true,
+            email: true,
+            phone: true,
+            name: true,
+            lastName: true,
+          },
         },
         roleRef: { select: { id: true, name: true } },
       },
       orderBy: { joinedAt: 'asc' },
     });
 
-    return normalizeClubMemberRoleList(members);
+    const filtered = members.map((m) =>
+      m.user
+        ? {
+            ...m,
+            user: this.filterUserPrivateFields(m.user, canSee, {
+              clubId,
+            }),
+          }
+        : m,
+    );
+
+    return normalizeClubMemberRoleList(filtered);
   }
 
   async inviteMember(

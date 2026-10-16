@@ -11,6 +11,10 @@ import {
   assertCanEditPlayerProfile,
   canViewPlayerProfile,
   canEditPlayerProfile,
+  canViewUserPrivateData,
+  getViewerPrivateDataScope,
+  isUserInPrivateDataScope,
+  canManageMembers, 
 } from '../common/access'
 import { UpdatePlayerProfileDto } from './dto/update-player-profile.dto'
 import { CreateInjuryDto } from './dto/create-injury.dto'
@@ -746,7 +750,7 @@ export class UserService {
     return users
   }
 
-  async findByUsername(username: string) {
+  async findByUsername(viewerId: string, username: string) {
     const cleanUsername = username.startsWith('@') ? username : `@${username}`
 
     const user = await this.prisma.user.findUnique({
@@ -756,6 +760,8 @@ export class UserService {
         username: true,
         name: true,
         lastName: true,
+        email: true,
+        phone: true,
         avatar: true,
         bio: true,
         role: true,
@@ -782,7 +788,23 @@ export class UserService {
       throw new NotFoundException('Usuario no encontrado')
     }
 
-    return user
+    // Filtrado de datos privados según el scope del viewer.
+    // El email/phone solo se devuelven si el viewer tiene derecho a verlos.
+    const scope = await getViewerPrivateDataScope(this.prisma, viewerId)
+    const canSeePrivate = isUserInPrivateDataScope(scope, viewerId, user.id)
+
+    // El scope por-lote no incluye comprobaciones "target está en mi club/equipo"
+    // (eso se resuelve al filtrar listados). Para el caso de un único target,
+    // caemos a la comprobación completa que sí lo verifica.
+    const canSeePrivateFull = canSeePrivate
+      ? true
+      : await canViewUserPrivateData(this.prisma, viewerId, user.id)
+
+    return {
+      ...user,
+      email: canSeePrivateFull ? user.email : undefined,
+      phone: canSeePrivateFull ? user.phone : undefined,
+    }
   }
 
   async lookupUserForInvite(
@@ -1202,7 +1224,7 @@ export class UserService {
   // PERMISOS DE VISUALIZACIÓN DEL PERFIL
   // ============================================
 
-  async getUserPermissions(viewerId: string, targetUserId: string) {
+      async getUserPermissions(viewerId: string, targetUserId: string) {
     const target = await this.prisma.user.findUnique({
       where: { id: targetUserId },
       select: { id: true, deletedAt: true },
@@ -1212,17 +1234,39 @@ export class UserService {
       return {
         canViewProfile: false,
         canEditProfile: false,
+        canViewEmail: false,
+        canManageMemberships: false,
+        manageableTeamIds: [] as string[],
       }
     }
 
-    const [canViewProfile, canEditProfile] = await Promise.all([
+    const [canViewProfile, canEditProfile, canViewEmail] = await Promise.all([
       canViewPlayerProfile(this.prisma, viewerId, targetUserId),
       canEditPlayerProfile(this.prisma, viewerId, targetUserId),
+      canViewUserPrivateData(this.prisma, viewerId, targetUserId),
     ])
+
+    // ✅ teamIds donde el viewer puede gestionar memberships del target.
+    // El frontend usará esta lista para mostrar el botón "Editar dorsal y
+    // posición" SOLO en las memberships de equipos que el viewer gestiona.
+    const targetTeams = await this.prisma.teamMembership.findMany({
+      where: { userId: targetUserId, status: 'ACTIVE' },
+      select: { teamId: true },
+    })
+
+    const manageableTeamIds: string[] = []
+    for (const t of targetTeams) {
+      if (await canManageMembers(this.prisma, viewerId, t.teamId)) {
+        manageableTeamIds.push(t.teamId)
+      }
+    }
 
     return {
       canViewProfile,
       canEditProfile,
+      canViewEmail,
+      canManageMemberships: manageableTeamIds.length > 0,
+      manageableTeamIds,
     }
   }
 

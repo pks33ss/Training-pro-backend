@@ -410,6 +410,100 @@ export async function assertCanRemoveMember(
 // USER
 // ─────────────────────────────────────────────
 
+/**
+ * Scope de "quién puede ver los datos privados de quién" para un viewer
+ * concreto. Se calcula UNA VEZ por request y se reutiliza para filtrar
+ * listados (miembros de club, clubes, etc.) sin hacer N chequeos.
+ *
+ * Reglas (equivalentes a `canViewUserPrivateData` target-por-target):
+ *  - El propio user siempre puede verse a sí mismo (se comprueba por id en
+ *    el punto de uso, no aquí).
+ *  - SUPER_ADMIN puede ver a cualquiera.
+ *  - ADMIN_CLUB de un club compartido.
+ *  - COACH / ASSISTANT / ADMIN_TEAM de un equipo compartido.
+ *  - Tutor (PARENT) activo del target.
+ *
+ * Devuelve además los conjuntos de clubes/equipos del viewer para que el
+ * llamante pueda aplicar la regla "el target está en alguno de estos".
+ */
+export interface ViewerPrivateDataScope {
+  isSuperAdmin: boolean
+  /** Clubes donde el viewer es ADMIN_CLUB activo. */
+  adminClubIds: string[]
+  /** Equipos donde el viewer tiene rol staff activo. */
+  staffTeamIds: string[]
+  /** Users de los que el viewer es tutor activo (PARENT). */
+  tutorOfUserIds: string[]
+}
+
+export async function getViewerPrivateDataScope(
+  prisma: PrismaLike,
+  viewerId: string,
+): Promise<ViewerPrivateDataScope> {
+  const isSuper = await isSuperAdmin(prisma, viewerId)
+  if (isSuper) {
+    return {
+      isSuperAdmin: true,
+      adminClubIds: [],
+      staffTeamIds: [],
+      tutorOfUserIds: [],
+    }
+  }
+
+  const [clubAdmins, staffMemberships, tutorRels] = await Promise.all([
+    prisma.clubMember.findMany({
+      where: {
+        userId: viewerId,
+        isActive: true,
+        roleRef: { name: 'ADMIN_CLUB' },
+      },
+      select: { clubId: true },
+    }),
+    prisma.teamMembership.findMany({
+      where: {
+        userId: viewerId,
+        status: 'ACTIVE',
+        roles: {
+          some: { roleRef: { name: { in: STAFF_TEAM_ROLES as any } } },
+        },
+      },
+      select: { teamId: true },
+    }),
+    prisma.tutorRelationship.findMany({
+      where: { tutorUserId: viewerId, status: 'ACTIVE' },
+      select: { playerUserId: true },
+    }),
+  ])
+
+  return {
+    isSuperAdmin: false,
+    adminClubIds: Array.from(new Set(clubAdmins.map((c) => c.clubId))),
+    staffTeamIds: Array.from(new Set(staffMemberships.map((m) => m.teamId))),
+    tutorOfUserIds: Array.from(new Set(tutorRels.map((t) => t.playerUserId))),
+  }
+}
+
+/**
+ * Comprueba si un target cae dentro del scope del viewer.
+ * `targetUserId` puede ser el propio viewer → siempre true.
+ */
+export function isUserInPrivateDataScope(
+  scope: ViewerPrivateDataScope,
+  viewerId: string,
+  targetUserId: string,
+): boolean {
+  if (viewerId === targetUserId) return true
+  if (scope.isSuperAdmin) return true
+  if (scope.tutorOfUserIds.includes(targetUserId)) return true
+  return false
+}
+
+/**
+ * Versión "por target" de `getViewerPrivateDataScope`. Mantiene la firma
+ * pública original para compatibilidad con el resto del código. Internamente
+ * usa el helper por-lote + un chequeo extra de pertenencia a club/equipo
+ * para no degradar el caso de uso suelto.
+ */
 export async function canViewUserPrivateData(
   prisma: PrismaLike,
   actorId: string,
@@ -418,6 +512,7 @@ export async function canViewUserPrivateData(
   if (actorId === targetUserId) return true
   if (await isSuperAdmin(prisma, actorId)) return true
 
+  // Tutor activo del target
   const isParent = await prisma.tutorRelationship.findFirst({
     where: {
       tutorUserId: actorId,
@@ -428,6 +523,8 @@ export async function canViewUserPrivateData(
   })
   if (isParent) return true
 
+  // Target en algún equipo del viewer con rol staff, o en algún club
+  // donde el viewer sea ADMIN_CLUB.
   const targetTeams = await prisma.teamMembership.findMany({
     where: { userId: targetUserId, status: 'ACTIVE' },
     select: { teamId: true },

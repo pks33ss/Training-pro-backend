@@ -81,8 +81,8 @@ export class UserController {
   }
 
   @Get('by-username/:username')
-  findByUsername(@Param('username') username: string) {
-    return this.userService.findByUsername(username)
+  findByUsername(@Request() req, @Param('username') username: string) {
+    return this.userService.findByUsername(req.user.id, username)
   }
 
   @Get('lookup')
