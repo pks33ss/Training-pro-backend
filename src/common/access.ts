@@ -236,14 +236,24 @@ export async function canDeleteTeam(
 // ROLES DE EQUIPO
 // ─────────────────────────────────────────────
 
+/**
+ * Roles que el actor puede AÑADIR a un miembro del equipo.
+ *
+ * Reglas:
+ *  - SUPER_ADMIN o ADMIN_CLUB del club → todos los roles TEAM.
+ *  - Cualquiera con `membership_role:create` en el equipo → todos MENOS ADMIN_TEAM.
+ *    Un ADMIN_TEAM (sin ser ADMIN_CLUB) no puede escalar a otros a ADMIN_TEAM
+ *    ni nombrarse a sí mismo ADMIN_TEAM.
+ */
 export async function getAddableRoles(
   prisma: PrismaLike,
   actorId: string,
   teamId: string,
 ): Promise<MembershipRoleValue[]> {
-  if (await isSuperAdmin(prisma, actorId)) {
-    return ['PLAYER', 'ASSISTANT', 'COACH', 'ADMIN_TEAM']
-  }
+  const ALL: MembershipRoleValue[] = ['PLAYER', 'ASSISTANT', 'COACH', 'ADMIN_TEAM']
+  const EXCLUDING_ADMIN_TEAM: MembershipRoleValue[] = ['PLAYER', 'ASSISTANT', 'COACH']
+
+  if (await isSuperAdmin(prisma, actorId)) return ALL
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
@@ -251,9 +261,7 @@ export async function getAddableRoles(
   })
   if (!team) return []
 
-  if (await isClubAdmin(prisma, actorId, team.clubId)) {
-    return ['PLAYER', 'ASSISTANT', 'COACH', 'ADMIN_TEAM']
-  }
+  if (await isClubAdmin(prisma, actorId, team.clubId)) return ALL
 
   const canCreate = await permissionsService.can(
     prisma,
@@ -262,10 +270,15 @@ export async function getAddableRoles(
     'create',
     { clubId: team.clubId, teamId },
   )
-  if (canCreate) return ['PLAYER', 'ASSISTANT', 'COACH', 'ADMIN_TEAM']
-  return []
+  return canCreate ? EXCLUDING_ADMIN_TEAM : []
 }
 
+/**
+ * Roles que el actor puede QUITAR a un miembro del equipo.
+ *
+ * Misma regla que `getAddableRoles`: sin ser ADMIN_CLUB, no se puede quitar
+ * el rol ADMIN_TEAM (ni a otros ni a uno mismo por esta vía).
+ */
 export async function getRemovableRoles(
   prisma: PrismaLike,
   actorId: string,
@@ -273,7 +286,6 @@ export async function getRemovableRoles(
 ): Promise<MembershipRoleValue[]> {
   return getAddableRoles(prisma, actorId, teamId)
 }
-
 export async function canAddRole(
   prisma: PrismaLike,
   actorId: string,

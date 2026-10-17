@@ -40,12 +40,27 @@ export class PermissionsController {
       }
     }
 
+    // ✅ NUEVO — rol real del usuario en el club (no inferido de permisos).
+    // Es la fuente de verdad para "es ADMIN_CLUB del club", independiente
+    // de qué permisos tenga por rol de equipo o por roles de club
+    // secundarios (COORDINADOR, DIRECTOR_DEPORTIVO, etc.).
+    const clubRoleName = await this.permissionsService.getClubRoleName(
+      this.prisma,
+      req.user.id,
+      clubId,
+    )
+    const isClubAdmin =
+      req.user.role === 'SUPER_ADMIN' || clubRoleName === 'ADMIN_CLUB'
+
     return {
       clubId,
       userId: req.user.id,
       clubWide,
       perTeam,
       matrix,
+      // ✅ NUEVOS
+      clubRoleName,
+      isClubAdmin,
     }
   }
 }
