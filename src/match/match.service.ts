@@ -964,6 +964,7 @@ export class MatchService {
           lastName: ps.user.lastName,
         },
         minutes: ps.minutes,
+        seconds: ps.seconds, 
         points: ps.points,
         rebounds: ps.rebounds,
         assists: ps.assists,

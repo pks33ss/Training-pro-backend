@@ -21,6 +21,7 @@ type MatchLoaded = {
   playerStats: Array<{
     userId: string
     minutes: number | null
+    seconds: number | null
     points: number
     rebounds: number
     assists: number
@@ -68,6 +69,7 @@ export class BasketballStatsService {
           lastName: ps.user.lastName,
         },
         minutes: ps.minutes,
+        seconds: ps.seconds,
         points: ps.points,
         rebounds: ps.rebounds,
         assists: ps.assists,

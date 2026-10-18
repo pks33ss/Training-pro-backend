@@ -1,10 +1,16 @@
-import { IsInt, IsOptional, Min } from 'class-validator'
+import { IsInt, IsOptional, Max, Min } from 'class-validator'
 
 export class UpdateStatsDto {
   @IsInt()
   @Min(0)
   @IsOptional()
   minutes?: number
+
+   @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(59)
+  seconds?: number | null
 
   @IsInt()
   @Min(0)

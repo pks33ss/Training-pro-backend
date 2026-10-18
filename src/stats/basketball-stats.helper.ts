@@ -12,6 +12,7 @@ export type BasketballPlayerStatsRow = {
   userId: string
   user: UserMini
   minutes: number | null
+  seconds: number | null   // ✅ NUEVO
   points: number
   rebounds: number
   assists: number
@@ -58,14 +59,6 @@ export function perMatch(total: number, matches: number): number {
 
 // ─────────────────────────────────────────────
 // Valoración (Euroliga / PIR)
-// =============================================
-// valuation = PTS + REB + AST + STL + BLK + FR
-//           - (FGA - FGM)
-//           - (3PA - 3PM)
-//           - (FTA - FTM)
-//           - TO
-//           - TpC (blocksAgainst)
-//           - Faltas cometidas
 // ─────────────────────────────────────────────
 
 export function computeValuation(s: {
@@ -157,6 +150,7 @@ export type BasketballMatchStatsResult = {
     name: string
     lastName: string
     minutes: number | null
+    seconds: number | null   // ✅ NUEVO
     points: number
     rebounds: number
     assists: number
@@ -227,6 +221,7 @@ export function computeBasketballStatsFromMatch(
       name: ps.user.name,
       lastName: ps.user.lastName,
       minutes: ps.minutes,
+      seconds: ps.seconds,   // ✅ NUEVO
       points: ps.points,
       rebounds: ps.rebounds,
       assists: ps.assists,

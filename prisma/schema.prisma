@@ -566,6 +566,7 @@ model MatchPlayerStats {
   user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   minutes   Int?
+  seconds   Int? 
   points    Int  @default(0)
   rebounds  Int  @default(0)
   assists   Int  @default(0)
