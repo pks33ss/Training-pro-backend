@@ -75,8 +75,11 @@ export class LibraryController {
     @Param('id') id: string,
     @Body('image') image: string,
     @Body('title') title?: string,
+    @Body('tacticalData') tacticalData?: any, 
   ) {
-    return this.libraryService.addMedia(req.user.id, id, image, 'IMAGE', title);
+    return this.libraryService.addMedia(req.user.id, id, image, 'IMAGE', title,undefined,
+      tacticalData,
+    );
   }
 
   @Post(':id/add-link')

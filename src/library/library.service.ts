@@ -133,6 +133,7 @@ export class LibraryService {
     type: 'IMAGE' | 'VIDEO' | 'LINK',
     title?: string,
     description?: string,
+    tacticalData?: any, 
   ) {
     await this.ensureOwnership(userId, exerciseId);
 
@@ -143,6 +144,9 @@ export class LibraryService {
         title,
         description,
         libraryExerciseId: exerciseId,
+        ...(tacticalData !== undefined && {
+          tacticalData: tacticalData as any,
+        }),
       },
     });
   }

@@ -49,10 +49,6 @@ export class SessionController {
     return this.sessionService.remove(req.user.id, id)
   }
 
-  // ============================================
-  // EJERCICIOS
-  // ============================================
-
   @Post(':id/exercises')
   addExercise(
     @Request() req,
@@ -85,16 +81,13 @@ export class SessionController {
     return this.sessionService.removeExercise(req.user.id, exerciseId)
   }
 
-  // ============================================
-  // MEDIA DE EJERCICIOS
-  // ============================================
-
   @Post('exercises/:exerciseId/upload-image')
   uploadExerciseImage(
     @Request() req,
     @Param('exerciseId') exerciseId: string,
     @Body('image') image: string,
     @Body('title') title?: string,
+    @Body('tacticalData') tacticalData?: any,   // ✅ NUEVO
   ) {
     return this.sessionService.addMediaToExercise(
       req.user.id,
@@ -102,6 +95,7 @@ export class SessionController {
       image,
       'IMAGE',
       title,
+      tacticalData,                             // ✅ NUEVO
     )
   }
 

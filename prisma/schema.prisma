@@ -289,6 +289,10 @@ model Media {
   exerciseId  String
   createdAt   DateTime  @default(now())
 
+  // ✅ NUEVO — JSON de la pizarra (DrawableItem[] serializado) para
+  // poder volver a editarla.
+  tacticalData Json?
+
   exercise Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
 }
 
@@ -920,6 +924,9 @@ model LibraryMedia {
   libraryExerciseId String
   createdAt         DateTime  @default(now())
 
+    // ✅ NUEVO
+  tacticalData Json?
+
   libraryExercise LibraryExercise @relation(fields: [libraryExerciseId], references: [id], onDelete: Cascade)
 
   @@index([libraryExerciseId])
@@ -953,6 +960,9 @@ model PlayStep {
   order       Int     @default(0)
   description String?
   imageUrl    String?
+
+    // ✅ NUEVO — JSON de la pizarra del paso
+  tacticalData Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

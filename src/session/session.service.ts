@@ -298,6 +298,7 @@ export class SessionService {
     url: string,
     type: 'IMAGE' | 'LINK',
     title?: string,
+    tacticalData?: any,  
   ) {
     const exercise = await this.prisma.exercise.findUnique({
       where: { id: exerciseId },
@@ -316,6 +317,9 @@ export class SessionService {
         url,
         type: type as any,
         title,
+        ...(tacticalData !== undefined && {
+          tacticalData: tacticalData as any,
+          }),
       },
     })
   }

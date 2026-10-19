@@ -1,16 +1,20 @@
-import { IsString, IsOptional, IsInt, Min } from 'class-validator';
+import { IsOptional, IsString, IsInt, IsObject } from 'class-validator'
 
 export class UpdateStepDto {
-  @IsString()
   @IsOptional()
-  description?: string;
-
   @IsString()
-  @IsOptional()
-  imageUrl?: string;
+  description?: string
 
+  @IsOptional()
+  @IsString()
+  imageUrl?: string | null
+
+  @IsOptional()
   @IsInt()
-  @Min(0)
+  order?: number
+
+  // ✅ NUEVO — JSON serializado de la pizarra (opcional)
   @IsOptional()
-  order?: number;
+  @IsObject()
+  tacticalData?: Record<string, any> | null
 }

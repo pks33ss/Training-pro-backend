@@ -184,6 +184,9 @@ export class PlaybookService {
         description: dto.description,
         imageUrl: dto.imageUrl,
         order,
+        ...(dto.tacticalData !== undefined && {
+          tacticalData: dto.tacticalData as any,
+        }),
       },
     });
   }
@@ -213,6 +216,10 @@ export class PlaybookService {
     if (dto.description !== undefined) data.description = dto.description;
     if (dto.imageUrl !== undefined) data.imageUrl = dto.imageUrl;
     if (dto.order !== undefined) data.order = dto.order;
+
+    if (dto.tacticalData !== undefined) {
+      data.tacticalData = dto.tacticalData
+    }
 
     return this.prisma.playStep.update({
       where: { id: stepId },
