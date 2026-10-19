@@ -417,4 +417,127 @@ export class DashboardService {
       },
     }
   }
+
+    // ════════════════════════════════════════════
+  // MULTI-EQUIPO — Plan semanal
+  // ════════════════════════════════════════════
+
+  /**
+   * Devuelve las sesiones y partidos de la semana indicada para todos los
+   * equipos donde el user es miembro activo. También devuelve la lista de
+   * equipos con su nombre y color asignado (para pintarlos en el grid).
+   *
+   * `weekStart` es el lunes 00:00:00 de la semana en la zona horaria del
+   * navegador. La ventana se calcula como [weekStart, weekStart+7d).
+   */
+  async getMultiTeamWeekly(userId: string, weekStart: Date) {
+    // Normalizamos por si acaso el cliente manda una hora rara.
+    const start = new Date(weekStart)
+    start.setHours(0, 0, 0, 0)
+    const end = new Date(start)
+    end.setDate(end.getDate() + 7)
+
+    // Todos los equipos donde el user es miembro activo.
+    const memberships = await this.prisma.teamMembership.findMany({
+      where: { userId, status: 'ACTIVE' },
+      select: {
+        team: {
+          select: {
+            id: true,
+            name: true,
+            sport: true,
+            club: { select: { id: true, name: true } },
+          },
+        },
+      },
+    })
+
+    // De-duplicamos por si hubiese memberships duplicadas.
+    const teamsMap = new Map<
+      string,
+      {
+        id: string
+        name: string
+        sport: string | null
+        club: { id: string; name: string }
+      }
+    >()
+    for (const m of memberships) {
+      if (!teamsMap.has(m.team.id)) {
+        teamsMap.set(m.team.id, {
+          id: m.team.id,
+          name: m.team.name,
+          sport: m.team.sport ?? null,
+          club: {
+            id: m.team.club?.id ?? '',
+            name: m.team.club?.name ?? '',
+          },
+        })
+      }
+    }
+
+    const teams = Array.from(teamsMap.values())
+    const teamIds = teams.map((t) => t.id)
+
+    if (teamIds.length === 0) {
+      return {
+        weekStart: start.toISOString(),
+        weekEnd: end.toISOString(),
+        teams: [],
+        sessions: [],
+        matches: [],
+        summary: { sessions: 0, matches: 0 },
+      }
+    }
+
+    const [sessions, matches] = await Promise.all([
+      this.prisma.session.findMany({
+        where: {
+          teamId: { in: teamIds },
+          date: { gte: start, lt: end },
+        },
+        select: {
+          id: true,
+          title: true,
+          date: true,
+          duration: true,
+          location: true,
+          teamId: true,
+        },
+        orderBy: { date: 'asc' },
+      }),
+
+      this.prisma.match.findMany({
+        where: {
+          teamId: { in: teamIds },
+          date: { gte: start, lt: end },
+        },
+        select: {
+          id: true,
+          opponent: true,
+          date: true,
+          location: true,
+          venue: true,
+          status: true,
+          teamScore: true,
+          opponentScore: true,
+          teamId: true,
+        },
+        orderBy: { date: 'asc' },
+      }),
+    ])
+
+    return {
+      weekStart: start.toISOString(),
+      weekEnd: end.toISOString(),
+      teams,
+      sessions,
+      matches,
+      summary: {
+        sessions: sessions.length,
+        matches: matches.length,
+      },
+    }
+  }
+
 }
