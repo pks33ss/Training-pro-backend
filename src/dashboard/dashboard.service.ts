@@ -432,10 +432,14 @@ export class DashboardService {
    */
   async getMultiTeamWeekly(userId: string, weekStart: Date) {
     // Normalizamos por si acaso el cliente manda una hora rara.
-    const start = new Date(weekStart)
-    start.setHours(0, 0, 0, 0)
-    const end = new Date(start)
-    end.setDate(end.getDate() + 7)
+    const start = new Date(
+  Date.UTC(
+    weekStart.getUTCFullYear(),
+    weekStart.getUTCMonth(),
+    weekStart.getUTCDate(),
+  ),
+)
+const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000)
 
     // Todos los equipos donde el user es miembro activo.
     const memberships = await this.prisma.teamMembership.findMany({
