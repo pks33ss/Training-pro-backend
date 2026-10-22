@@ -79,4 +79,10 @@ export class TeamController {
   removeLogo(@Request() req, @Param('id') id: string) {
     return this.teamService.removeLogo(req.user.id, id);
   }
+
+  @Get(':id/opponent-players')
+  getOpponentPlayers(@Request() req, @Param('id') teamId: string) {
+    return this.teamService.getOpponentPlayers(req.user.id, teamId)
+  }
+
 }

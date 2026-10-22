@@ -1,4 +1,18 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, Request, UseGuards } from '@nestjs/common'
+// backend/src/match/match.controller.ts
+
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  Request,
+  UseGuards,
+} from '@nestjs/common'
 import { MatchService } from './match.service'
 import { CreateMatchDto } from './dto/create-match.dto'
 import { UpdateMatchDto } from './dto/update-match.dto'
@@ -22,9 +36,8 @@ export class MatchController {
     @Param('teamId') teamId: string,
     @Query('season') season?: string,
   ) {
-    
-  return this.matchService.findAllByTeam(req.user.id, teamId, season)
-}
+    return this.matchService.findAllByTeam(req.user.id, teamId, season)
+  }
 
   @Get('team/:teamId/seasons')
   findSeasonsByTeam(@Request() req, @Param('teamId') teamId: string) {
@@ -36,7 +49,7 @@ export class MatchController {
     return this.matchService.getTeamStats(req.user.id, teamId)
   }
 
-    @Get(':id/padel-stats')
+  @Get(':id/padel-stats')
   getPadelStats(@Request() req, @Param('id') id: string) {
     return this.matchService.getPadelStats(req.user.id, id)
   }
@@ -47,7 +60,11 @@ export class MatchController {
   }
 
   @Put(':id')
-  update(@Request() req, @Param('id') id: string, @Body() updateMatchDto: UpdateMatchDto) {
+  update(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() updateMatchDto: UpdateMatchDto,
+  ) {
     return this.matchService.update(req.user.id, id, updateMatchDto)
   }
 
@@ -57,7 +74,11 @@ export class MatchController {
   }
 
   @Put(':id/result')
-  updateResult(@Request() req, @Param('id') id: string, @Body() updateResultDto: UpdateResultDto) {
+  updateResult(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() updateResultDto: UpdateResultDto,
+  ) {
     return this.matchService.updateResult(req.user.id, id, updateResultDto)
   }
 
@@ -65,7 +86,6 @@ export class MatchController {
   // CONVOCATORIA
   // ============================================
 
-  // ✅ Ahora el body usa userIds
   @Post(':id/callups')
   createCallups(
     @Request() req,
@@ -80,7 +100,6 @@ export class MatchController {
     return this.matchService.getCallups(req.user.id, id)
   }
 
-  // ✅ Ruta :playerId → :userId
   @Put(':id/callups/:userId')
   updateCallupFlags(
     @Request() req,
@@ -94,7 +113,12 @@ export class MatchController {
       notes?: string
     },
   ) {
-    return this.matchService.updateCallupFlags(req.user.id, id, targetUserId, flags)
+    return this.matchService.updateCallupFlags(
+      req.user.id,
+      id,
+      targetUserId,
+      flags,
+    )
   }
 
   @Delete(':id/callups/:userId')
@@ -115,7 +139,7 @@ export class MatchController {
   // ESTADÍSTICAS
   // ============================================
 
-    @Get(':id/basketball-stats')
+  @Get(':id/basketball-stats')
   getBasketballStats(@Request() req, @Param('id') id: string) {
     return this.matchService.getBasketballStats(req.user.id, id)
   }
@@ -128,8 +152,7 @@ export class MatchController {
   ) {
     return this.matchService.removePlayerStats(req.user.id, id, targetUserId)
   }
- 
-  // ✅ Ruta :playerId → :userId
+
   @Post(':id/stats/:userId')
   upsertPlayerStats(
     @Request() req,
@@ -137,10 +160,14 @@ export class MatchController {
     @Param('userId') targetUserId: string,
     @Body() stats: UpdateStatsDto,
   ) {
-    return this.matchService.upsertPlayerStats(req.user.id, id, targetUserId, stats)
+    return this.matchService.upsertPlayerStats(
+      req.user.id,
+      id,
+      targetUserId,
+      stats,
+    )
   }
 
-  // ✅ NUEVO — Excluir/incluir jugador del partido
   @Put(':id/players/:userId/exclusion')
   setPlayerExclusion(
     @Request() req,
@@ -160,7 +187,6 @@ export class MatchController {
   getPlayerStats(@Request() req, @Param('id') id: string) {
     return this.matchService.getPlayerStats(req.user.id, id)
   }
-
 
   // ============================================
   // LINE UP
@@ -187,6 +213,7 @@ export class MatchController {
   ) {
     return this.matchService.updateGamePlan(req.user.id, id, gamePlan)
   }
+
   // ============================================
   // PÁDEL — SUBPARTIDOS (PISTAS)
   // ============================================
@@ -197,7 +224,10 @@ export class MatchController {
   }
 
   @Delete('padel/sub-matches/:subMatchId')
-  removePadelSubMatch(@Request() req, @Param('subMatchId') subMatchId: string) {
+  removePadelSubMatch(
+    @Request() req,
+    @Param('subMatchId') subMatchId: string,
+  ) {
     return this.matchService.removePadelSubMatch(req.user.id, subMatchId)
   }
 
@@ -207,7 +237,11 @@ export class MatchController {
     @Param('id') id: string,
     @Body('subMatchIds') subMatchIds: string[],
   ) {
-    return this.matchService.reorderPadelSubMatches(req.user.id, id, subMatchIds)
+    return this.matchService.reorderPadelSubMatches(
+      req.user.id,
+      id,
+      subMatchIds,
+    )
   }
 
   @Put('padel/sub-matches/:subMatchId/player')
@@ -224,6 +258,7 @@ export class MatchController {
       targetUserId,
     )
   }
+
   @Post('padel/sub-matches/:subMatchId/sets')
   addSetToSubMatch(
     @Request() req,
@@ -244,14 +279,67 @@ export class MatchController {
       force === 'true',
     )
   }
+
   @Put('padel/sets/:setId')
   updatePadelSet(
     @Request() req,
     @Param('setId') setId: string,
-    @Body() data: { homeScore?: number; awayScore?: number; played?: boolean },
+    @Body()
+    data: { homeScore?: number; awayScore?: number; played?: boolean },
   ) {
     return this.matchService.updatePadelSet(req.user.id, setId, data)
   }
 
+  // ============================================
+  // OPONENTES
+  // ============================================
 
+  @Get(':id/opponents')
+  getOpponents(@Request() req, @Param('id') id: string) {
+    return this.matchService.getOpponents(req.user.id, id)
+  }
+
+  @Patch(':id/opponents/:opponentPlayerId')
+  updateOpponentStats(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('opponentPlayerId') opponentPlayerId: string,
+    @Body() dto: any,
+  ) {
+    return this.matchService.updateOpponentStats(
+      req.user.id,
+      id,
+      opponentPlayerId,
+      dto,
+    )
+  }
+
+  // ============================================
+  // CAMBIAR ESTADO DEL PARTIDO (abrir/cerrar)
+  // ============================================
+
+  @Patch(':id/status')
+  updateStatus(
+    @Request() req,
+    @Param('id') id: string,
+    @Body('status')
+    status:
+      | 'SCHEDULED'
+      | 'IN_PROGRESS'
+      | 'FINISHED'
+      | 'CANCELLED'
+      | 'POSTPONED',
+  ) {
+    return this.matchService.updateStatus(req.user.id, id, status)
+  }
+
+
+  // ============================================
+  // CERRAR PARTIDO
+  // ============================================
+
+  @Post(':id/close')
+  closeMatch(@Request() req, @Param('id') id: string) {
+    return this.matchService.closeMatch(req.user.id, id)
+  }
 }

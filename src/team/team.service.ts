@@ -300,4 +300,53 @@ export class TeamService {
       data: { logo: null },
     })
   }
+
+  async getOpponentPlayers(userId: string, teamId: string) {
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      select: { id: true },
+    })
+    if (!team) throw new NotFoundException('Equipo no encontrado')
+
+    if (!(await canViewTeam(this.prisma, userId, teamId))) {
+      throw new ForbiddenException('No tienes acceso a este equipo')
+    }
+
+    const players = await this.prisma.teamOpponentPlayer.findMany({
+      where: { teamId },
+      orderBy: { number: 'asc' },
+      include: { stats: true },
+    })
+
+    return players.map((p) => ({
+      id: p.id,
+      userId: p.userId,
+      number: p.number,
+      name: p.name,
+      position: p.position,
+      stats: p.stats
+        ? {
+            matchesCount: p.stats.matchesCount,
+            minutes: p.stats.minutes,
+            seconds: p.stats.seconds,
+            points: p.stats.points,
+            rebounds: p.stats.rebounds,
+            reboundsOff: p.stats.reboundsOff,
+            reboundsDef: p.stats.reboundsDef,
+            assists: p.stats.assists,
+            steals: p.stats.steals,
+            blocks: p.stats.blocks,
+            turnovers: p.stats.turnovers,
+            fouls: p.stats.fouls,
+            fieldGoalsMade: p.stats.fieldGoalsMade,
+            fieldGoalsAttempted: p.stats.fieldGoalsAttempted,
+            threePointersMade: p.stats.threePointersMade,
+            threePointersAttempted: p.stats.threePointersAttempted,
+            freeThrowsMade: p.stats.freeThrowsMade,
+            freeThrowsAttempted: p.stats.freeThrowsAttempted,
+          }
+        : null,
+    }))
+  }
+
 }

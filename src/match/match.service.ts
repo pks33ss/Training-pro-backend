@@ -12,7 +12,11 @@ import { CreateMatchDto } from './dto/create-match.dto'
 import { UpdateMatchDto } from './dto/update-match.dto'
 import { UpdateResultDto } from './dto/update-result.dto'
 import { UpdateStatsDto } from './dto/update-stats.dto'
-import { getTeamForViewer, resolveViewerStatsRole } from '../common/access'
+import {
+  getTeamForViewer,
+  resolveViewerStatsRole,
+  canViewTeam,
+} from '../common/access'
 import { computePadelStatsFromMatch } from '../stats/padel-stats.helper'
 import { computeBasketballStatsFromMatch } from '../stats/basketball-stats.helper'
 import { buildVisibleKeys, filterStatsPayload } from '../stats/stats-filter'
@@ -964,7 +968,7 @@ export class MatchService {
           lastName: ps.user.lastName,
         },
         minutes: ps.minutes,
-        seconds: ps.seconds, 
+        seconds: ps.seconds,
         points: ps.points,
         rebounds: ps.rebounds,
         assists: ps.assists,
@@ -1033,4 +1037,305 @@ export class MatchService {
 
     return { ok: true }
   }
+
+  // ============================================
+  // OPONENTES (rival del partido)
+  // ============================================
+
+  async getOpponents(userId: string, matchId: string) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { teamId: true },
+    })
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    if (!(await canViewTeam(this.prisma, userId, match.teamId))) {
+      throw new ForbiddenException('No tienes acceso a este equipo')
+    }
+
+    const opponents = await this.prisma.matchOpponentPlayer.findMany({
+      where: { matchId },
+      orderBy: { number: 'asc' },
+      include: { stats: true },
+    })
+
+    return opponents.map((op) => ({
+      id: op.id,
+      userId: op.userId,
+      number: op.number,
+      name: op.name,
+      position: op.position,
+      stats: op.stats
+        ? {
+            matchesCount: 0,
+            minutes: op.stats.minutes,
+            seconds: op.stats.seconds,
+            points: op.stats.points,
+            rebounds: op.stats.rebounds,
+            reboundsOff: op.stats.reboundsOff,
+            reboundsDef: op.stats.reboundsDef,
+            assists: op.stats.assists,
+            steals: op.stats.steals,
+            blocks: op.stats.blocks,
+            turnovers: op.stats.turnovers,
+            fouls: op.stats.fouls,
+            fieldGoalsMade: op.stats.fieldGoalsMade,
+            fieldGoalsAttempted: op.stats.fieldGoalsAttempted,
+            threePointersMade: op.stats.threePointersMade,
+            threePointersAttempted: op.stats.threePointersAttempted,
+            freeThrowsMade: op.stats.freeThrowsMade,
+            freeThrowsAttempted: op.stats.freeThrowsAttempted,
+          }
+        : null,
+    }))
+  }
+
+  async updateOpponentStats(
+    userId: string,
+    matchId: string,
+    opponentPlayerId: string,
+    dto: any,
+  ) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { teamId: true },
+    })
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    await getTeamForViewer(this.prisma, userId, match.teamId)
+
+    const opponent = await this.prisma.matchOpponentPlayer.findUnique({
+      where: { id: opponentPlayerId },
+      select: { id: true, matchId: true },
+    })
+    if (!opponent || opponent.matchId !== matchId) {
+      throw new NotFoundException('Jugador rival no encontrado')
+    }
+
+    const data: any = {}
+    const fields = [
+      'minutes',
+      'seconds',
+      'points',
+      'rebounds',
+      'reboundsOff',
+      'reboundsDef',
+      'assists',
+      'steals',
+      'blocks',
+      'turnovers',
+      'fouls',
+      'blocksAgainst',
+      'foulsDrawn',
+      'plusMinus',
+      'fieldGoalsMade',
+      'fieldGoalsAttempted',
+      'threePointersMade',
+      'threePointersAttempted',
+      'freeThrowsMade',
+      'freeThrowsAttempted',
+    ]
+    for (const f of fields) {
+      if (dto[f] !== undefined) data[f] = dto[f]
+    }
+
+    return this.prisma.matchOpponentPlayerStats.upsert({
+      where: { matchOpponentPlayerId: opponent.id },
+      update: data,
+      create: {
+        matchOpponentPlayerId: opponent.id,
+        ...data,
+      },
+    })
+  }
+
+  // ============================================
+  // CERRAR PARTIDO (recalcula globales)
+  // ============================================
+
+
+  private async recomputeTeamOpponentStats(teamId: string) {
+    await this.prisma.$transaction(async (tx) => {
+      const matchOpponents = await tx.matchOpponentPlayer.findMany({
+        where: {
+          match: { teamId, status: 'FINISHED' },
+        },
+        include: { stats: true },
+      })
+
+      type Agg = {
+        userId: string | null
+        number: number
+        name: string | null
+        position: string | null
+        matchesCount: number
+        minutes: number
+        seconds: number
+        points: number
+        rebounds: number
+        reboundsOff: number
+        reboundsDef: number
+        assists: number
+        steals: number
+        blocks: number
+        turnovers: number
+        fouls: number
+        fieldGoalsMade: number
+        fieldGoalsAttempted: number
+        threePointersMade: number
+        threePointersAttempted: number
+        freeThrowsMade: number
+        freeThrowsAttempted: number
+        blocksAgainst: number
+        foulsDrawn: number
+        plusMinus: number
+      }
+
+      const byNumber = new Map<number, Agg>()
+
+      for (const mop of matchOpponents) {
+        const agg =
+          byNumber.get(mop.number) ??
+          ({
+            userId: mop.userId,
+            number: mop.number,
+            name: mop.name,
+            position: mop.position,
+            matchesCount: 0,
+            minutes: 0,
+            seconds: 0,
+            points: 0,
+            rebounds: 0,
+            reboundsOff: 0,
+            reboundsDef: 0,
+            assists: 0,
+            steals: 0,
+            blocks: 0,
+            turnovers: 0,
+            fouls: 0,
+            fieldGoalsMade: 0,
+            fieldGoalsAttempted: 0,
+            threePointersMade: 0,
+            threePointersAttempted: 0,
+            freeThrowsMade: 0,
+            freeThrowsAttempted: 0,
+            blocksAgainst: 0,
+            foulsDrawn: 0,
+            plusMinus: 0,
+          } as Agg)
+
+        agg.matchesCount += 1
+        const s = mop.stats
+        if (s) {
+          agg.minutes += s.minutes ?? 0
+          agg.seconds += s.seconds ?? 0
+          agg.points += s.points
+          agg.rebounds += s.rebounds
+          agg.reboundsOff += s.reboundsOff
+          agg.reboundsDef += s.reboundsDef
+          agg.assists += s.assists
+          agg.steals += s.steals
+          agg.blocks += s.blocks
+          agg.turnovers += s.turnovers
+          agg.fouls += s.fouls
+          agg.fieldGoalsMade += s.fieldGoalsMade
+          agg.fieldGoalsAttempted += s.fieldGoalsAttempted
+          agg.threePointersMade += s.threePointersMade
+          agg.threePointersAttempted += s.threePointersAttempted
+          agg.freeThrowsMade += s.freeThrowsMade
+          agg.freeThrowsAttempted += s.freeThrowsAttempted
+          agg.blocksAgainst += s.blocksAgainst
+          agg.foulsDrawn += s.foulsDrawn
+          agg.plusMinus += s.plusMinus ?? 0
+        }
+        byNumber.set(mop.number, agg)
+      }
+
+      await tx.teamOpponentPlayer.deleteMany({ where: { teamId } })
+
+      for (const agg of byNumber.values()) {
+        const totalSecs = agg.minutes * 60 + agg.seconds
+        const minutes = Math.floor(totalSecs / 60)
+        const seconds = totalSecs % 60
+
+        const top = await tx.teamOpponentPlayer.create({
+          data: {
+            teamId,
+            userId: agg.userId,
+            number: agg.number,
+            name: agg.name,
+            position: agg.position,
+          },
+        })
+        await tx.teamOpponentPlayerStats.create({
+          data: {
+            teamOpponentPlayerId: top.id,
+            matchesCount: agg.matchesCount,
+            minutes,
+            seconds,
+            points: agg.points,
+            rebounds: agg.rebounds,
+            reboundsOff: agg.reboundsOff,
+            reboundsDef: agg.reboundsDef,
+            assists: agg.assists,
+            steals: agg.steals,
+            blocks: agg.blocks,
+            turnovers: agg.turnovers,
+            fouls: agg.fouls,
+            fieldGoalsMade: agg.fieldGoalsMade,
+            fieldGoalsAttempted: agg.fieldGoalsAttempted,
+            threePointersMade: agg.threePointersMade,
+            threePointersAttempted: agg.threePointersAttempted,
+            freeThrowsMade: agg.freeThrowsMade,
+            freeThrowsAttempted: agg.freeThrowsAttempted,
+            blocksAgainst: agg.blocksAgainst,
+            foulsDrawn: agg.foulsDrawn,
+            plusMinus: agg.plusMinus,
+          },
+        })
+      }
+    })
+  }
+
+    // ============================================
+  // CAMBIAR ESTADO DEL PARTIDO (cerrar/reabrir)
+  // ============================================
+
+  async updateStatus(
+    userId: string,
+    matchId: string,
+    status:
+      | 'SCHEDULED'
+      | 'IN_PROGRESS'
+      | 'FINISHED'
+      | 'CANCELLED'
+      | 'POSTPONED',
+  ) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { id: true, teamId: true, status: true },
+    })
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    await getTeamForViewer(this.prisma, userId, match.teamId)
+
+    const wasFinished = match.status === 'FINISHED'
+    const willBeFinished = status === 'FINISHED'
+
+    await this.prisma.match.update({
+      where: { id: matchId },
+      data: { status },
+    })
+
+    // Recalcular globales del rival si el partido entra o sale del cómputo
+    if (wasFinished !== willBeFinished) {
+      await this.recomputeTeamOpponentStats(match.teamId)
+    }
+
+    return { ok: true, status }
+  }
+
+  // Alias por compatibilidad con llamadas antiguas a POST /close
+  async closeMatch(userId: string, matchId: string) {
+    return this.updateStatus(userId, matchId, 'FINISHED')
+  }
+
+
 }

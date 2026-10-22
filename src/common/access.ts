@@ -1093,4 +1093,58 @@ export async function assertCanDeletePayment(
   if (!(await canDeletePayment(prisma, userId, paymentId))) {
     throw new ForbiddenException('No tienes permisos para borrar este pago')
   }
+
+
+}
+// ─────────────────────────────────────────────
+// STATS EN VIVO
+// ─────────────────────────────────────────────
+
+/**
+ * Permiso para gestionar stats en vivo de un equipo (anotar).
+ *
+ * Reglas:
+ * - SUPER_ADMIN
+ * - ADMIN_CLUB del club del equipo
+ * - Staff del equipo: COACH, ASSISTANT, ADMIN_TEAM
+ * - (PLAYER queda fuera: solo puede VER stats, no anotar)
+ * - (PARENT queda fuera)
+ */
+export async function canManageLiveStats(
+  prisma: PrismaLike,
+  userId: string,
+  teamId: string,
+): Promise<boolean> {
+  if (await isSuperAdmin(prisma, userId)) return true
+
+  const team = await prisma.team.findUnique({
+    where: { id: teamId },
+    select: { clubId: true },
+  })
+  if (!team) return false
+
+  if (await isClubAdmin(prisma, userId, team.clubId)) return true
+
+  const roles = await getTeamRoles(prisma, userId, teamId)
+  return roles.some((r) =>
+    ['COACH', 'ASSISTANT', 'ADMIN_TEAM'].includes(r),
+  )
+}
+
+export async function assertCanManageLiveStats(
+  prisma: PrismaLike,
+  userId: string,
+  teamId: string,
+): Promise<void> {
+  const team = await prisma.team.findUnique({
+    where: { id: teamId },
+    select: { id: true },
+  })
+  if (!team) throw new NotFoundException('Equipo no encontrado')
+
+  if (!(await canManageLiveStats(prisma, userId, teamId))) {
+    throw new ForbiddenException(
+      'No tienes permisos para gestionar las estadísticas en vivo de este equipo',
+    )
+  }
 }

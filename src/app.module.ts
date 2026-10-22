@@ -29,6 +29,10 @@ import { MailModule } from './mail/mail.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PermissionsModule } from './permissions/permissions.module'; // LOTE 8.2
 
+import { StatSessionsModule } from './stat-sessions/stat-sessions.module'
+import { LiveEventsModule } from './live-events/live-events.module'
+import { MatchImportModule } from './match-import/match-import.module'
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -49,6 +53,9 @@ import { PermissionsModule } from './permissions/permissions.module'; // LOTE 8.
     AttendanceModule,
     CloudinaryModule,
     MatchModule,
+    MatchImportModule,
+    StatSessionsModule, 
+    LiveEventsModule,
     DashboardModule,
     LiveModule,
     SeasonModule,

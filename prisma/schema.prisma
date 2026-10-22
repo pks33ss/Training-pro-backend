@@ -60,24 +60,39 @@ model User {
   invitedMemberships  TeamMembership[]    @relation("MembershipInviter")
   pendingForMe        PendingInvitation[]
 
-  hostedStreams      LiveStream[]       @relation("HostedStreams")
+  hostedStreams      LiveStream[]          @relation("HostedStreams")
   liveViewers        LiveViewer[]
-  streamPermissions  StreamPermission[] @relation("UserStreamPermissions")
-  grantedPermissions StreamPermission[] @relation("GrantedBy")
+  streamPermissions  StreamPermission[]    @relation("UserStreamPermissions")
+  grantedPermissions StreamPermission[]    @relation("GrantedBy")
   attendances        Attendance[]
   matchCallups       MatchCallup[]
-  matchExclusions     MatchExcludedPlayer[]
+  matchExclusions    MatchExcludedPlayer[]
 
   playerProfile PlayerProfile?
   injuries      Injury[]
 
   libraryExercises LibraryExercise[]
 
-  
+  onCourtIntervals StatSessionOnCourt[] @relation("OnCourtUser")
 
   createdPlays Play[] @relation("PlayCreatedBy")
 
   permissionAuditLogs PermissionAuditLog[] @relation("PermissionAuditActor")
+
+  // ── Stats en vivo (Lote 1) ────────────────────────────────
+  // Eventos creados / anulados / jugados por este usuario.
+  // onDelete: SetNull → si el user se borra físicamente (no debería
+  // pasar en JoinSport, que usa soft delete), el evento NO se pierde.
+  matchEventsCreated  MatchEvent[] @relation("MatchEventCreator")
+  matchEventsVoided   MatchEvent[] @relation("MatchEventVoider")
+  matchEventsAsPlayer MatchEvent[] @relation("MatchEventPlayer")
+
+  opponentPlayers OpponentPlayer[] @relation("OpponentPlayerUser")
+
+  statSessionsCreated StatSession[] @relation("StatSessionCreator")
+
+  matchOpponentPlayers MatchOpponentPlayer[] @relation("MatchOpponentPlayerUser")
+  teamOpponentPlayers  TeamOpponentPlayer[]  @relation("TeamOpponentPlayerUser")
 
   @@index([deletedAt])
 }
@@ -147,7 +162,9 @@ model Team {
   statsVisibilityConfigs StatsVisibilityConfig[]
   paymentConcepts        PaymentConcept[]
 
-  plays Play[]
+  plays           Play[]
+  statSessions    StatSession[]
+  opponentPlayers TeamOpponentPlayer[]
 }
 
 model TeamMembership {
@@ -516,13 +533,29 @@ model Match {
   createdById String?
   createdBy   User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
 
-  callups     MatchCallup[]
-  playerStats MatchPlayerStats[]
+  callups         MatchCallup[]
+  playerStats     MatchPlayerStats[]
   excludedPlayers MatchExcludedPlayer[]
 
   padelSubMatches PadelSubMatch[]
 
-  liveStream LiveStream?
+  liveStream      LiveStream?
+  statSessions    StatSession[]
+  opponentPlayers MatchOpponentPlayer[]
+
+  // ── Stats en vivo (Lote 1) ────────────────────────────────
+  // true mientras hay una sesión de anotación en vivo abierta.
+  // Bloquea la edición manual de MatchPlayerStats (Lote 3).
+  liveStatsActive         Boolean   @default(false)
+  // Toggle "mostrar al público" de la vista /matches/[id]/live.
+  // Solo ADMIN_TEAM / ADMIN_CLUB pueden cambiarlo (Lote 5).
+  liveStatsPublicVisible  Boolean   @default(false)
+  // Lock blando del anotador: quién tiene la sesión abierta y desde cuándo.
+  // Heartbeat en Lote 3; si no late en 30 s, se libera.
+  liveStatsLockedByUserId String?
+  liveStatsLockedAt       DateTime?
+
+  events MatchEvent[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -564,20 +597,24 @@ enum CallupStatus {
 }
 
 model MatchPlayerStats {
-  id      String @id @default(cuid())
-  matchId String
-  userId  String
-  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  matchId       String?
+  statSessionId String?
+  statSession   StatSession? @relation(fields: [statSessionId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  minutes   Int?
-  seconds   Int? 
-  points    Int  @default(0)
-  rebounds  Int  @default(0)
-  assists   Int  @default(0)
-  steals    Int  @default(0)
-  blocks    Int  @default(0)
-  turnovers Int  @default(0)
-  fouls     Int  @default(0)
+  minutes     Int?
+  seconds     Int?
+  points      Int  @default(0)
+  rebounds    Int  @default(0)
+  reboundsOff Int  @default(0) // ← NUEVO
+  reboundsDef Int  @default(0)
+  assists     Int  @default(0)
+  steals      Int  @default(0)
+  blocks      Int  @default(0)
+  turnovers   Int  @default(0)
+  fouls       Int  @default(0)
 
   fieldGoalsMade         Int @default(0)
   fieldGoalsAttempted    Int @default(0)
@@ -590,14 +627,16 @@ model MatchPlayerStats {
   foulsDrawn    Int  @default(0)
   plusMinus     Int? @default(0)
 
-  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  match Match? @relation(fields: [matchId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([matchId, userId])
+  @@unique([statSessionId, userId])
   @@index([matchId])
   @@index([userId])
+  @@index([statSessionId])
 }
 
 model LiveStream {
@@ -924,7 +963,7 @@ model LibraryMedia {
   libraryExerciseId String
   createdAt         DateTime  @default(now())
 
-    // ✅ NUEVO
+  // ✅ NUEVO
   tacticalData Json?
 
   libraryExercise LibraryExercise @relation(fields: [libraryExerciseId], references: [id], onDelete: Cascade)
@@ -961,7 +1000,7 @@ model PlayStep {
   description String?
   imageUrl    String?
 
-    // ✅ NUEVO — JSON de la pizarra del paso
+  // ✅ NUEVO — JSON de la pizarra del paso
   tacticalData Json?
 
   createdAt DateTime @default(now())
@@ -1064,4 +1103,386 @@ model MatchExcludedPlayer {
   @@unique([matchId, userId])
   @@index([matchId])
   @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// STATS EN VIVO — fuente de verdad de los eventos del partido
+// ─────────────────────────────────────────────────────────────
+
+// Tipos de evento del MVP (baloncesto).
+// Ampliable en el futuro con migración aditiva (SUB_IN, SUB_OUT,
+// PERIOD_START, PERIOD_END, etc.). NO borrar ni renombrar los
+// existentes sin migración de datos: MatchEvent.type los referencia.
+enum MatchEventType {
+  POINTS_2 // canasta de 2
+  POINTS_3 // canasta de 3
+  FREE_THROW // tiro libre anotado (1 punto)
+  REBOUND_OFF // rebote ofensivo
+  REBOUND_DEF // rebote defensivo
+  ASSIST // asistencia
+  STEAL // robo
+  BLOCK // tapón
+  TURNOVER // pérdida
+  FOUL // falta personal
+  MISS_2 // tiro de 2 fallado
+  MISS_3 // tiro de 3 fallado
+  MISS_FT // tiro libre fallado
+}
+
+// MatchEvent — fuente de verdad de las stats en vivo.
+//
+// Reglas:
+//  - Cada clic del anotador = 1 fila aquí. Nunca se borra físicamente.
+//  - Deshacer = setear voidedAt (soft delete). El agregador ignora
+//    los voidedAt != null al calcular el snapshot.
+//  - MatchPlayerStats se recalcula desde aquí (on-demand en
+//    GET /live-stats, y persistido al cerrar la sesión en vivo).
+//  - No se escribe MatchPlayerStats directamente mientras
+//    Match.liveStatsActive = true.
+model MatchEvent {
+  id String @id @default(cuid())
+
+  // Uno de los dos, nunca ambos. Se valida en el service.
+  // - statSessionId != null, matchId = statSession.matchId (si aplica).
+  matchId String?
+  match   Match?  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  statSessionId String?
+  statSession   StatSession? @relation(fields: [statSessionId], references: [id], onDelete: Cascade)
+
+  // Jugador de NUESTRO equipo (userId real).
+  playerId String?
+  player   User?   @relation("MatchEventPlayer", fields: [playerId], references: [id], onDelete: SetNull)
+
+  // Jugador del RIVAL (OpponentPlayer).
+  opponentPlayerId String?
+  opponentPlayer   OpponentPlayer? @relation(fields: [opponentPlayerId], references: [id], onDelete: Cascade)
+
+  // Denormalización: true si opponentPlayerId != null.
+  // Permite filtrar por bando sin join a OpponentPlayer.
+  isOpponent Boolean @default(false)
+
+  type  MatchEventType
+  value Int?
+
+  period       Int  @default(1)
+  clockSeconds Int?
+
+  voidedAt   DateTime?
+  voidedById String?
+  voidedBy   User?     @relation("MatchEventVoider", fields: [voidedById], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("MatchEventCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([statSessionId, createdAt])
+  @@index([statSessionId, isOpponent, voidedAt])
+  @@index([matchId, createdAt])
+  @@index([playerId])
+  @@index([opponentPlayerId])
+}
+
+enum StatSessionType {
+  MATCH_LINKED // legacy, no se usa en sesiones nuevas
+  COMPETITION // partido oficial (liga, copa, playoff...)
+  FRIENDLY // amistoso
+  TRAINING // entrenamiento
+  OTHER // otro
+}
+
+model StatSession {
+  id     String @id @default(cuid())
+  teamId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  matchId String?
+  match   Match?  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  type     StatSessionType
+  label    String
+  statDate DateTime
+
+  opponent            String?
+  opponentTeamName    String?
+  opponentPlayerCount Int?
+  teamScore           Int?
+  opponentScore       Int?
+
+  // ── Reloj / periodo (desacoplado de LiveStream) ────────
+  clockSeconds    Int       @default(600)
+  clockRunning    Boolean   @default(false)
+  clockStartedAt  DateTime?
+  currentPeriod   Int       @default(1)
+  periodCount     Int       @default(4)
+  quarterDuration Int       @default(600)
+
+  // ── Ciclo de vida ──────────────────────────────────────
+  closedAt DateTime? // null = abierta; != null = stats materializadas
+
+  createdById String?
+  createdBy   User?   @relation("StatSessionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  // Filas de stats materializadas al cerrar. En MVP, todas las filas
+  // de una StatSession son MatchPlayerStats con statSessionId = this.id.
+  playerStats MatchPlayerStats[]
+
+  // Jugadores rivales
+  opponentPlayers OpponentPlayer[]
+
+  // Eventos crudos de la sesión
+  events MatchEvent[]
+
+  onCourtIntervals StatSessionOnCourt[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([matchId])
+  @@index([teamId, statDate])
+  @@index([teamId, type])
+  @@index([createdById])
+}
+
+// ─────────────────────────────────────────────────────────────
+// OpponentPlayer — jugador del equipo rival en una StatSession.
+//
+// - Siempre pertenece a una StatSession.
+// - Si el rival es un equipo del club, `userId` apunta al User real.
+//   Si es un rival externo, `userId` = null y usamos name + number.
+// - El `number` es obligatorio (es lo que se ve en la UI).
+// - Al cerrar la sesión, sus stats se materializan en OpponentPlayerStats.
+// ─────────────────────────────────────────────────────────────
+model OpponentPlayer {
+  id            String      @id @default(cuid())
+  statSessionId String
+  statSession   StatSession @relation(fields: [statSessionId], references: [id], onDelete: Cascade)
+
+  // Si es un jugador real de JoinSport (rival = equipo del club).
+  userId String?
+  user   User?   @relation("OpponentPlayerUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  number   Int
+  name     String?
+  position String?
+
+  events MatchEvent[]
+  stats  OpponentPlayerStats?
+
+  onCourtIntervals StatSessionOnCourt[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([statSessionId, number])
+  @@index([statSessionId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// OpponentPlayerStats — stats materializadas del rival.
+//
+// Misma forma que MatchPlayerStats pero sin relación a User.
+// Se calcula desde MatchEvent (con opponentPlayerId != null) al
+// cerrar la sesión. Antes de cerrar, los endpoints de live-stats
+// calculan on-demand sin escribir aquí.
+// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// OpponentPlayerStats — stats materializadas del rival.
+//
+// Misma forma que MatchPlayerStats pero sin relación a User.
+// Se calcula desde MatchEvent (con opponentPlayerId != null) al
+// cerrar la sesión. Antes de cerrar, los endpoints de live-stats
+// calculan on-demand sin escribir aquí.
+// ─────────────────────────────────────────────────────────────
+model OpponentPlayerStats {
+  id               String         @id @default(cuid())
+  opponentPlayerId String         @unique
+  opponentPlayer   OpponentPlayer @relation(fields: [opponentPlayerId], references: [id], onDelete: Cascade)
+
+  minutes     Int?
+  seconds     Int?
+  points      Int  @default(0)
+  rebounds    Int  @default(0)
+  reboundsOff Int  @default(0)
+  reboundsDef Int  @default(0)
+  assists     Int  @default(0)
+  steals      Int  @default(0)
+  blocks      Int  @default(0)
+  turnovers   Int  @default(0)
+  fouls       Int  @default(0)
+
+  fieldGoalsMade         Int @default(0)
+  fieldGoalsAttempted    Int @default(0)
+  threePointersMade      Int @default(0)
+  threePointersAttempted Int @default(0)
+  freeThrowsMade         Int @default(0)
+  freeThrowsAttempted    Int @default(0)
+
+  blocksAgainst Int  @default(0)
+  foulsDrawn    Int  @default(0)
+  plusMinus     Int? @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────
+// StatSessionOnCourt — intervalos de tiempo en pista.
+//
+// Cada fila = un tramo continuo de un jugador en pista.
+// Al entrar: se crea una fila con enteredAt = now(), exitedAt = null.
+// Al salir: se actualiza exitedAt = now().
+//
+// Al cerrar la sesión, si quedan filas con exitedAt = null, se cierran
+// con exitedAt = now() (todos fuera al final del partido).
+//
+// O un jugador nuestro o un jugador rival, nunca ambos. Se valida en
+// el service.
+// ─────────────────────────────────────────────────────────────
+model StatSessionOnCourt {
+  id            String      @id @default(cuid())
+  statSessionId String
+  statSession   StatSession @relation(fields: [statSessionId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation("OnCourtUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  opponentPlayerId String?
+  opponentPlayer   OpponentPlayer? @relation(fields: [opponentPlayerId], references: [id], onDelete: Cascade)
+
+  enteredAt DateTime  @default(now())
+  exitedAt  DateTime?
+
+  // ── Fuente de verdad del tiempo jugado ─────────────────
+  clockSecondsStart Int?
+  clockSecondsEnd   Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([statSessionId])
+  @@index([statSessionId, userId])
+  @@index([statSessionId, opponentPlayerId])
+  @@index([statSessionId, exitedAt])
+}
+
+// ─────────────────────────────────────────────────────────────
+// MatchOpponentPlayer / MatchOpponentPlayerStats
+// Jugadores rivales del partido oficial. Se crean al importar una
+// StatSession. Stats materializadas del rival en ese partido.
+// ─────────────────────────────────────────────────────────────
+model MatchOpponentPlayer {
+  id      String @id @default(cuid())
+  matchId String
+  match   Match  @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation("MatchOpponentPlayerUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  number   Int
+  name     String?
+  position String?
+
+  stats MatchOpponentPlayerStats?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([matchId, number])
+  @@index([matchId])
+  @@index([userId])
+}
+
+model MatchOpponentPlayerStats {
+  id                    String              @id @default(cuid())
+  matchOpponentPlayerId String              @unique
+  matchOpponentPlayer   MatchOpponentPlayer @relation(fields: [matchOpponentPlayerId], references: [id], onDelete: Cascade)
+
+  minutes     Int?
+  seconds     Int?
+  points      Int  @default(0)
+  rebounds    Int  @default(0)
+  reboundsOff Int  @default(0)
+  reboundsDef Int  @default(0)
+  assists     Int  @default(0)
+  steals      Int  @default(0)
+  blocks      Int  @default(0)
+  turnovers   Int  @default(0)
+  fouls       Int  @default(0)
+
+  fieldGoalsMade         Int @default(0)
+  fieldGoalsAttempted    Int @default(0)
+  threePointersMade      Int @default(0)
+  threePointersAttempted Int @default(0)
+  freeThrowsMade         Int @default(0)
+  freeThrowsAttempted    Int @default(0)
+
+  blocksAgainst Int  @default(0)
+  foulsDrawn    Int  @default(0)
+  plusMinus     Int? @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────────────────────────────────────
+// TeamOpponentPlayer / TeamOpponentPlayerStats
+// Rivales globales del equipo (agregación de todos los partidos).
+// Se recalculan al importar una sesión al partido.
+// ─────────────────────────────────────────────────────────────
+model TeamOpponentPlayer {
+  id     String @id @default(cuid())
+  teamId String
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  userId String?
+  user   User?   @relation("TeamOpponentPlayerUser", fields: [userId], references: [id], onDelete: SetNull)
+
+  number   Int
+  name     String?
+  position String?
+
+  stats TeamOpponentPlayerStats?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, number])
+  @@index([teamId])
+  @@index([userId])
+}
+
+model TeamOpponentPlayerStats {
+  id                   String             @id @default(cuid())
+  teamOpponentPlayerId String             @unique
+  teamOpponentPlayer   TeamOpponentPlayer @relation(fields: [teamOpponentPlayerId], references: [id], onDelete: Cascade)
+
+  matchesCount Int @default(0)
+
+  minutes     Int?
+  seconds     Int?
+  points      Int  @default(0)
+  rebounds    Int  @default(0)
+  reboundsOff Int  @default(0)
+  reboundsDef Int  @default(0)
+  assists     Int  @default(0)
+  steals      Int  @default(0)
+  blocks      Int  @default(0)
+  turnovers   Int  @default(0)
+  fouls       Int  @default(0)
+
+  fieldGoalsMade         Int @default(0)
+  fieldGoalsAttempted    Int @default(0)
+  threePointersMade      Int @default(0)
+  threePointersAttempted Int @default(0)
+  freeThrowsMade         Int @default(0)
+  freeThrowsAttempted    Int @default(0)
+
+  blocksAgainst Int  @default(0)
+  foulsDrawn    Int  @default(0)
+  plusMinus     Int? @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
