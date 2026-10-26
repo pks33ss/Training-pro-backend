@@ -301,52 +301,131 @@ export class TeamService {
     })
   }
 
-  async getOpponentPlayers(userId: string, teamId: string) {
+  async getOpponentPlayers(
+    userId: string,
+    teamId: string,
+    query: {
+      season?: string
+      from?: string
+      to?: string
+      matchIds?: string
+    } = {},
+  ) {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
       select: { id: true },
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
-
     if (!(await canViewTeam(this.prisma, userId, teamId))) {
       throw new ForbiddenException('No tienes acceso a este equipo')
     }
 
-    const players = await this.prisma.teamOpponentPlayer.findMany({
-      where: { teamId },
-      orderBy: { number: 'asc' },
+    // Construir filtro de partidos (solo FINISHED)
+    const matchWhere: any = {
+      teamId,
+      status: 'FINISHED',
+    }
+    if (query.season) matchWhere.season = query.season
+    if (query.from || query.to) {
+      matchWhere.date = {}
+      if (query.from) matchWhere.date.gte = new Date(query.from)
+      if (query.to) {
+        const t = new Date(query.to)
+        t.setUTCHours(23, 59, 59, 999)
+        matchWhere.date.lte = t
+      }
+    }
+    if (query.matchIds) {
+      const ids = query.matchIds
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (ids.length > 0) matchWhere.id = { in: ids }
+    }
+
+    // 1. Partidos filtrados (para PJ y para sumar opponentScore)
+    const matches = await this.prisma.match.findMany({
+      where: matchWhere,
+      select: {
+        id: true,
+        opponentScore: true,
+      },
+    })
+
+    const matchesCount = matches.length
+    const totalOpponentScore = matches.reduce(
+      (acc, m) => acc + (m.opponentScore ?? 0),
+      0,
+    )
+
+    // 2. Todos los rivales de esos partidos con sus stats
+    const rows = await this.prisma.matchOpponentPlayer.findMany({
+      where: { match: matchWhere },
       include: { stats: true },
     })
 
-    return players.map((p) => ({
-      id: p.id,
-      userId: p.userId,
-      number: p.number,
-      name: p.name,
-      position: p.position,
-      stats: p.stats
-        ? {
-            matchesCount: p.stats.matchesCount,
-            minutes: p.stats.minutes,
-            seconds: p.stats.seconds,
-            points: p.stats.points,
-            rebounds: p.stats.rebounds,
-            reboundsOff: p.stats.reboundsOff,
-            reboundsDef: p.stats.reboundsDef,
-            assists: p.stats.assists,
-            steals: p.stats.steals,
-            blocks: p.stats.blocks,
-            turnovers: p.stats.turnovers,
-            fouls: p.stats.fouls,
-            fieldGoalsMade: p.stats.fieldGoalsMade,
-            fieldGoalsAttempted: p.stats.fieldGoalsAttempted,
-            threePointersMade: p.stats.threePointersMade,
-            threePointersAttempted: p.stats.threePointersAttempted,
-            freeThrowsMade: p.stats.freeThrowsMade,
-            freeThrowsAttempted: p.stats.freeThrowsAttempted,
-          }
-        : null,
-    }))
+    // 3. Sumar todos los stats (excepto points, que viene de opponentScore)
+    const total = {
+      matchesCount,
+      minutes: 0,
+      seconds: 0,
+      points: totalOpponentScore, // ← del marcador final manual
+      rebounds: 0,
+      reboundsOff: 0,
+      reboundsDef: 0,
+      assists: 0,
+      steals: 0,
+      blocks: 0,
+      turnovers: 0,
+      fouls: 0,
+      fieldGoalsMade: 0,
+      fieldGoalsAttempted: 0,
+      threePointersMade: 0,
+      threePointersAttempted: 0,
+      freeThrowsMade: 0,
+      freeThrowsAttempted: 0,
+      blocksAgainst: 0,
+      foulsDrawn: 0,
+      plusMinus: 0,
+    }
+
+    for (const row of rows) {
+      const s = row.stats
+      if (!s) continue
+      total.minutes += s.minutes ?? 0
+      total.seconds += s.seconds ?? 0
+      total.rebounds += s.rebounds
+      total.reboundsOff += s.reboundsOff
+      total.reboundsDef += s.reboundsDef
+      total.assists += s.assists
+      total.steals += s.steals
+      total.blocks += s.blocks
+      total.turnovers += s.turnovers
+      total.fouls += s.fouls
+      total.fieldGoalsMade += s.fieldGoalsMade
+      total.fieldGoalsAttempted += s.fieldGoalsAttempted
+      total.threePointersMade += s.threePointersMade
+      total.threePointersAttempted += s.threePointersAttempted
+      total.freeThrowsMade += s.freeThrowsMade
+      total.freeThrowsAttempted += s.freeThrowsAttempted
+      total.blocksAgainst += s.blocksAgainst
+      total.foulsDrawn += s.foulsDrawn
+      total.plusMinus += s.plusMinus ?? 0
+    }
+
+    total.minutes += Math.floor(total.seconds / 60)
+    total.seconds = total.seconds % 60
+
+    return [
+      {
+        id: 'opponent-total',
+        userId: null,
+        number: 0,
+        name: 'Rival',
+        position: null,
+        stats: total,
+      },
+    ]
   }
 
 }

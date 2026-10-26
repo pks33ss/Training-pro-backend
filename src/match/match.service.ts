@@ -1089,6 +1089,82 @@ export class MatchService {
     }))
   }
 
+  async addOpponentPlayers(
+    userId: string,
+    matchId: string,
+    dto: { players: { number: number; name?: string; position?: string }[] },
+   ) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { id: true, teamId: true },
+    })
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    await getTeamForViewer(this.prisma, userId, match.teamId)
+
+        const numbers = dto.players.map((p) => p.number)
+    const dup = numbers.find((n, i) => numbers.indexOf(n) !== i)
+    if (dup !== undefined) {
+      throw new BadRequestException(`Número de jugador duplicado: ${dup}`)
+    }
+
+    const existing = await this.prisma.matchOpponentPlayer.findMany({
+      where: { matchId },
+      select: { number: true },
+    })
+
+    const MAX_OPPONENTS = 15
+    if (existing.length + dto.players.length > MAX_OPPONENTS) {
+      throw new BadRequestException(
+        `Un partido no puede tener más de ${MAX_OPPONENTS} rivales. Ya hay ${existing.length}.`,
+      )
+    }
+
+    const existingNums = new Set(existing.map((e) => e.number))
+    for (const n of numbers) {
+      if (existingNums.has(n)) {
+        throw new ConflictException(`Ya existe un rival con el número ${n}`)
+      }
+    }
+
+    await this.prisma.matchOpponentPlayer.createMany({
+      data: dto.players.map((p) => ({
+        matchId,
+        number: p.number,
+        name: p.name ?? null,
+        position: p.position ?? null,
+      })),
+    })
+
+    return { ok: true }
+  }
+
+    async removeOpponentPlayer(
+    userId: string,
+    matchId: string,
+    opponentPlayerId: string,
+  ) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { teamId: true },
+    })
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    await getTeamForViewer(this.prisma, userId, match.teamId)
+
+    const opponent = await this.prisma.matchOpponentPlayer.findUnique({
+      where: { id: opponentPlayerId },
+      select: { id: true, matchId: true },
+    })
+    if (!opponent || opponent.matchId !== matchId) {
+      throw new NotFoundException('Jugador rival no encontrado')
+    }
+
+    await this.prisma.matchOpponentPlayer.delete({
+      where: { id: opponentPlayerId },
+    })
+
+    return { ok: true }
+  }
+
   async updateOpponentStats(
     userId: string,
     matchId: string,
@@ -1148,16 +1224,51 @@ export class MatchService {
   }
 
   // ============================================
-  // CERRAR PARTIDO (recalcula globales)
+  // CAMBIAR ESTADO DEL PARTIDO (cerrar/reabrir)
   // ============================================
 
+  async updateStatus(
+    userId: string,
+    matchId: string,
+    status:
+      | 'SCHEDULED'
+      | 'IN_PROGRESS'
+      | 'FINISHED'
+      | 'CANCELLED'
+      | 'POSTPONED',
+  ) {
+    const match = await this.prisma.match.findUnique({
+      where: { id: matchId },
+      select: { id: true, teamId: true, status: true },
+    })
+    if (!match) throw new NotFoundException('Partido no encontrado')
+    await getTeamForViewer(this.prisma, userId, match.teamId)
+
+    const wasFinished = match.status === 'FINISHED'
+    const willBeFinished = status === 'FINISHED'
+
+    await this.prisma.match.update({
+      where: { id: matchId },
+      data: { status },
+    })
+
+    // Recalcular globales del rival si el partido entra o sale del cómputo
+    if (wasFinished !== willBeFinished) {
+      await this.recomputeTeamOpponentStats(match.teamId)
+    }
+
+    return { ok: true, status }
+  }
+
+  // Alias por compatibilidad con llamadas antiguas a POST /close
+  async closeMatch(userId: string, matchId: string) {
+    return this.updateStatus(userId, matchId, 'FINISHED')
+  }
 
   private async recomputeTeamOpponentStats(teamId: string) {
     await this.prisma.$transaction(async (tx) => {
       const matchOpponents = await tx.matchOpponentPlayer.findMany({
-        where: {
-          match: { teamId, status: 'FINISHED' },
-        },
+        where: { match: { teamId, status: 'FINISHED' } },
         include: { stats: true },
       })
 
@@ -1295,47 +1406,5 @@ export class MatchService {
     })
   }
 
-    // ============================================
-  // CAMBIAR ESTADO DEL PARTIDO (cerrar/reabrir)
-  // ============================================
-
-  async updateStatus(
-    userId: string,
-    matchId: string,
-    status:
-      | 'SCHEDULED'
-      | 'IN_PROGRESS'
-      | 'FINISHED'
-      | 'CANCELLED'
-      | 'POSTPONED',
-  ) {
-    const match = await this.prisma.match.findUnique({
-      where: { id: matchId },
-      select: { id: true, teamId: true, status: true },
-    })
-    if (!match) throw new NotFoundException('Partido no encontrado')
-    await getTeamForViewer(this.prisma, userId, match.teamId)
-
-    const wasFinished = match.status === 'FINISHED'
-    const willBeFinished = status === 'FINISHED'
-
-    await this.prisma.match.update({
-      where: { id: matchId },
-      data: { status },
-    })
-
-    // Recalcular globales del rival si el partido entra o sale del cómputo
-    if (wasFinished !== willBeFinished) {
-      await this.recomputeTeamOpponentStats(match.teamId)
-    }
-
-    return { ok: true, status }
-  }
-
-  // Alias por compatibilidad con llamadas antiguas a POST /close
-  async closeMatch(userId: string, matchId: string) {
-    return this.updateStatus(userId, matchId, 'FINISHED')
-  }
-
-
+  
 }

@@ -299,6 +299,16 @@ export class MatchController {
     return this.matchService.getOpponents(req.user.id, id)
   }
 
+  @Post(':id/opponents')
+  addOpponentPlayers(
+    @Request() req,
+    @Param('id') id: string,
+    @Body()
+    dto: { players: { number: number; name?: string; position?: string }[] },
+  ) {
+    return this.matchService.addOpponentPlayers(req.user.id, id, dto)
+  }
+
   @Patch(':id/opponents/:opponentPlayerId')
   updateOpponentStats(
     @Request() req,
@@ -314,8 +324,21 @@ export class MatchController {
     )
   }
 
+    @Delete(':id/opponents/:opponentPlayerId')
+  removeOpponentPlayer(
+    @Request() req,
+    @Param('id') id: string,
+    @Param('opponentPlayerId') opponentPlayerId: string,
+  ) {
+    return this.matchService.removeOpponentPlayer(
+      req.user.id,
+      id,
+      opponentPlayerId,
+    )
+  }
+
   // ============================================
-  // CAMBIAR ESTADO DEL PARTIDO (abrir/cerrar)
+  // CAMBIAR ESTADO
   // ============================================
 
   @Patch(':id/status')
@@ -331,15 +354,5 @@ export class MatchController {
       | 'POSTPONED',
   ) {
     return this.matchService.updateStatus(req.user.id, id, status)
-  }
-
-
-  // ============================================
-  // CERRAR PARTIDO
-  // ============================================
-
-  @Post(':id/close')
-  closeMatch(@Request() req, @Param('id') id: string) {
-    return this.matchService.closeMatch(req.user.id, id)
   }
 }

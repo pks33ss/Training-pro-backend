@@ -5,6 +5,7 @@ import {
   Put,
   Delete,
   Body,
+  Query,
   Param,
   Request,
   UseGuards,
@@ -80,9 +81,21 @@ export class TeamController {
     return this.teamService.removeLogo(req.user.id, id);
   }
 
-  @Get(':id/opponent-players')
-  getOpponentPlayers(@Request() req, @Param('id') teamId: string) {
-    return this.teamService.getOpponentPlayers(req.user.id, teamId)
+    @Get(':id/opponent-players')
+  getOpponentPlayers(
+    @Request() req,
+    @Param('id') teamId: string,
+    @Query('season') season?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('matchIds') matchIds?: string,
+  ) {
+    return this.teamService.getOpponentPlayers(req.user.id, teamId, {
+      season,
+      from,
+      to,
+      matchIds,
+    })
   }
 
 }

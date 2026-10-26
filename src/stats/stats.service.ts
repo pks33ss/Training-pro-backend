@@ -1100,7 +1100,7 @@ export class TeamStatsService {
     return where
   }
 
-  private async fetchPadelMatches(
+    private async fetchPadelMatches(
     teamIds: string[],
     range: { from: Date | null; to: Date | null },
     query: TeamStatsQueryDto,
@@ -1112,10 +1112,14 @@ export class TeamStatsService {
       query.season,
     )
 
-    if (query.playerId) {
+    const playerIds = query.playerIds ?? (query.playerId ? [query.playerId] : [])
+    if (playerIds.length > 0) {
       where.padelSubMatches = {
         some: {
-          OR: [{ player1Id: query.playerId }, { player2Id: query.playerId }],
+          OR: playerIds.flatMap((id) => [
+            { player1Id: id },
+            { player2Id: id },
+          ]),
         },
       }
     }
@@ -1155,9 +1159,10 @@ export class TeamStatsService {
       query.season,
     )
 
-    if (query.playerId) {
+    const playerIds = query.playerIds ?? (query.playerId ? [query.playerId] : [])
+    if (playerIds.length > 0) {
       where.playerStats = {
-        some: { userId: query.playerId },
+        some: { userId: { in: playerIds } },
       }
     }
 
@@ -1180,7 +1185,7 @@ export class TeamStatsService {
       },
     })
   }
-
+  
   private buildPadelResponse(
     teams: Array<{ id: string; name: string; sport: string }>,
     query: TeamStatsQueryDto,

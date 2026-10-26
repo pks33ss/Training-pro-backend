@@ -118,14 +118,14 @@ export class BasketballStatsService {
     let fta = 0
     let totalMinutes = 0
 
-    for (const pm of perMatchStats) {
+       for (const pm of perMatchStats) {
       matchesCount++
       const r = resultFromMatch(pm.match)
       if (r === 'WIN') wins++
       else if (r === 'LOSS') losses++
       else if (r === 'DRAW') draws++
 
-      points += pm.teamSummary.points
+      points += pm.match.teamScore ?? 0
       opponentPoints += pm.match.opponentScore ?? 0
       rebounds += pm.teamSummary.rebounds
       assists += pm.teamSummary.assists
@@ -146,6 +146,12 @@ export class BasketballStatsService {
       for (const p of pm.players) {
         if (typeof p.minutes === 'number') totalMinutes += p.minutes
       }
+    }
+
+        // ── Suma de puntos de los jugadores (desglose, distinto del marcador oficial)
+    let playerPoints = 0
+    for (const pm of perMatchStats) {
+      playerPoints += pm.teamSummary.points
     }
 
     const winRate =
@@ -181,6 +187,8 @@ export class BasketballStatsService {
       opponentPoints,
       pointsPerMatch: perMatch(points, matchesCount),
       opponentPointsPerMatch: perMatch(opponentPoints, matchesCount),
+      playerPoints,
+      playerPointsPerMatch: perMatch(playerPoints, matchesCount),
       totalMinutes,
       minutesPerMatch: perMatch(totalMinutes, matchesCount),
       rebounds,
@@ -413,7 +421,7 @@ export class BasketballStatsService {
       if (r === 'WIN') b.wins++
       else if (r === 'LOSS') b.losses++
       else if (r === 'DRAW') b.draws++
-      b.points += pm.teamSummary.points
+      b.points += pm.match.teamScore ?? 0
       b.opponentPoints += pm.match.opponentScore ?? 0
     }
 
@@ -434,6 +442,49 @@ export class BasketballStatsService {
         pointsPerMatch: perMatch(v.points, v.matches),
         opponentPointsPerMatch: perMatch(v.opponentPoints, v.matches),
       }))
+    // ── Datos por partido (para gráfica "por partido")
+    const byMatch = perMatchStats.map((pm) => {
+      const r = resultFromMatch(pm.match)
+      return {
+        matchId: pm.match.id,
+        date: pm.match.date.toISOString(),
+        opponent: pm.match.opponent,
+        result: r,
+        teamScore: pm.match.teamScore,
+        opponentScore: pm.match.opponentScore,
+        // Mismas métricas que los "values" del trend, para que el cliente pueda
+        // pintar la misma métrica con la misma serie
+        matchesPlayed: 1,
+        wins: r === 'WIN' ? 1 : 0,
+        losses: r === 'LOSS' ? 1 : 0,
+        points: pm.match.teamScore ?? 0,
+        pointsPerMatch: pm.match.teamScore ?? 0,
+        opponentPoints: pm.match.opponentScore ?? 0,
+        opponentPointsPerMatch: pm.match.opponentScore ?? 0,
+        playerPoints: pm.teamSummary.points,
+        playerPointsPerMatch: pm.teamSummary.points,
+        rebounds: pm.teamSummary.rebounds,
+        assists: pm.teamSummary.assists,
+        steals: pm.teamSummary.steals,
+        blocks: pm.teamSummary.blocks,
+        turnovers: pm.teamSummary.turnovers,
+        valuation: pm.teamSummary.valuation,
+        winRate: r === 'WIN' ? 100 : r === 'DRAW' ? 50 : 0,
+        fieldGoalPct: pct(
+          pm.teamSummary.fieldGoalsMade,
+          pm.teamSummary.fieldGoalsAttempted,
+        ),
+        threePointPct: pct(
+          pm.teamSummary.threePointersMade,
+          pm.teamSummary.threePointersAttempted,
+        ),
+        freeThrowPct: pct(
+          pm.teamSummary.freeThrowsMade,
+          pm.teamSummary.freeThrowsAttempted,
+        ),
+      }
+    })
+
 
     // ── Trend (series opcional por trendMetric)
     const trendMetric = query.trendMetric
@@ -446,7 +497,7 @@ export class BasketballStatsService {
       if (metricDef) {
         const trendInput: TrendMatchInput[] = perMatchStats.map((pm) => {
           const r = resultFromMatch(pm.match)
-          const pts = pm.teamSummary.points
+          const pts = pm.match.teamScore ?? 0
           const oppPts = pm.match.opponentScore ?? 0
           const reb = pm.teamSummary.rebounds
           const ast = pm.teamSummary.assists
@@ -514,7 +565,7 @@ export class BasketballStatsService {
           perMatchStats.length > 0
             ? perMatchStats[perMatchStats.length - 1].match.date.toISOString()
             : query.to ?? null,
-        playerId: query.playerId ?? null,
+                                playerIds: query.playerIds ?? (query.playerId ? [query.playerId] : []),
         matchIds: query.matchIds ?? null,
         teamIds: teams.map((t) => t.id),
       },
@@ -525,6 +576,7 @@ export class BasketballStatsService {
           players,
           trend: {
             byMonth,
+             byMatch, 
             last10ByMatch,
             series,
             requestedMetric,
