@@ -14,6 +14,7 @@ import { CreateMatchEventDto } from './dto/create-match-event.dto'
 import { UpdateLiveClockDto } from './dto/update-live-clock.dto'
 import { CreateOpponentPlayersDto } from './dto/create-opponent-players.dto'
 import { SetOnCourtDto } from './dto/set-on-court.dto'
+import { LiveStatsSseService } from './live-stats-sse.service' // <-- IMPORTANTE
 
 const USER_SELECT = {
   id: true,
@@ -32,7 +33,10 @@ const POINT_VALUES: Partial<Record<MatchEventType, number>> = {
 
 @Injectable()
 export class LiveEventsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private sseService: LiveStatsSseService, // <-- IMPORTANTE
+  ) {}
 
   // ─────────────────────────────────────────────
   // EVENTOS
@@ -91,7 +95,9 @@ export class LiveEventsService {
       },
     })
 
-    return this.getLiveStats(userId, sessionId)
+    const stats = await this.getLiveStats(userId, sessionId)
+    this.sseService.emit(sessionId, stats) // <-- EMITIR SSE
+    return stats
   }
 
   async voidEvent(userId: string, sessionId: string, eventId: string) {
@@ -114,7 +120,9 @@ export class LiveEventsService {
       data: { voidedAt: new Date(), voidedById: userId },
     })
 
-    return this.getLiveStats(userId, sessionId)
+    const stats = await this.getLiveStats(userId, sessionId)
+    this.sseService.emit(sessionId, stats) // <-- EMITIR SSE
+    return stats
   }
 
   async listEvents(userId: string, sessionId: string) {
@@ -139,7 +147,7 @@ export class LiveEventsService {
   // RELOJ / PERIODO
   // ─────────────────────────────────────────────
 
-    async updateClock(
+  async updateClock(
     userId: string,
     sessionId: string,
     dto: UpdateLiveClockDto,
@@ -187,7 +195,9 @@ export class LiveEventsService {
       data,
     })
 
-    return this.getLiveStats(userId, sessionId)
+    const stats = await this.getLiveStats(userId, sessionId)
+    this.sseService.emit(sessionId, stats) // <-- EMITIR SSE
+    return stats
   }
 
   // ─────────────────────────────────────────────
@@ -229,6 +239,12 @@ export class LiveEventsService {
 
     type Agg = {
       points: number
+      twoPointersMade: number
+      twoPointersAttempted: number
+      threePointersMade: number
+      threePointersAttempted: number
+      freeThrowsMade: number
+      freeThrowsAttempted: number
       reboundsOff: number
       reboundsDef: number
       rebounds: number
@@ -237,16 +253,16 @@ export class LiveEventsService {
       blocks: number
       turnovers: number
       fouls: number
-      fieldGoalsMade: number
-      fieldGoalsAttempted: number
-      threePointersMade: number
-      threePointersAttempted: number
-      freeThrowsMade: number
-      freeThrowsAttempted: number
     }
 
     const emptyAgg = (): Agg => ({
       points: 0,
+      twoPointersMade: 0,
+      twoPointersAttempted: 0,
+      threePointersMade: 0,
+      threePointersAttempted: 0,
+      freeThrowsMade: 0,
+      freeThrowsAttempted: 0,
       reboundsOff: 0,
       reboundsDef: 0,
       rebounds: 0,
@@ -255,12 +271,6 @@ export class LiveEventsService {
       blocks: 0,
       turnovers: 0,
       fouls: 0,
-      fieldGoalsMade: 0,
-      fieldGoalsAttempted: 0,
-      threePointersMade: 0,
-      threePointersAttempted: 0,
-      freeThrowsMade: 0,
-      freeThrowsAttempted: 0,
     })
 
     const ourAgg = new Map<string, Agg>()
@@ -304,12 +314,10 @@ export class LiveEventsService {
           agg.fouls += 1
           break
         case 'POINTS_2':
-          agg.fieldGoalsMade += 1
-          agg.fieldGoalsAttempted += 1
+          agg.twoPointersMade += 1
+          agg.twoPointersAttempted += 1
           break
         case 'POINTS_3':
-          agg.fieldGoalsMade += 1
-          agg.fieldGoalsAttempted += 1
           agg.threePointersMade += 1
           agg.threePointersAttempted += 1
           break
@@ -318,10 +326,9 @@ export class LiveEventsService {
           agg.freeThrowsAttempted += 1
           break
         case 'MISS_2':
-          agg.fieldGoalsAttempted += 1
+          agg.twoPointersAttempted += 1
           break
         case 'MISS_3':
-          agg.fieldGoalsAttempted += 1
           agg.threePointersAttempted += 1
           break
         case 'MISS_FT':
@@ -342,17 +349,27 @@ export class LiveEventsService {
         .filter(Boolean) as string[],
     )
 
-    // Resolver el clock actual UNA vez para todos los jugadores
     const currentClock = await this.resolveCurrentClockSeconds(session)
 
     const players = await Promise.all(
       ourPlayers.map(async (ps) => {
         const agg = ourAgg.get(ps.userId) ?? emptyAgg()
+        const fgm = agg.twoPointersMade + agg.threePointersMade
+        const fga =
+          agg.twoPointersAttempted + agg.threePointersAttempted
         return {
           userId: ps.userId,
           user: ps.user,
           isOpponent: false,
           points: agg.points,
+          twoPointersMade: agg.twoPointersMade,
+          twoPointersAttempted: agg.twoPointersAttempted,
+          fieldGoalsMade: fgm,
+          fieldGoalsAttempted: fga,
+          threePointersMade: agg.threePointersMade,
+          threePointersAttempted: agg.threePointersAttempted,
+          freeThrowsMade: agg.freeThrowsMade,
+          freeThrowsAttempted: agg.freeThrowsAttempted,
           rebounds: agg.rebounds,
           reboundsOff: agg.reboundsOff,
           reboundsDef: agg.reboundsDef,
@@ -361,12 +378,6 @@ export class LiveEventsService {
           blocks: agg.blocks,
           turnovers: agg.turnovers,
           fouls: agg.fouls,
-          fieldGoalsMade: agg.fieldGoalsMade,
-          fieldGoalsAttempted: agg.fieldGoalsAttempted,
-          threePointersMade: agg.threePointersMade,
-          threePointersAttempted: agg.threePointersAttempted,
-          freeThrowsMade: agg.freeThrowsMade,
-          freeThrowsAttempted: agg.freeThrowsAttempted,
           onCourt: openUsers.has(ps.userId),
           secondsPlayed: await this.computeSecondsPlayed(
             session,
@@ -380,12 +391,23 @@ export class LiveEventsService {
     const opponentPlayersOut = await Promise.all(
       opponentPlayers.map(async (op) => {
         const agg = oppAgg.get(op.id) ?? emptyAgg()
+        const fgm = agg.twoPointersMade + agg.threePointersMade
+        const fga =
+          agg.twoPointersAttempted + agg.threePointersAttempted
         return {
           opponentPlayerId: op.id,
           number: op.number,
           name: op.name,
           userId: op.userId,
           points: agg.points,
+          twoPointersMade: agg.twoPointersMade,
+          twoPointersAttempted: agg.twoPointersAttempted,
+          fieldGoalsMade: fgm,
+          fieldGoalsAttempted: fga,
+          threePointersMade: agg.threePointersMade,
+          threePointersAttempted: agg.threePointersAttempted,
+          freeThrowsMade: agg.freeThrowsMade,
+          freeThrowsAttempted: agg.freeThrowsAttempted,
           rebounds: agg.rebounds,
           reboundsOff: agg.reboundsOff,
           reboundsDef: agg.reboundsDef,
@@ -502,7 +524,9 @@ export class LiveEventsService {
       })),
     })
 
-    return this.getLiveStats(userId, sessionId)
+    const stats = await this.getLiveStats(userId, sessionId)
+    this.sseService.emit(sessionId, stats) // <-- EMITIR SSE
+    return stats
   }
 
   async removeOpponentPlayer(
@@ -524,7 +548,9 @@ export class LiveEventsService {
 
     await this.prisma.opponentPlayer.delete({ where: { id: op.id } })
 
-    return this.getLiveStats(userId, sessionId)
+    const stats = await this.getLiveStats(userId, sessionId)
+    this.sseService.emit(sessionId, stats) // <-- EMITIR SSE
+    return stats
   }
 
   // ─────────────────────────────────────────────
@@ -556,7 +582,9 @@ export class LiveEventsService {
       { userId: targetUserId },
       dto.onCourt,
     )
-    return this.getLiveStats(userId, sessionId)
+    const stats = await this.getLiveStats(userId, sessionId)
+    this.sseService.emit(sessionId, stats) // <-- EMITIR SSE
+    return stats
   }
 
   async setOpponentPlayerOnCourt(
@@ -584,7 +612,9 @@ export class LiveEventsService {
       { opponentPlayerId },
       dto.onCourt,
     )
-    return this.getLiveStats(userId, sessionId)
+    const stats = await this.getLiveStats(userId, sessionId)
+    this.sseService.emit(sessionId, stats) // <-- EMITIR SSE
+    return stats
   }
 
   private async setPlayerOnCourt(
@@ -666,12 +696,7 @@ export class LiveEventsService {
       })
     }
   }
-  /**
-   * Segundos jugados = suma de (clockSecondsStart - clockSecondsEnd) por
-   * cada intervalo. Los intervalos abiertos se cierran con el clock actual.
-   * Solo cuenta el tiempo con el reloj de partido corriendo, porque
-   * clockSeconds solo baja cuando el reloj corre.
-   */
+
   private async computeSecondsPlayed(
     session: {
       id: string
@@ -741,6 +766,12 @@ export class LiveEventsService {
 
     type Agg = {
       points: number
+      twoPointersMade: number
+      twoPointersAttempted: number
+      threePointersMade: number
+      threePointersAttempted: number
+      freeThrowsMade: number
+      freeThrowsAttempted: number
       rebounds: number
       reboundsOff: number
       reboundsDef: number
@@ -749,16 +780,16 @@ export class LiveEventsService {
       blocks: number
       turnovers: number
       fouls: number
-      fieldGoalsMade: number
-      fieldGoalsAttempted: number
-      threePointersMade: number
-      threePointersAttempted: number
-      freeThrowsMade: number
-      freeThrowsAttempted: number
     }
 
     const emptyAgg = (): Agg => ({
       points: 0,
+      twoPointersMade: 0,
+      twoPointersAttempted: 0,
+      threePointersMade: 0,
+      threePointersAttempted: 0,
+      freeThrowsMade: 0,
+      freeThrowsAttempted: 0,
       rebounds: 0,
       reboundsOff: 0,
       reboundsDef: 0,
@@ -767,12 +798,6 @@ export class LiveEventsService {
       blocks: 0,
       turnovers: 0,
       fouls: 0,
-      fieldGoalsMade: 0,
-      fieldGoalsAttempted: 0,
-      threePointersMade: 0,
-      threePointersAttempted: 0,
-      freeThrowsMade: 0,
-      freeThrowsAttempted: 0,
     })
 
     const ourAgg = new Map<string, Agg>()
@@ -811,12 +836,10 @@ export class LiveEventsService {
           agg.fouls += 1
           break
         case 'POINTS_2':
-          agg.fieldGoalsMade += 1
-          agg.fieldGoalsAttempted += 1
+          agg.twoPointersMade += 1
+          agg.twoPointersAttempted += 1
           break
         case 'POINTS_3':
-          agg.fieldGoalsMade += 1
-          agg.fieldGoalsAttempted += 1
           agg.threePointersMade += 1
           agg.threePointersAttempted += 1
           break
@@ -825,10 +848,9 @@ export class LiveEventsService {
           agg.freeThrowsAttempted += 1
           break
         case 'MISS_2':
-          agg.fieldGoalsAttempted += 1
+          agg.twoPointersAttempted += 1
           break
         case 'MISS_3':
-          agg.fieldGoalsAttempted += 1
           agg.threePointersAttempted += 1
           break
         case 'MISS_FT':
@@ -858,10 +880,21 @@ export class LiveEventsService {
           { userId: ps.userId },
           currentClock,
         )
+        const fgm = agg.twoPointersMade + agg.threePointersMade
+        const fga =
+          agg.twoPointersAttempted + agg.threePointersAttempted
         await tx.matchPlayerStats.update({
           where: { id: ps.id },
           data: {
             points: agg.points,
+            twoPointersMade: agg.twoPointersMade,
+            twoPointersAttempted: agg.twoPointersAttempted,
+            fieldGoalsMade: fgm,
+            fieldGoalsAttempted: fga,
+            threePointersMade: agg.threePointersMade,
+            threePointersAttempted: agg.threePointersAttempted,
+            freeThrowsMade: agg.freeThrowsMade,
+            freeThrowsAttempted: agg.freeThrowsAttempted,
             rebounds: agg.rebounds,
             reboundsOff: agg.reboundsOff,
             reboundsDef: agg.reboundsDef,
@@ -870,12 +903,6 @@ export class LiveEventsService {
             blocks: agg.blocks,
             turnovers: agg.turnovers,
             fouls: agg.fouls,
-            fieldGoalsMade: agg.fieldGoalsMade,
-            fieldGoalsAttempted: agg.fieldGoalsAttempted,
-            threePointersMade: agg.threePointersMade,
-            threePointersAttempted: agg.threePointersAttempted,
-            freeThrowsMade: agg.freeThrowsMade,
-            freeThrowsAttempted: agg.freeThrowsAttempted,
             minutes: Math.floor(totalSecs / 60),
             seconds: totalSecs % 60,
           },
@@ -889,47 +916,34 @@ export class LiveEventsService {
           { opponentPlayerId: op.id },
           currentClock,
         )
+        const fgm = agg.twoPointersMade + agg.threePointersMade
+        const fga =
+          agg.twoPointersAttempted + agg.threePointersAttempted
+        const payload = {
+          points: agg.points,
+          twoPointersMade: agg.twoPointersMade,
+          twoPointersAttempted: agg.twoPointersAttempted,
+          fieldGoalsMade: fgm,
+          fieldGoalsAttempted: fga,
+          threePointersMade: agg.threePointersMade,
+          threePointersAttempted: agg.threePointersAttempted,
+          freeThrowsMade: agg.freeThrowsMade,
+          freeThrowsAttempted: agg.freeThrowsAttempted,
+          rebounds: agg.rebounds,
+          reboundsOff: agg.reboundsOff,
+          reboundsDef: agg.reboundsDef,
+          assists: agg.assists,
+          steals: agg.steals,
+          blocks: agg.blocks,
+          turnovers: agg.turnovers,
+          fouls: agg.fouls,
+          minutes: Math.floor(totalSecs / 60),
+          seconds: totalSecs % 60,
+        }
         await tx.opponentPlayerStats.upsert({
           where: { opponentPlayerId: op.id },
-          update: {
-            points: agg.points,
-            rebounds: agg.rebounds,
-            reboundsOff: agg.reboundsOff,
-            reboundsDef: agg.reboundsDef,
-            assists: agg.assists,
-            steals: agg.steals,
-            blocks: agg.blocks,
-            turnovers: agg.turnovers,
-            fouls: agg.fouls,
-            fieldGoalsMade: agg.fieldGoalsMade,
-            fieldGoalsAttempted: agg.fieldGoalsAttempted,
-            threePointersMade: agg.threePointersMade,
-            threePointersAttempted: agg.threePointersAttempted,
-            freeThrowsMade: agg.freeThrowsMade,
-            freeThrowsAttempted: agg.freeThrowsAttempted,
-            minutes: Math.floor(totalSecs / 60),
-            seconds: totalSecs % 60,
-          },
-          create: {
-            opponentPlayerId: op.id,
-            points: agg.points,
-            rebounds: agg.rebounds,
-            reboundsOff: agg.reboundsOff,
-            reboundsDef: agg.reboundsDef,
-            assists: agg.assists,
-            steals: agg.steals,
-            blocks: agg.blocks,
-            turnovers: agg.turnovers,
-            fouls: agg.fouls,
-            fieldGoalsMade: agg.fieldGoalsMade,
-            fieldGoalsAttempted: agg.fieldGoalsAttempted,
-            threePointersMade: agg.threePointersMade,
-            threePointersAttempted: agg.threePointersAttempted,
-            freeThrowsMade: agg.freeThrowsMade,
-            freeThrowsAttempted: agg.freeThrowsAttempted,
-            minutes: Math.floor(totalSecs / 60),
-            seconds: totalSecs % 60,
-          },
+          update: payload,
+          create: { opponentPlayerId: op.id, ...payload },
         })
       }
 
@@ -939,7 +953,9 @@ export class LiveEventsService {
       })
     })
 
-    return this.getLiveStats(userId, sessionId)
+    const stats = await this.getLiveStats(userId, sessionId)
+    this.sseService.emit(sessionId, stats) // <-- EMITIR SSE
+    return stats
   }
 
   // ─────────────────────────────────────────────

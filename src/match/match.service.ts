@@ -32,6 +32,76 @@ const USER_SELECT = {
   isGhost: true,
 } as const
 
+/**
+ * Fuente de verdad:
+ *   PTS = 2 * 2PM + 3 * 3PM + FTM
+ *   FGM = 2PM + 3PM
+ *   FGA = 2PA + 3PA
+ */
+function pointsFromBreakdown(args: {
+  twoPointersMade: number
+  threePointersMade: number
+  freeThrowsMade: number
+}): number {
+  return (
+    2 * args.twoPointersMade +
+    3 * args.threePointersMade +
+    args.freeThrowsMade
+  )
+}
+
+function derivedFieldGoals(args: {
+  twoPointersMade: number
+  twoPointersAttempted: number
+  threePointersMade: number
+  threePointersAttempted: number
+}): { fieldGoalsMade: number; fieldGoalsAttempted: number } {
+  return {
+    fieldGoalsMade: args.twoPointersMade + args.threePointersMade,
+    fieldGoalsAttempted:
+      args.twoPointersAttempted + args.threePointersAttempted,
+  }
+}
+
+function validateShotBreakdown(args: {
+  twoPointersMade: number
+  twoPointersAttempted: number
+  threePointersMade: number
+  threePointersAttempted: number
+  freeThrowsMade: number
+  freeThrowsAttempted: number
+}) {
+  const {
+    twoPointersMade: p2m,
+    twoPointersAttempted: p2a,
+    threePointersMade: p3m,
+    threePointersAttempted: p3a,
+    freeThrowsMade: ftm,
+    freeThrowsAttempted: fta,
+  } = args
+  if (p2m < 0 || p2a < 0 || p3m < 0 || p3a < 0 || ftm < 0 || fta < 0) {
+    throw new BadRequestException(
+      'Los valores del desglose de tiros no pueden ser negativos',
+    )
+  }
+  if (p2m > p2a) {
+    throw new BadRequestException(
+      'Tiros de 2 anotados no puede ser mayor que intentados',
+    )
+  }
+  if (p3m > p3a) {
+    throw new BadRequestException(
+      'Triples anotados no puede ser mayor que intentados',
+    )
+  }
+  if (ftm > fta) {
+    throw new BadRequestException(
+      'Tiros libres anotados no puede ser mayor que intentados',
+    )
+  }
+}
+
+
 @Injectable()
 export class MatchService {
   constructor(private prisma: PrismaService) {}
@@ -454,6 +524,81 @@ export class MatchService {
 
     await getTeamForViewer(this.prisma, userId, match.teamId)
 
+    const current = await this.prisma.matchPlayerStats.findUnique({
+      where: {
+        matchId_userId: { matchId, userId: targetUserId },
+      },
+    })
+
+    const p2m =
+      stats.twoPointersMade !== undefined
+        ? stats.twoPointersMade
+        : current?.twoPointersMade ?? 0
+    const p2a =
+      stats.twoPointersAttempted !== undefined
+        ? stats.twoPointersAttempted
+        : current?.twoPointersAttempted ?? 0
+    const p3m =
+      stats.threePointersMade !== undefined
+        ? stats.threePointersMade
+        : current?.threePointersMade ?? 0
+    const p3a =
+      stats.threePointersAttempted !== undefined
+        ? stats.threePointersAttempted
+        : current?.threePointersAttempted ?? 0
+    const ftm =
+      stats.freeThrowsMade !== undefined
+        ? stats.freeThrowsMade
+        : current?.freeThrowsMade ?? 0
+    const fta =
+      stats.freeThrowsAttempted !== undefined
+        ? stats.freeThrowsAttempted
+        : current?.freeThrowsAttempted ?? 0
+
+    validateShotBreakdown({
+      twoPointersMade: p2m,
+      twoPointersAttempted: p2a,
+      threePointersMade: p3m,
+      threePointersAttempted: p3a,
+      freeThrowsMade: ftm,
+      freeThrowsAttempted: fta,
+    })
+
+    const derivedFg = derivedFieldGoals({
+      twoPointersMade: p2m,
+      twoPointersAttempted: p2a,
+      threePointersMade: p3m,
+      threePointersAttempted: p3a,
+    })
+    const recomputedPoints = pointsFromBreakdown({
+      twoPointersMade: p2m,
+      threePointersMade: p3m,
+      freeThrowsMade: ftm,
+    })
+
+    // Construimos el payload sin los campos derivados del DTO, y los
+    // añadimos calculados al final. `stats.points`,
+    // `stats.fieldGoalsMade` y `stats.fieldGoalsAttempted` se ignoran.
+    const {
+      points: _ignoredPoints,
+      fieldGoalsMade: _ignoredFgm,
+      fieldGoalsAttempted: _ignoredFga,
+      ...rest
+    } = stats as any
+
+    const data: any = {
+      ...rest,
+      twoPointersMade: p2m,
+      twoPointersAttempted: p2a,
+      threePointersMade: p3m,
+      threePointersAttempted: p3a,
+      freeThrowsMade: ftm,
+      freeThrowsAttempted: fta,
+      fieldGoalsMade: derivedFg.fieldGoalsMade,
+      fieldGoalsAttempted: derivedFg.fieldGoalsAttempted,
+      points: recomputedPoints,
+    }
+
     return this.prisma.matchPlayerStats.upsert({
       where: {
         matchId_userId: {
@@ -461,16 +606,15 @@ export class MatchService {
           userId: targetUserId,
         },
       },
-      update: stats,
+      update: data,
       create: {
         matchId,
         userId: targetUserId,
-        ...stats,
+        ...data,
       },
       include: { user: { select: USER_SELECT } },
     })
   }
-
   async getPlayerStats(userId: string, matchId: string) {
     const match = await this.prisma.match.findUnique({
       where: { id: matchId },
@@ -979,6 +1123,8 @@ export class MatchService {
         blocksAgainst: ps.blocksAgainst,
         foulsDrawn: ps.foulsDrawn,
         plusMinus: ps.plusMinus,
+                twoPointersMade: ps.twoPointersMade,         // ← NUEVO
+        twoPointersAttempted: ps.twoPointersAttempted, // ← NUEVO
         fieldGoalsMade: ps.fieldGoalsMade,
         fieldGoalsAttempted: ps.fieldGoalsAttempted,
         threePointersMade: ps.threePointersMade,
@@ -1064,7 +1210,7 @@ export class MatchService {
       number: op.number,
       name: op.name,
       position: op.position,
-      stats: op.stats
+            stats: op.stats
         ? {
             matchesCount: 0,
             minutes: op.stats.minutes,
@@ -1078,6 +1224,8 @@ export class MatchService {
             blocks: op.stats.blocks,
             turnovers: op.stats.turnovers,
             fouls: op.stats.fouls,
+            twoPointersMade: op.stats.twoPointersMade,
+            twoPointersAttempted: op.stats.twoPointersAttempted,
             fieldGoalsMade: op.stats.fieldGoalsMade,
             fieldGoalsAttempted: op.stats.fieldGoalsAttempted,
             threePointersMade: op.stats.threePointersMade,
@@ -1265,7 +1413,7 @@ export class MatchService {
     return this.updateStatus(userId, matchId, 'FINISHED')
   }
 
-  private async recomputeTeamOpponentStats(teamId: string) {
+    private async recomputeTeamOpponentStats(teamId: string) {
     await this.prisma.$transaction(async (tx) => {
       const matchOpponents = await tx.matchOpponentPlayer.findMany({
         where: { match: { teamId, status: 'FINISHED' } },
@@ -1289,6 +1437,8 @@ export class MatchService {
         blocks: number
         turnovers: number
         fouls: number
+        twoPointersMade: number
+        twoPointersAttempted: number
         fieldGoalsMade: number
         fieldGoalsAttempted: number
         threePointersMade: number
@@ -1322,6 +1472,8 @@ export class MatchService {
             blocks: 0,
             turnovers: 0,
             fouls: 0,
+            twoPointersMade: 0,
+            twoPointersAttempted: 0,
             fieldGoalsMade: 0,
             fieldGoalsAttempted: 0,
             threePointersMade: 0,
@@ -1347,6 +1499,8 @@ export class MatchService {
           agg.blocks += s.blocks
           agg.turnovers += s.turnovers
           agg.fouls += s.fouls
+          agg.twoPointersMade += s.twoPointersMade
+          agg.twoPointersAttempted += s.twoPointersAttempted
           agg.fieldGoalsMade += s.fieldGoalsMade
           agg.fieldGoalsAttempted += s.fieldGoalsAttempted
           agg.threePointersMade += s.threePointersMade
@@ -1391,6 +1545,8 @@ export class MatchService {
             blocks: agg.blocks,
             turnovers: agg.turnovers,
             fouls: agg.fouls,
+            twoPointersMade: agg.twoPointersMade,
+            twoPointersAttempted: agg.twoPointersAttempted,
             fieldGoalsMade: agg.fieldGoalsMade,
             fieldGoalsAttempted: agg.fieldGoalsAttempted,
             threePointersMade: agg.threePointersMade,

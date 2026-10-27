@@ -616,6 +616,13 @@ model MatchPlayerStats {
   turnovers   Int  @default(0)
   fouls       Int  @default(0)
 
+
+ // ── Tiros (convención FIBA: FGM/FGA incluyen los triples) ─────
+  // 2P y 3P son la fuente de verdad editables.
+  // FGM = 2PM + 3PM y FGA = 2PA + 3PA se recalculan en el backend
+  // en cada escritura. PTS = 2*2PM + 3*3PM + FTM también.
+  twoPointersMade      Int @default(0)  // ← NUEVO
+  twoPointersAttempted Int @default(0)  // ← NUEVO
   fieldGoalsMade         Int @default(0)
   fieldGoalsAttempted    Int @default(0)
   threePointersMade      Int @default(0)
@@ -1312,6 +1319,8 @@ model OpponentPlayerStats {
   turnovers   Int  @default(0)
   fouls       Int  @default(0)
 
+  twoPointersMade      Int @default(0)  // ← NUEVO
+  twoPointersAttempted Int @default(0)  // ← NUEVO
   fieldGoalsMade         Int @default(0)
   fieldGoalsAttempted    Int @default(0)
   threePointersMade      Int @default(0)
@@ -1411,6 +1420,8 @@ model MatchOpponentPlayerStats {
   turnovers   Int  @default(0)
   fouls       Int  @default(0)
 
+  twoPointersMade      Int @default(0)  // ← NUEVO
+  twoPointersAttempted Int @default(0)  // ← NUEVO
   fieldGoalsMade         Int @default(0)
   fieldGoalsAttempted    Int @default(0)
   threePointersMade      Int @default(0)
@@ -1472,6 +1483,8 @@ model TeamOpponentPlayerStats {
   turnovers   Int  @default(0)
   fouls       Int  @default(0)
 
+  twoPointersMade      Int @default(0)  // ← NUEVO
+  twoPointersAttempted Int @default(0)  // ← NUEVO
   fieldGoalsMade         Int @default(0)
   fieldGoalsAttempted    Int @default(0)
   threePointersMade      Int @default(0)

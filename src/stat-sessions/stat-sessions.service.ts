@@ -25,6 +25,76 @@ const USER_SELECT = {
   isGhost: true,
 } as const
 
+/**
+ * Fuente de verdad:
+ *   PTS = 2 * 2PM + 3 * 3PM + FTM
+ *   FGM = 2PM + 3PM
+ *   FGA = 2PA + 3PA
+ * Se recalculan SIEMPRE en el backend a partir de 2P, 3P y TL.
+ */
+function pointsFromBreakdown(args: {
+  twoPointersMade: number
+  threePointersMade: number
+  freeThrowsMade: number
+}): number {
+  return (
+    2 * args.twoPointersMade +
+    3 * args.threePointersMade +
+    args.freeThrowsMade
+  )
+}
+
+function derivedFieldGoals(args: {
+  twoPointersMade: number
+  twoPointersAttempted: number
+  threePointersMade: number
+  threePointersAttempted: number
+}): { fieldGoalsMade: number; fieldGoalsAttempted: number } {
+  return {
+    fieldGoalsMade: args.twoPointersMade + args.threePointersMade,
+    fieldGoalsAttempted:
+      args.twoPointersAttempted + args.threePointersAttempted,
+  }
+}
+
+function validateShotBreakdown(args: {
+  twoPointersMade: number
+  twoPointersAttempted: number
+  threePointersMade: number
+  threePointersAttempted: number
+  freeThrowsMade: number
+  freeThrowsAttempted: number
+}) {
+  const {
+    twoPointersMade: p2m,
+    twoPointersAttempted: p2a,
+    threePointersMade: p3m,
+    threePointersAttempted: p3a,
+    freeThrowsMade: ftm,
+    freeThrowsAttempted: fta,
+  } = args
+  if (p2m < 0 || p2a < 0 || p3m < 0 || p3a < 0 || ftm < 0 || fta < 0) {
+    throw new BadRequestException(
+      'Los valores del desglose de tiros no pueden ser negativos',
+    )
+  }
+  if (p2m > p2a) {
+    throw new BadRequestException(
+      'Tiros de 2 anotados no puede ser mayor que intentados',
+    )
+  }
+  if (p3m > p3a) {
+    throw new BadRequestException(
+      'Triples anotados no puede ser mayor que intentados',
+    )
+  }
+  if (ftm > fta) {
+    throw new BadRequestException(
+      'Tiros libres anotados no puede ser mayor que intentados',
+    )
+  }
+}
+
 @Injectable()
 export class StatSessionsService {
   constructor(private prisma: PrismaService) {}
@@ -334,11 +404,25 @@ export class StatSessionsService {
       throw new BadRequestException('seconds debe estar entre 0 y 59')
     }
 
+    const current = await this.prisma.matchPlayerStats.findUnique({
+      where: {
+        statSessionId_userId: {
+          statSessionId: sessionId,
+          userId: targetUserId,
+        },
+      },
+    })
+    if (!current) {
+      throw new NotFoundException(
+        'El jugador no pertenece a esta estadística',
+      )
+    }
+
     const data: Prisma.MatchPlayerStatsUpdateInput = {}
-    const fields: (keyof UpdateSessionPlayerStatsDto)[] = [
+    // Campos que se copian tal cual del DTO (no derivados).
+    const passthrough: (keyof UpdateSessionPlayerStatsDto)[] = [
       'minutes',
       'seconds',
-      'points',
       'rebounds',
       'assists',
       'steals',
@@ -348,17 +432,71 @@ export class StatSessionsService {
       'blocksAgainst',
       'foulsDrawn',
       'plusMinus',
-      'fieldGoalsMade',
-      'fieldGoalsAttempted',
-      'threePointersMade',
-      'threePointersAttempted',
-      'freeThrowsMade',
-      'freeThrowsAttempted',
     ]
-    for (const f of fields) {
+    for (const f of passthrough) {
       const v = dto[f]
       if (v !== undefined) (data as any)[f] = v
     }
+
+    // ── Mezclar DTO con valores actuales para 2P / 3P / TL.
+    const p2m =
+      dto.twoPointersMade !== undefined
+        ? dto.twoPointersMade
+        : current.twoPointersMade
+    const p2a =
+      dto.twoPointersAttempted !== undefined
+        ? dto.twoPointersAttempted
+        : current.twoPointersAttempted
+    const p3m =
+      dto.threePointersMade !== undefined
+        ? dto.threePointersMade
+        : current.threePointersMade
+    const p3a =
+      dto.threePointersAttempted !== undefined
+        ? dto.threePointersAttempted
+        : current.threePointersAttempted
+    const ftm =
+      dto.freeThrowsMade !== undefined
+        ? dto.freeThrowsMade
+        : current.freeThrowsMade
+    const fta =
+      dto.freeThrowsAttempted !== undefined
+        ? dto.freeThrowsAttempted
+        : current.freeThrowsAttempted
+
+    validateShotBreakdown({
+      twoPointersMade: p2m,
+      twoPointersAttempted: p2a,
+      threePointersMade: p3m,
+      threePointersAttempted: p3a,
+      freeThrowsMade: ftm,
+      freeThrowsAttempted: fta,
+    })
+
+    // ── Derivados: FGM, FGA y Pts SIEMPRE se recalculan.
+    //    `points`, `fieldGoalsMade`, `fieldGoalsAttempted` del DTO
+    //    se ignoran (no se copian).
+    const derivedFg = derivedFieldGoals({
+      twoPointersMade: p2m,
+      twoPointersAttempted: p2a,
+      threePointersMade: p3m,
+      threePointersAttempted: p3a,
+    })
+    const recomputedPoints = pointsFromBreakdown({
+      twoPointersMade: p2m,
+      threePointersMade: p3m,
+      freeThrowsMade: ftm,
+    })
+
+    ;(data as any).twoPointersMade = p2m
+    ;(data as any).twoPointersAttempted = p2a
+    ;(data as any).threePointersMade = p3m
+    ;(data as any).threePointersAttempted = p3a
+    ;(data as any).freeThrowsMade = ftm
+    ;(data as any).freeThrowsAttempted = fta
+    ;(data as any).fieldGoalsMade = derivedFg.fieldGoalsMade
+    ;(data as any).fieldGoalsAttempted = derivedFg.fieldGoalsAttempted
+    ;(data as any).points = recomputedPoints
 
     return this.prisma.matchPlayerStats.update({
       where: {

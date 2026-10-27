@@ -1,3 +1,4 @@
+// backend/src/stats/basketball-stats.service.ts
 import { Injectable } from '@nestjs/common'
 import {
   MatchWithBasketball,
@@ -32,6 +33,8 @@ type MatchLoaded = {
     blocksAgainst: number
     foulsDrawn: number
     plusMinus: number | null
+    twoPointersMade: number         // ← NUEVO
+    twoPointersAttempted: number    // ← NUEVO
     fieldGoalsMade: number
     fieldGoalsAttempted: number
     threePointersMade: number
@@ -80,6 +83,8 @@ export class BasketballStatsService {
         blocksAgainst: ps.blocksAgainst,
         foulsDrawn: ps.foulsDrawn,
         plusMinus: ps.plusMinus,
+        twoPointersMade: ps.twoPointersMade,         // ← NUEVO
+        twoPointersAttempted: ps.twoPointersAttempted, // ← NUEVO
         fieldGoalsMade: ps.fieldGoalsMade,
         fieldGoalsAttempted: ps.fieldGoalsAttempted,
         threePointersMade: ps.threePointersMade,
@@ -118,7 +123,7 @@ export class BasketballStatsService {
     let fta = 0
     let totalMinutes = 0
 
-       for (const pm of perMatchStats) {
+    for (const pm of perMatchStats) {
       matchesCount++
       const r = resultFromMatch(pm.match)
       if (r === 'WIN') wins++
@@ -148,7 +153,7 @@ export class BasketballStatsService {
       }
     }
 
-        // ── Suma de puntos de los jugadores (desglose, distinto del marcador oficial)
+    // ── Suma de puntos de los jugadores (desglose, distinto del marcador oficial)
     let playerPoints = 0
     for (const pm of perMatchStats) {
       playerPoints += pm.teamSummary.points
@@ -159,8 +164,15 @@ export class BasketballStatsService {
         ? Math.round((wins / (wins + losses + draws)) * 1000) / 10
         : 0
 
+    // ── Valoración del equipo
+    // IMPORTANTE: se calcula con `playerPoints` (suma de puntos de jugadores)
+    // y NO con `points` (marcador manual del partido), para que:
+    //  1. Cuadre con la suma de valoraciones individuales de la tabla.
+    //  2. Sea coherente con la fila TOTALES (que ya muestra playerPoints).
+    // El marcador oficial (`points`) se sigue usando para Pts/Partido y
+    // Pts rival/Partido, que son métricas del resultado, no del rendimiento.
     const teamValuation = computeValuation({
-      points,
+      points: playerPoints,
       rebounds,
       assists,
       steals,
@@ -240,6 +252,8 @@ export class BasketballStatsService {
       blocksAgainst: number
       foulsDrawn: number
       plusMinus: number
+      twoPointersMade: number       // ← NUEVO
+      twoPointersAttempted: number  // ← NUEVO
       fieldGoalsMade: number
       fieldGoalsAttempted: number
       threePointersMade: number
@@ -273,6 +287,8 @@ export class BasketballStatsService {
           blocksAgainst: 0,
           foulsDrawn: 0,
           plusMinus: 0,
+          twoPointersMade: 0,         // ← NUEVO
+          twoPointersAttempted: 0,    // ← NUEVO
           fieldGoalsMade: 0,
           fieldGoalsAttempted: 0,
           threePointersMade: 0,
@@ -322,6 +338,8 @@ export class BasketballStatsService {
         agg.blocksAgainst += p.blocksAgainst
         agg.foulsDrawn += p.foulsDrawn
         agg.plusMinus += p.plusMinus ?? 0
+        agg.twoPointersMade += p.twoPointersMade           // ← NUEVO
+        agg.twoPointersAttempted += p.twoPointersAttempted // ← NUEVO
         agg.fieldGoalsMade += p.fieldGoalsMade
         agg.fieldGoalsAttempted += p.fieldGoalsAttempted
         agg.threePointersMade += p.threePointersMade
@@ -370,6 +388,7 @@ export class BasketballStatsService {
           ...p,
           minutesPerMatch: perMatch(p.minutes, p.matches),
           pointsPerMatch: perMatch(p.points, p.matches),
+          twoPointersPct: pct(p.twoPointersMade, p.twoPointersAttempted), // ← NUEVO
           fieldGoalPct: pct(p.fieldGoalsMade, p.fieldGoalsAttempted),
           threePointPct: pct(p.threePointersMade, p.threePointersAttempted),
           freeThrowPct: pct(p.freeThrowsMade, p.freeThrowsAttempted),
@@ -442,6 +461,7 @@ export class BasketballStatsService {
         pointsPerMatch: perMatch(v.points, v.matches),
         opponentPointsPerMatch: perMatch(v.opponentPoints, v.matches),
       }))
+
     // ── Datos por partido (para gráfica "por partido")
     const byMatch = perMatchStats.map((pm) => {
       const r = resultFromMatch(pm.match)
@@ -452,8 +472,6 @@ export class BasketballStatsService {
         result: r,
         teamScore: pm.match.teamScore,
         opponentScore: pm.match.opponentScore,
-        // Mismas métricas que los "values" del trend, para que el cliente pueda
-        // pintar la misma métrica con la misma serie
         matchesPlayed: 1,
         wins: r === 'WIN' ? 1 : 0,
         losses: r === 'LOSS' ? 1 : 0,
@@ -484,7 +502,6 @@ export class BasketballStatsService {
         ),
       }
     })
-
 
     // ── Trend (series opcional por trendMetric)
     const trendMetric = query.trendMetric
@@ -535,6 +552,9 @@ export class BasketballStatsService {
             __ratioDen_tpPct: pm.teamSummary.threePointersAttempted,
             __ratioNum_ftPct: pm.teamSummary.freeThrowsMade,
             __ratioDen_ftPct: pm.teamSummary.freeThrowsAttempted,
+            // Añadimos los campos para el futuro trend de %2P
+            __ratioNum_twoPointersPct: pm.teamSummary.twoPointersMade,
+            __ratioDen_twoPointersPct: pm.teamSummary.twoPointersAttempted,
           }
           return { date: pm.match.date, values }
         })
@@ -565,7 +585,7 @@ export class BasketballStatsService {
           perMatchStats.length > 0
             ? perMatchStats[perMatchStats.length - 1].match.date.toISOString()
             : query.to ?? null,
-                                playerIds: query.playerIds ?? (query.playerId ? [query.playerId] : []),
+        playerIds: query.playerIds ?? (query.playerId ? [query.playerId] : []),
         matchIds: query.matchIds ?? null,
         teamIds: teams.map((t) => t.id),
       },
@@ -576,7 +596,7 @@ export class BasketballStatsService {
           players,
           trend: {
             byMonth,
-             byMatch, 
+            byMatch,
             last10ByMatch,
             series,
             requestedMetric,

@@ -1,3 +1,5 @@
+// backend/src/stats/basketball-stats.helper.ts
+
 // ============================================
 // BALONCESTO — CÁLCULO PURO DE ESTADÍSTICAS
 // ============================================
@@ -12,7 +14,7 @@ export type BasketballPlayerStatsRow = {
   userId: string
   user: UserMini
   minutes: number | null
-  seconds: number | null   // ✅ NUEVO
+  seconds: number | null
   points: number
   rebounds: number
   assists: number
@@ -23,6 +25,8 @@ export type BasketballPlayerStatsRow = {
   blocksAgainst: number
   foulsDrawn: number
   plusMinus: number | null
+  twoPointersMade: number         // ← NUEVO
+  twoPointersAttempted: number    // ← NUEVO
   fieldGoalsMade: number
   fieldGoalsAttempted: number
   threePointersMade: number
@@ -135,6 +139,8 @@ export type BasketballMatchStatsResult = {
     foulsDrawn: number
     plusMinus: number
     valuation: number
+    twoPointersMade: number         // ← NUEVO
+    twoPointersAttempted: number    // ← NUEVO
     fieldGoalsMade: number
     fieldGoalsAttempted: number
     threePointersMade: number
@@ -150,7 +156,7 @@ export type BasketballMatchStatsResult = {
     name: string
     lastName: string
     minutes: number | null
-    seconds: number | null   // ✅ NUEVO
+    seconds: number | null
     points: number
     rebounds: number
     assists: number
@@ -162,6 +168,8 @@ export type BasketballMatchStatsResult = {
     foulsDrawn: number
     plusMinus: number | null
     valuation: number
+    twoPointersMade: number         // ← NUEVO
+    twoPointersAttempted: number    // ← NUEVO
     fieldGoalsMade: number
     fieldGoalsAttempted: number
     fieldGoalPct: number
@@ -189,6 +197,8 @@ export function computeBasketballStatsFromMatch(
   let blocksAgainst = 0
   let foulsDrawn = 0
   let plusMinus = 0
+  let twoPointersMade = 0         // ← NUEVO
+  let twoPointersAttempted = 0    // ← NUEVO
   let fgm = 0
   let fga = 0
   let tpm = 0
@@ -207,6 +217,8 @@ export function computeBasketballStatsFromMatch(
     blocksAgainst += ps.blocksAgainst
     foulsDrawn += ps.foulsDrawn
     plusMinus += ps.plusMinus ?? 0
+    twoPointersMade += ps.twoPointersMade           // ← NUEVO
+    twoPointersAttempted += ps.twoPointersAttempted // ← NUEVO
     fgm += ps.fieldGoalsMade
     fga += ps.fieldGoalsAttempted
     tpm += ps.threePointersMade
@@ -221,7 +233,7 @@ export function computeBasketballStatsFromMatch(
       name: ps.user.name,
       lastName: ps.user.lastName,
       minutes: ps.minutes,
-      seconds: ps.seconds,   // ✅ NUEVO
+      seconds: ps.seconds,
       points: ps.points,
       rebounds: ps.rebounds,
       assists: ps.assists,
@@ -233,6 +245,8 @@ export function computeBasketballStatsFromMatch(
       foulsDrawn: ps.foulsDrawn,
       plusMinus: ps.plusMinus,
       valuation,
+      twoPointersMade: ps.twoPointersMade,         // ← NUEVO
+      twoPointersAttempted: ps.twoPointersAttempted, // ← NUEVO
       fieldGoalsMade: ps.fieldGoalsMade,
       fieldGoalsAttempted: ps.fieldGoalsAttempted,
       fieldGoalPct: pct(ps.fieldGoalsMade, ps.fieldGoalsAttempted),
@@ -287,6 +301,8 @@ export function computeBasketballStatsFromMatch(
       foulsDrawn,
       plusMinus,
       valuation: teamValuation,
+      twoPointersMade,           // ← NUEVO
+      twoPointersAttempted,      // ← NUEVO
       fieldGoalsMade: fgm,
       fieldGoalsAttempted: fga,
       threePointersMade: tpm,

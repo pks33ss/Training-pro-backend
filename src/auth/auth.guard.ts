@@ -8,7 +8,14 @@ export class AuthGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const token = this.extractTokenFromHeader(request);
+    
+    // 1. Intentar extraer del header (normal)
+    let token = this.extractTokenFromHeader(request);
+    
+    // 2. Si no hay header, intentar extraer de la URL (para SSE)
+    if (!token && request.query.token) {
+      token = request.query.token as string;
+    }
     
     if (!token) {
       throw new UnauthorizedException('Token no proporcionado');
@@ -25,8 +32,6 @@ export class AuthGuard implements CanActivate {
         email: payload.email,
         role: payload.role,
       };
-      
-      console.log('🔍 Usuario autenticado:', request.user); // Para debug
       
     } catch (error) {
       if (error.name === 'TokenExpiredError') {

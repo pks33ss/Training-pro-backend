@@ -9,10 +9,13 @@ import {
   Patch,
   Post,
   Request,
+  Sse,
   UseGuards,
 } from '@nestjs/common'
+import { Observable } from 'rxjs'
 import { AuthGuard } from '../auth/auth.guard'
 import { LiveEventsService } from './live-events.service'
+import { LiveStatsSseService } from './live-stats-sse.service'
 import { CreateMatchEventDto } from './dto/create-match-event.dto'
 import { UpdateLiveClockDto } from './dto/update-live-clock.dto'
 import { CreateOpponentPlayersDto } from './dto/create-opponent-players.dto'
@@ -21,7 +24,18 @@ import { SetOnCourtDto } from './dto/set-on-court.dto'
 @UseGuards(AuthGuard)
 @Controller('stat-sessions/:id')
 export class LiveEventsController {
-  constructor(private readonly service: LiveEventsService) {}
+  constructor(
+    private readonly service: LiveEventsService,
+    private readonly sseService: LiveStatsSseService,
+  ) {}
+
+  // ─── SSE ─────────────────────────────────────────────
+
+  @Sse('live-stream')
+  streamEvents(@Param('id') id: string): Observable<any> {
+    // NestJS mantiene la conexión abierta y envía los datos del Subject
+    return this.sseService.getStream(id)
+  }
 
   // ─── Eventos ─────────────────────────────────────────
 
@@ -90,7 +104,7 @@ export class LiveEventsController {
     )
   }
 
-    // ─── Cerrar sesión y materializar stats ─────────────
+  // ─── Cerrar sesión y materializar stats ─────────────
 
   @Post('live/close')
   closeSession(@Request() req, @Param('id') id: string) {
@@ -123,5 +137,4 @@ export class LiveEventsController {
       dto,
     )
   }
-
 }

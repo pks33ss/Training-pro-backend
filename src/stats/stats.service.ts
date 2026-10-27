@@ -706,6 +706,8 @@ export class TeamStatsService {
           blocksAgainst: ps.blocksAgainst,
           foulsDrawn: ps.foulsDrawn,
           plusMinus: ps.plusMinus,
+                  twoPointersMade: ps.twoPointersMade,
+        twoPointersAttempted: ps.twoPointersAttempted,
           fieldGoalsMade: ps.fieldGoalsMade,
           fieldGoalsAttempted: ps.fieldGoalsAttempted,
           threePointersMade: ps.threePointersMade,
@@ -807,6 +809,9 @@ export class TeamStatsService {
         foulsDrawn: playerRow.foulsDrawn,
         plusMinus: playerRow.plusMinus,
         valuation,
+                twoPointersMade: playerRow.twoPointersMade,
+        twoPointersAttempted: playerRow.twoPointersAttempted,
+        twoPointersPct: pct(playerRow.twoPointersMade, playerRow.twoPointersAttempted),
         fieldGoalsMade: playerRow.fieldGoalsMade,
         fieldGoalsAttempted: playerRow.fieldGoalsAttempted,
         fieldGoalPct: pct(
