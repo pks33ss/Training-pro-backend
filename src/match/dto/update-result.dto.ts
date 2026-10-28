@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, Min } from 'class-validator'
+import { IsIn, IsInt, IsOptional, Min } from 'class-validator'
 
 export class UpdateResultDto {
   @IsInt()
@@ -8,4 +8,8 @@ export class UpdateResultDto {
   @IsInt()
   @Min(0)
   opponentScore: number
+
+  @IsOptional()
+  @IsIn(['TEAM', 'OPPONENT'])
+  manualWinner?: 'TEAM' | 'OPPONENT' | null
 }

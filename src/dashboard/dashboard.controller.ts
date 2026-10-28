@@ -33,4 +33,15 @@ export class DashboardController {
     }
     return this.dashboardService.getMultiTeamWeekly(req.user.id, base)
   }
+
+  @Get('multi-team')
+  @ApiOperation({ summary: 'Resumen del dashboard de varios equipos a la vez' })
+  getMultiTeamSummary(@Request() req, @Query('teamIds') teamIdsStr: string) {
+    if (!teamIdsStr) {
+      throw new BadRequestException('Faltan teamIds')
+    }
+    const teamIds = teamIdsStr.split(',')
+    return this.dashboardService.getMultiTeamSummary(req.user.id, teamIds)
+  }
+
 }

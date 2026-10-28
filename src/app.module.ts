@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core'; // <-- AÑADIR
+import { DemoReadonlyGuard } from './auth/demo-readonly.guard'; // <-- AÑADIR
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 
@@ -74,6 +76,12 @@ import { MatchImportModule } from './match-import/match-import.module'
     MailModule,
 
     HealthModule,
+  ],
+    providers: [
+    {
+      provide: APP_GUARD,
+      useClass: DemoReadonlyGuard,
+    },
   ],
 })
 export class AppModule {}

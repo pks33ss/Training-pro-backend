@@ -1,29 +1,6 @@
 // ============================================
 // PÁDEL — CÁLCULO PURO DE ESTADÍSTICAS
 // ============================================
-// Función pura (sin DB, sin permisos). Recibe un Match con
-// padelSubMatches[].player1/player2/sets ya cargados y devuelve
-// el mismo shape que expone GET /matches/:id/padel-stats.
-//
-// MODELO:
-//   PadelSet.homeScore = score del LOCAL      (izquierda)
-//   PadelSet.awayScore = score del VISITANTE  (derecha)
-//
-// Los AGREGADOS (sets, games) también van en formato LOCAL-VISITANTE:
-//   - subMatches[].setsWon  = sets del LOCAL
-//   - subMatches[].setsLost = sets del VISITANTE
-//   - subMatches[].gamesWon = games del LOCAL
-//   - subMatches[].gamesLost = games del VISITANTE
-//   Igual para teamSummary y players.
-//
-// EXCEPCIONES (desde NUESTRA perspectiva):
-//   - set.result  = WIN/LOSS/DRAW (según match.location)
-//   - subMatch.result, teamSummary.result, players[].matchResult
-//   - subMatchesWon/Lost/Drawn (contador de pistas ganadas/perdidas)
-//
-// La usa:
-//   - MatchService.getPadelStats(userId, matchId)  → con 1 match
-//   - TeamStatsService.getTeamStats(...)            → con N matches
 
 type UserMini = {
   id: string
@@ -57,6 +34,7 @@ export type MatchWithPadel = {
   location: MatchLocation
   teamScore: number | null
   opponentScore: number | null
+    manualWinner?: string | null // ← OPCIONAL
   padelSubMatches: SubMatchLike[]
 }
 
@@ -140,26 +118,16 @@ export type PadelStatsResult = {
   players: PadelPlayerPayload[]
 }
 
-// ─────────────────────────────────────────────
-// Helpers internos
-// ─────────────────────────────────────────────
-
 const setHasData = (s: { homeScore: number; awayScore: number }) =>
   s.homeScore > 0 || s.awayScore > 0
 
-/**
- * Devuelve [nuestro score, score del rival] a partir de un set con
- * homeScore = local, awayScore = visitante, según match.location.
- */
 function translateScores(
   s: { homeScore: number; awayScore: number },
   location: MatchLocation,
 ): { ours: number; theirs: number } {
   if (location === 'AWAY') {
-    // Local = rival, visitante = nuestro
     return { ours: s.awayScore, theirs: s.homeScore }
   }
-  // HOME / NEUTRAL → local = nuestro, visitante = rival
   return { ours: s.homeScore, theirs: s.awayScore }
 }
 
@@ -174,10 +142,6 @@ const setResult = (
   return 'DRAW'
 }
 
-// ─────────────────────────────────────────────
-// Función principal
-// ─────────────────────────────────────────────
-
 export function computePadelStatsFromMatch(
   match: MatchWithPadel,
 ): PadelStatsResult {
@@ -189,22 +153,24 @@ export function computePadelStatsFromMatch(
   if (hasGlobalScore) {
     if (match.teamScore! > match.opponentScore!) matchResult = 'WIN'
     else if (match.teamScore! < match.opponentScore!) matchResult = 'LOSS'
-    else matchResult = 'DRAW'
+    else {
+      // Si hay empate, comprobamos si hay un ganador manual
+      if (match.manualWinner === 'TEAM') matchResult = 'WIN'
+      else if (match.manualWinner === 'OPPONENT') matchResult = 'LOSS'
+      else matchResult = 'DRAW'
+    }
   }
 
-  // ── Por pista
   const subMatchesPayload: PadelSubMatchPayload[] = match.padelSubMatches.map(
     (sm) => {
       const validSets = sm.sets.filter(setHasData)
 
-      // Agregados en formato local-visitante
       let setsWonLocal = 0
       let setsWonVisitante = 0
       let setsDrawn = 0
       let gamesLocal = 0
       let gamesVisitante = 0
 
-      // Contador de pistas ganadas/perdidas (nuestra perspectiva)
       let setsOursWon = 0
       let setsOursLost = 0
 
@@ -212,12 +178,10 @@ export function computePadelStatsFromMatch(
         gamesLocal += s.homeScore
         gamesVisitante += s.awayScore
 
-        // Contamos sets desde la perspectiva local-visitante
         if (s.homeScore > s.awayScore) setsWonLocal++
         else if (s.homeScore < s.awayScore) setsWonVisitante++
         else setsDrawn++
 
-        // Y desde nuestra perspectiva (para result)
         const r = setResult(s, location)
         if (r === 'WIN') setsOursWon++
         else if (r === 'LOSS') setsOursLost++
@@ -257,7 +221,6 @@ export function computePadelStatsFromMatch(
     },
   )
 
-  // ── Resumen del equipo (agregados en formato local-visitante)
   let subMatchesWon = 0
   let subMatchesLost = 0
   let subMatchesDrawn = 0
@@ -269,12 +232,10 @@ export function computePadelStatsFromMatch(
   let gamesLost = 0
 
   for (const sm of subMatchesPayload) {
-    // Contador de pistas: desde nuestra perspectiva
     if (sm.result === 'WIN') subMatchesWon++
     else if (sm.result === 'LOSS') subMatchesLost++
     else if (sm.result === 'DRAW') subMatchesDrawn++
 
-    // Sets y games: local-visitante
     setsWon += sm.setsWon
     setsLost += sm.setsLost
     setsDrawn += sm.setsDrawn
@@ -299,7 +260,6 @@ export function computePadelStatsFromMatch(
     gamesDiff: gamesWon - gamesLost,
   }
 
-  // ── Por jugador (agregados en formato local-visitante)
   type PlayerAgg = {
     userId: string
     name: string
@@ -314,7 +274,7 @@ export function computePadelStatsFromMatch(
     setsDrawn: number
     gamesWon: number
     gamesLost: number
-    setsOursWon: number // auxiliar para winRate
+    setsOursWon: number
   }
 
   const playersMap = new Map<string, PlayerAgg>()
@@ -348,7 +308,6 @@ export function computePadelStatsFromMatch(
     for (const p of validPlayers) {
       const agg = ensurePlayer(p)
 
-      // Contador de pistas: desde nuestra perspectiva
       if (sm.result !== null) {
         agg.subMatchesPlayed++
         if (sm.result === 'WIN') agg.subMatchesWon++
@@ -356,7 +315,6 @@ export function computePadelStatsFromMatch(
         else agg.subMatchesDrawn++
       }
 
-      // Sets y games: local-visitante
       agg.setsPlayed += sm.setsWon + sm.setsLost + sm.setsDrawn
       agg.setsWon += sm.setsWon
       agg.setsLost += sm.setsLost
@@ -364,10 +322,6 @@ export function computePadelStatsFromMatch(
       agg.gamesWon += sm.gamesWon
       agg.gamesLost += sm.gamesLost
 
-      // Auxiliar para setsWinRate desde nuestra perspectiva
-      // (setsOursWon = sets ganados por nosotros en esta pista)
-      // Necesitamos recalcularlo aquí: los sets ganados por nosotros
-      // en esta pista son los que tienen result WIN.
       for (const s of sm.sets) {
         const r = setResult(s, location)
         if (r === 'WIN') agg.setsOursWon++

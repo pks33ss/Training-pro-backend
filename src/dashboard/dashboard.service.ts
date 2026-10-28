@@ -544,4 +544,200 @@ const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000)
     }
   }
 
+  async getMultiTeamSummary(userId: string, teamIds: string[]) {
+    // Validar que el usuario tiene acceso a todos los equipos
+    for (const id of teamIds) {
+      await getTeamForViewer(this.prisma, userId, id)
+    }
+
+    const teams = await this.prisma.team.findMany({
+      where: { id: { in: teamIds } },
+      select: { id: true, name: true, sport: true, club: { select: { id: true, name: true } } }
+    })
+
+    if (teams.length === 0) {
+      throw new Error('No hay equipos seleccionados')
+    }
+
+    const sport = teams[0].sport // Asumimos que el frontend solo manda equipos del mismo deporte
+    const now = new Date()
+
+    // 1. Asistencia (agregada)
+    const attendanceStats = await this.prisma.attendance.groupBy({
+      by: ['status'],
+      where: { session: { teamId: { in: teamIds } } },
+      _count: { _all: true },
+    })
+
+    const totalSessions = await this.prisma.session.count({
+      where: { teamId: { in: teamIds } },
+    })
+
+    const attendanceCounts = { present: 0, absent: 0, late: 0, excused: 0 }
+    for (const row of attendanceStats) {
+      const key = row.status.toLowerCase() as keyof typeof attendanceCounts
+      attendanceCounts[key] = row._count._all
+    }
+    const totalAttendance = attendanceCounts.present + attendanceCounts.absent + attendanceCounts.late + attendanceCounts.excused
+    const rate = totalAttendance > 0 ? Math.round(((attendanceCounts.present + attendanceCounts.late) / totalAttendance) * 100) : 0
+
+    // 2. Top Players (agregado)
+    let topPlayers: any[] = []
+    let topPlayersMetrics: Array<{ key: string; label: string }> = []
+    let defaultTopPlayersMetric = 'matchesPlayed'
+
+    if (sport === 'BASKETBALL') {
+      const stats = await this.prisma.matchPlayerStats.findMany({
+        where: { match: { teamId: { in: teamIds }, status: 'FINISHED' } },
+        select: { userId: true, points: true, rebounds: true, assists: true, match: { select: { teamScore: true, opponentScore: true } } },
+      })
+
+      const accMap = new Map<string, { userId: string; matchesPlayed: number; wins: number; points: number; rebounds: number; assists: number }>()
+      for (const s of stats) {
+        if (!accMap.has(s.userId)) {
+          accMap.set(s.userId, { userId: s.userId, matchesPlayed: 0, wins: 0, points: 0, rebounds: 0, assists: 0 })
+        }
+        const a = accMap.get(s.userId)!
+        a.matchesPlayed++
+        a.points += s.points
+        a.rebounds += s.rebounds
+        a.assists += s.assists
+        if (s.match.teamScore !== null && s.match.opponentScore !== null && s.match.teamScore > s.match.opponentScore) a.wins++
+      }
+
+      const userIds = Array.from(accMap.keys())
+      const users = await this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, lastName: true, username: true, isGhost: true } })
+      const usersMap = new Map(users.map((u) => [u.id, u]))
+
+      topPlayers = userIds.map((uid) => {
+        const a = accMap.get(uid)!
+        const u = usersMap.get(uid)
+        return {
+          id: uid,
+          name: u ? `${u.name} ${u.lastName}` : 'Desconocido',
+          username: u?.username ?? null,
+          isGhost: u?.isGhost ?? false,
+          number: null,
+          metrics: { matchesPlayed: a.matchesPlayed, wins: a.wins, points: a.points, rebounds: a.rebounds, assists: a.assists },
+        }
+      })
+      topPlayersMetrics = [
+        { key: 'points', label: 'Puntos' },
+        { key: 'rebounds', label: 'Rebotes' },
+        { key: 'assists', label: 'Asistencias' },
+        { key: 'matchesPlayed', label: 'Partidos jugados' },
+      ]
+      defaultTopPlayersMetric = 'points'
+    } else if (sport === 'PADEL') {
+      const matches = await this.prisma.match.findMany({
+        where: { teamId: { in: teamIds }, status: 'FINISHED' },
+        select: { teamScore: true, opponentScore: true, location: true, padelSubMatches: { select: { player1Id: true, player2Id: true, sets: { select: { homeScore: true, awayScore: true } } } } },
+      })
+
+      const accMap = new Map<string, { userId: string; matchesPlayed: number; wins: number; subMatchesWon: number; setsWon: number }>()
+      const ensure = (uid: string) => {
+        if (!accMap.has(uid)) accMap.set(uid, { userId: uid, matchesPlayed: 0, wins: 0, subMatchesWon: 0, setsWon: 0 })
+        return accMap.get(uid)!
+      }
+
+      for (const m of matches) {
+        const isWin = m.teamScore !== null && m.opponentScore !== null && m.teamScore > m.opponentScore
+        const isAway = m.location === 'AWAY'
+        const playersInMatch = new Set<string>()
+
+        for (const sm of m.padelSubMatches) {
+          const players = [sm.player1Id, sm.player2Id].filter((x): x is string => !!x)
+          for (const uid of players) playersInMatch.add(uid)
+
+          let oursSets = 0
+          let theirsSets = 0
+          for (const s of sm.sets) {
+            const ours = isAway ? s.awayScore : s.homeScore
+            const theirs = isAway ? s.homeScore : s.awayScore
+            if (ours > theirs) {
+              oursSets++
+              for (const uid of players) ensure(uid).setsWon++
+            } else if (theirs > ours) {
+              theirsSets++
+            }
+          }
+          if (oursSets > theirsSets) {
+            for (const uid of players) ensure(uid).subMatchesWon++
+          }
+        }
+        for (const uid of playersInMatch) {
+          const a = ensure(uid)
+          a.matchesPlayed++
+          if (isWin) a.wins++
+        }
+      }
+
+      const userIds = Array.from(accMap.keys())
+      const users = await this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, lastName: true, username: true, isGhost: true } })
+      const usersMap = new Map(users.map((u) => [u.id, u]))
+
+      topPlayers = userIds.map((uid) => {
+        const a = accMap.get(uid)!
+        const u = usersMap.get(uid)
+        return {
+          id: uid,
+          name: u ? `${u.name} ${u.lastName}` : 'Desconocido',
+          username: u?.username ?? null,
+          isGhost: u?.isGhost ?? false,
+          number: null,
+          metrics: { matchesPlayed: a.matchesPlayed, wins: a.wins, subMatchesWon: a.subMatchesWon, setsWon: a.setsWon },
+        }
+      })
+      topPlayersMetrics = [
+        { key: 'wins', label: 'Victorias' },
+        { key: 'subMatchesWon', label: 'Pistas ganadas' },
+        { key: 'setsWon', label: 'Sets ganados' },
+        { key: 'matchesPlayed', label: 'Partidos jugados' },
+      ]
+      defaultTopPlayersMetric = 'wins'
+    }
+
+    // 3. Convocatorias pendientes (agregadas)
+    const pendingCallupsRaw = await this.prisma.matchCallup.groupBy({
+      by: ['matchId'],
+      where: { calledUpStatus: 'YES', confirmedStatus: 'PENDING', match: { teamId: { in: teamIds }, date: { gte: now }, status: 'SCHEDULED' } },
+      _count: { _all: true },
+    })
+
+    const matchIds = pendingCallupsRaw.map((c) => c.matchId)
+    const pendingMatches = await this.prisma.match.findMany({ where: { id: { in: matchIds } }, select: { id: true, opponent: true, date: true, venue: true } })
+    const matchesMap = new Map(pendingMatches.map((m) => [m.id, m]))
+
+    const pendingCallups = pendingCallupsRaw.map((row) => {
+      const match = matchesMap.get(row.matchId)
+      if (!match) return null
+      return { matchId: row.matchId, opponent: match.opponent, date: match.date, venue: match.venue, pendingCount: row._count._all }
+    }).filter((x): x is NonNullable<typeof x> => x !== null).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+    // 4. Balance de partidos (agregado)
+    const matchBalanceRaw = await this.prisma.match.findMany({
+      where: { teamId: { in: teamIds }, status: 'FINISHED' },
+      select: { teamScore: true, opponentScore: true, date: true },
+      orderBy: { date: 'desc' },
+    })
+
+    const finished = matchBalanceRaw.filter((m) => m.teamScore !== null && m.opponentScore !== null)
+    const wins = finished.filter((m) => (m.teamScore ?? 0) > (m.opponentScore ?? 0)).length
+    const losses = finished.filter((m) => (m.teamScore ?? 0) < (m.opponentScore ?? 0)).length
+    const draws = finished.length - wins - losses
+    const winRate = finished.length ? Math.round((wins / finished.length) * 100) : 0
+    const last5 = finished.slice(0, 5).map((m) => (m.teamScore ?? 0) > (m.opponentScore ?? 0) ? 'W' : (m.teamScore ?? 0) < (m.opponentScore ?? 0) ? 'L' : 'D')
+
+    return {
+      teams: teams.map(t => ({ id: t.id, name: t.name, sport: t.sport, club: t.club })),
+      attendance: { rate, totalSessions, ...attendanceCounts },
+      topPlayers,
+      topPlayersMetrics,
+      defaultTopPlayersMetric,
+      pendingCallups,
+      matchBalance: { wins, losses, draws, winRate, last5, totalPlayed: finished.length },
+    }
+  }
+
+
 }

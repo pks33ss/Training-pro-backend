@@ -197,3 +197,18 @@ model MembershipRole {
 
   @@unique([membershipId, role])
 }
+
+---
+
+## Nota sobre el rol ADMIN_TEAM
+
+El rol **ADMIN_TEAM** (administrador de equipo) tiene permisos para:
+- Gestionar el equipo (editar datos, logo, etc.).
+- Gestionar a los miembros del equipo (invitar, aceptar, expulsar).
+- Asignar o quitar roles como **PLAYER**, **COACH** y **ASSISTANT** a otros miembros.
+- Acceder a todas las estadísticas y herramientas del equipo.
+
+**Lo que NO puede hacer:**
+- **No puede asignar ni quitar el rol ADMIN_TEAM** a otros usuarios (ni a sí mismo). Esta acción está reservada exclusivamente para **ADMIN_CLUB** y **SUPER_ADMIN**.
+- No puede eliminar el equipo (solo ADMIN_CLUB o SUPER_ADMIN).
+- No puede gestionar los roles a nivel de club (como dar permisos de ADMIN_CLUB).

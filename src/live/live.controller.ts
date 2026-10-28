@@ -1,22 +1,39 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Request, UseGuards } from '@nestjs/common'
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger'
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Put,
+  Request,
+  UseGuards,
+  NotFoundException, // ✅ AÑADIDO
+} from '@nestjs/common'
 import { LiveService } from './live.service'
 import { AuthGuard } from '../auth/auth.guard'
+import { PrismaService } from '../prisma/prisma.service' // ✅ AÑADIDO
 
-@ApiTags('live')
-@ApiBearerAuth('access-token')
-@Controller('matches/:matchId/live')
 @UseGuards(AuthGuard)
+@Controller('matches/:matchId/live')
 export class LiveController {
-  constructor(private readonly liveService: LiveService) {}
-
-  // ============================================
-  // INFO Y CANDIDATOS
-  // ============================================
+  constructor(
+    private readonly liveService: LiveService,
+    private readonly prisma: PrismaService, // ✅ AÑADIDO
+  ) {}
 
   @Get()
   getInfo(@Request() req, @Param('matchId') matchId: string) {
     return this.liveService.getStreamInfo(req.user.id, matchId)
+  }
+
+  @Post('enable')
+  setEnabled(
+    @Request() req,
+    @Param('matchId') matchId: string,
+    @Body() body: { enabled: boolean },
+  ) {
+    return this.liveService.setStreamingEnabled(req.user.id, matchId, body.enabled)
   }
 
   @Get('candidates')
@@ -29,22 +46,13 @@ export class LiveController {
     return this.liveService.getPermissions(req.user.id, matchId)
   }
 
-  @Post('enable')
-  setEnabled(
-    @Request() req,
-    @Param('matchId') matchId: string,
-    @Body('enabled') enabled: boolean,
-  ) {
-    return this.liveService.setStreamingEnabled(req.user.id, matchId, enabled)
-  }
-
   @Post('permissions')
   setPermissions(
     @Request() req,
     @Param('matchId') matchId: string,
-    @Body('permissions') permissions: { userId: string; canStream: boolean }[],
+    @Body() body: { permissions: { userId: string; canStream: boolean }[] },
   ) {
-    return this.liveService.setPermissions(req.user.id, matchId, permissions)
+    return this.liveService.setPermissions(req.user.id, matchId, body.permissions)
   }
 
   @Delete('permissions/:userId')
@@ -56,10 +64,6 @@ export class LiveController {
     return this.liveService.removePermission(req.user.id, matchId, targetUserId)
   }
 
-  // ============================================
-  // START / STOP
-  // ============================================
-
   @Post('start')
   start(@Request() req, @Param('matchId') matchId: string) {
     return this.liveService.startStream(req.user.id, matchId)
@@ -70,66 +74,6 @@ export class LiveController {
     return this.liveService.stopStream(req.user.id, matchId)
   }
 
-  // ============================================
-  // SCOREBOARD
-  // ============================================
-
-  @Put('scoreboard/config')
-  updateConfig(
-    @Request() req,
-    @Param('matchId') matchId: string,
-    @Body() config: any,
-  ) {
-    return this.liveService.updateScoreboardConfig(req.user.id, matchId, config)
-  }
-
-  @Put('scoreboard/score')
-  updateScore(
-    @Request() req,
-    @Param('matchId') matchId: string,
-    @Body('homeScore') homeScore: number,
-    @Body('awayScore') awayScore: number,
-  ) {
-    return this.liveService.updateScore(req.user.id, matchId, homeScore, awayScore)
-  }
-
-  @Put('scoreboard/clock')
-  updateClock(
-    @Request() req,
-    @Param('matchId') matchId: string,
-    @Body('action') action: 'play' | 'pause' | 'reset' | 'set',
-    @Body('seconds') seconds?: number,
-  ) {
-    return this.liveService.updateClock(req.user.id, matchId, action, seconds)
-  }
-
-@Put('scoreboard/period')
-nextPeriod(@Request() req, @Param('matchId') matchId: string) {
-  return this.liveService.nextPeriod(req.user.id, matchId)
-}
-
-@Put('scoreboard/period-value')
-setPeriodValue(
-  @Request() req,
-  @Param('matchId') matchId: string,
-  @Body('value') value: string,
-) {
-  return this.liveService.setPeriodValue(req.user.id, matchId, value)
-}
-
-@Put('scoreboard/custom-period')
-setCustomPeriod(
-  @Request() req,
-  @Param('matchId') matchId: string,
-  @Body('value') value: string,
-) {
-  return this.liveService.setCustomPeriod(req.user.id, matchId, value)
-}
-
-  // ============================================
-  // VIEWERS
-  // ============================================
-
   @Post('join')
   join(@Request() req, @Param('matchId') matchId: string) {
     return this.liveService.joinAsViewer(req.user.id, matchId)
@@ -139,13 +83,97 @@ setCustomPeriod(
   registerPeer(
     @Request() req,
     @Param('matchId') matchId: string,
-    @Body('peerId') peerId: string,
+    @Body() body: { peerId: string },
   ) {
-    return this.liveService.registerViewerPeer(req.user.id, matchId, peerId)
+    return this.liveService.registerViewerPeer(req.user.id, matchId, body.peerId)
   }
 
   @Delete('leave')
   leave(@Request() req, @Param('matchId') matchId: string) {
     return this.liveService.leave(req.user.id, matchId)
+  }
+
+  // ─── SCOREBOARD ───
+
+  @Put('scoreboard/config')
+  updateScoreboardConfig(
+    @Request() req,
+    @Param('matchId') matchId: string,
+    @Body()
+    body: {
+      scoreboardEnabled?: boolean
+      clockEnabled?: boolean
+      homeTeamName?: string
+      awayTeamName?: string
+      quarterDuration?: number
+      overtimeDuration?: number
+      customPeriodLabel?: string
+    },
+  ) {
+    return this.liveService.updateScoreboardConfig(req.user.id, matchId, body)
+  }
+
+  @Put('scoreboard/score')
+  updateScore(
+    @Request() req,
+    @Param('matchId') matchId: string,
+    @Body() body: { homeScore: number; awayScore: number },
+  ) {
+    return this.liveService.updateScore(
+      req.user.id,
+      matchId,
+      body.homeScore,
+      body.awayScore,
+    )
+  }
+
+  @Put('scoreboard/clock')
+  updateClock(
+    @Request() req,
+    @Param('matchId') matchId: string,
+    @Body() body: { action: 'play' | 'pause' | 'reset' | 'set'; seconds?: number },
+  ) {
+    return this.liveService.updateClock(req.user.id, matchId, body.action, body.seconds)
+  }
+
+  @Put('scoreboard/custom-period')
+  setCustomPeriod(
+    @Request() req,
+    @Param('matchId') matchId: string,
+    @Body() body: { value: string },
+  ) {
+    return this.liveService.setCustomPeriod(req.user.id, matchId, body.value)
+  }
+
+  @Put('scoreboard/period')
+  nextPeriod(@Request() req, @Param('matchId') matchId: string) {
+    return this.liveService.nextPeriod(req.user.id, matchId)
+  }
+
+  @Put('scoreboard/period-value')
+  setPeriodValue(
+    @Request() req,
+    @Param('matchId') matchId: string,
+    @Body() body: { value: string },
+  ) {
+    return this.liveService.setPeriodValue(req.user.id, matchId, body.value)
+  }
+
+  // ✅ NUEVO ENDPOINT: Unirse como espectador
+  @Post('join-spectator')
+  async joinSpectator(
+    @Request() req,
+    @Param('matchId') matchId: string,
+  ) {
+    const match = await this.prisma.match.findUnique({ where: { id: matchId } })
+    if (!match) throw new NotFoundException('Partido no encontrado')
+
+    await this.prisma.matchViewer.upsert({
+      where: { matchId_userId: { matchId, userId: req.user.id } },
+      create: { matchId, userId: req.user.id },
+      update: {}, 
+    })
+
+    return { success: true }
   }
 }

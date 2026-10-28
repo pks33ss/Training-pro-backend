@@ -28,6 +28,13 @@ export class LiveService {
   private async verifyMatchAccess(userId: string, matchId: string) {
     const { match } = await this.getMatchAndUser(userId, matchId)
 
+    // ✅ NUEVO: Si tiene un pase de espectador, dejamos pasar
+    const isSpectator = await this.prisma.matchViewer.findUnique({
+      where: { matchId_userId: { matchId, userId } }
+    })
+    if (isSpectator) return match
+
+    // Si no es espectador, validamos el acceso normal (ser del equipo)
     if (!(await canViewTeam(this.prisma, userId, match.teamId))) {
       throw new ForbiddenException('No tienes acceso a este partido')
     }
@@ -333,6 +340,7 @@ export class LiveService {
       quarterDuration?: number
       overtimeDuration?: number
       customPeriodLabel?: string
+      periodCount?: number // <-- AÑADIR
     },
   ) {
     if (!(await this.canManagePermissions(userId, matchId))) {
@@ -444,6 +452,13 @@ export class LiveService {
   // ============================================
 
   async joinAsViewer(userId: string, matchId: string) {
+    // ✅ NUEVO: Damos el pase de espectador automáticamente si no lo tiene
+    await this.prisma.matchViewer.upsert({
+      where: { matchId_userId: { matchId, userId } },
+      create: { matchId, userId },
+      update: {},
+    })
+
     await this.verifyMatchAccess(userId, matchId)
 
     const stream = await this.prisma.liveStream.findUnique({
@@ -507,7 +522,6 @@ export class LiveService {
     await this.assertHost(userId, matchId)
 
     const clean = (value || '').trim().slice(0, 3).toUpperCase()
-
     const isOT = clean.startsWith('OT')
 
     let periodNum = 1

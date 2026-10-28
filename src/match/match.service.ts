@@ -250,7 +250,15 @@ export class MatchService {
       throw new NotFoundException('Partido no encontrado')
     }
 
-    await getTeamForViewer(this.prisma, userId, match.teamId)
+        // ✅ NUEVO: Si es espectador, tiene un pase VIP y puede verlo.
+    const isSpectator = await this.prisma.matchViewer.findUnique({
+      where: { matchId_userId: { matchId, userId } }
+    })
+
+    if (!isSpectator) {
+      // Si no es espectador, validamos el acceso normal (esto lanza error 403 si no es del equipo)
+      await getTeamForViewer(this.prisma, userId, match.teamId)
+    }
 
     return {
       ...match,
@@ -323,6 +331,7 @@ export class MatchService {
       data: {
         teamScore: updateResultDto.teamScore,
         opponentScore: updateResultDto.opponentScore,
+        manualWinner: updateResultDto.manualWinner ?? null,
         status: 'FINISHED',
       },
     })
