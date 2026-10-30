@@ -1,3 +1,5 @@
+// backend/src/club/club.service.ts
+
 import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateClubDto } from './dto/create-club.dto';
@@ -11,7 +13,6 @@ import {
   isActiveClubMember,
   canInviteToClub,
   getViewerPrivateDataScope,
-  isUserInPrivateDataScope,
   type ViewerPrivateDataScope,
 } from '../common/access';
 import {
@@ -23,30 +24,26 @@ import {
   normalizeMembershipRolesList,
 } from '../common/serialize';
 
-/**
- * Campos opcionales del club que queremos normalizar a `null` cuando
- * llegan como string vacío. Evita que la BD tenga mezcla de '' y null.
- */
 const OPTIONAL_CLUB_STRING_FIELDS = [
   'description',
   'address',
   'phone',
   'email',
-] as const
+] as const;
 
 function normalizeOptionalClubStrings<T extends Record<string, any>>(
   data: T,
 ): T {
-  const out: any = { ...data }
+  const out: any = { ...data };
   for (const key of OPTIONAL_CLUB_STRING_FIELDS) {
     if (key in out) {
-      const v = out[key]
+      const v = out[key];
       if (typeof v === 'string' && v.trim() === '') {
-        out[key] = null
+        out[key] = null;
       }
     }
   }
-  return out
+  return out;
 }
 
 @Injectable()
@@ -58,7 +55,7 @@ export class ClubService {
   ) {}
 
   // ─────────────────────────────────────────────
-  // HELPERS PRIVADOS DE PRIVACIDAD
+  // HELPERS PRIVADOS
   // ─────────────────────────────────────────────
 
   private buildPrivateDataFilter(
@@ -66,17 +63,17 @@ export class ClubService {
     scope: ViewerPrivateDataScope,
   ): (target: { id: string; clubId?: string; teamId?: string }) => boolean {
     return (target) => {
-      if (viewerId === target.id) return true
-      if (scope.isSuperAdmin) return true
-      if (scope.tutorOfUserIds.includes(target.id)) return true
+      if (viewerId === target.id) return true;
+      if (scope.isSuperAdmin) return true;
+      if (scope.tutorOfUserIds.includes(target.id)) return true;
       if (target.clubId && scope.adminClubIds.includes(target.clubId)) {
-        return true
+        return true;
       }
       if (target.teamId && scope.staffTeamIds.includes(target.teamId)) {
-        return true
+        return true;
       }
-      return false
-    }
+      return false;
+    };
   }
 
   private filterUserPrivateFields<
@@ -86,9 +83,9 @@ export class ClubService {
     canSee: (target: { id: string; clubId?: string; teamId?: string }) => boolean,
     ctx: { clubId?: string; teamId?: string } = {},
   ): T {
-    if (canSee({ id: user.id, ...ctx })) return user
-    const { email: _e, phone: _p, ...rest } = user
-    return rest as T
+    if (canSee({ id: user.id, ...ctx })) return user;
+    const { email: _e, phone: _p, ...rest } = user;
+    return rest as T;
   }
 
   // ─────────────────────────────────────────────
@@ -96,48 +93,110 @@ export class ClubService {
   // ─────────────────────────────────────────────
 
   async create(userId: string, createClubDto: CreateClubDto) {
-    const data = normalizeOptionalClubStrings(createClubDto)
+    const data = normalizeOptionalClubStrings(createClubDto);
 
-    const club = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.club.create({
-        data: {
-          name: data.name,
-          description: data.description,
-          address: data.address,
-          phone: data.phone,
-          email: data.email,
-        },
-      });
+    const cleanColors: { primaryColor?: string; secondaryColor?: string } = {};
+    if (data.primaryColor && data.primaryColor.trim() !== '') {
+      cleanColors.primaryColor = data.primaryColor;
+    }
+    if (data.secondaryColor && data.secondaryColor.trim() !== '') {
+      cleanColors.secondaryColor = data.secondaryColor;
+    }
 
-      const { seedSystemRolesForClub } = await import('../permissions/seed-roles');
-      await seedSystemRolesForClub(tx, created.id);
-
-      const adminRoleId = await resolveClubRoleId(tx, created.id, 'ADMIN_CLUB');
-
-      await tx.clubMember.create({
-        data: {
-          userId,
-          clubId: created.id,
-          roleId: adminRoleId,
-          isActive: true,
-        },
-      });
-
-      return tx.club.findUniqueOrThrow({
-        where: { id: created.id },
-        include: {
-          members: {
-            include: {
-              user: {
-                select: { id: true, name: true, lastName: true, email: true },
-              },
-              roleRef: { select: { id: true, name: true } },
+    let club;
+    try {
+      club = await this.prisma.$transaction(
+        async (tx) => {
+          // 1) Crear el club
+          const created = await tx.club.create({
+            data: {
+              name: data.name,
+              description: data.description,
+              address: data.address,
+              phone: data.phone,
+              email: data.email,
+              ...cleanColors,
             },
-          },
-        },
-      });
-    });
+          });
 
+          // 2) Sembrar roles del sistema
+          const { seedSystemRolesForClub } = await import(
+            '../permissions/seed-roles'
+          );
+          await seedSystemRolesForClub(tx, created.id);
+
+          // 3) Resolver rol ADMIN_CLUB (con fallback)
+          let adminRoleId: string;
+          try {
+            adminRoleId = await resolveClubRoleId(
+              tx,
+              created.id,
+              'ADMIN_CLUB',
+            );
+          } catch (resolveErr) {
+            console.error('❌ resolveClubRoleId falló:', resolveErr);
+            const fallback = await tx.role.upsert({
+              where: {
+                clubId_scope_name: {
+                  clubId: created.id,
+                  scope: 'CLUB',
+                  name: 'ADMIN_CLUB',
+                },
+              },
+              create: {
+                clubId: created.id,
+                scope: 'CLUB',
+                name: 'ADMIN_CLUB',
+                description: 'Administrador del club',
+                isSystem: true,
+              },
+              update: {},
+            });
+            adminRoleId = fallback.id;
+          }
+
+          // 4) Crear el ClubMember
+          await tx.clubMember.create({
+            data: {
+              userId,
+              clubId: created.id,
+              roleId: adminRoleId,
+              isActive: true,
+            },
+          });
+
+          // 5) Devolver el club con miembros
+          return tx.club.findUniqueOrThrow({
+            where: { id: created.id },
+            include: {
+              members: {
+                include: {
+                  user: {
+                    select: {
+                      id: true,
+                      name: true,
+                      lastName: true,
+                      email: true,
+                    },
+                  },
+                  roleRef: { select: { id: true, name: true } },
+                },
+              },
+            },
+          });
+        },
+        { timeout: 15000 },
+      );
+    } catch (err: any) {
+      console.error('🔴 Error creando club:', {
+        code: err?.code,
+        message: err?.message,
+        meta: err?.meta,
+      });
+      throw err;
+    }
+
+    // Notificación por email (no bloqueante)
     const creator = club.members.find((m) => m.userId === userId)?.user;
     this.mailService
       .sendAdminNotification({
@@ -147,13 +206,20 @@ export class ClubService {
           { label: 'Club', value: club.name },
           {
             label: 'Creador',
-            value: creator ? `${creator.name} ${creator.lastName}` : '(desconocido)',
+            value: creator
+              ? `${creator.name} ${creator.lastName}`
+              : '(desconocido)',
           },
-          { label: 'Email creador', value: creator?.email ?? '(sin email)' },
+          {
+            label: 'Email creador',
+            value: creator?.email ?? '(sin email)',
+          },
           { label: 'ID', value: club.id },
         ],
       })
-      .catch((err) => console.error('Error notificando creación de club:', err));
+      .catch((err) =>
+        console.error('Error notificando creación de club:', err),
+      );
 
     return club;
   }
@@ -168,7 +234,12 @@ export class ClubService {
           members: {
             include: {
               user: {
-                select: { id: true, name: true, lastName: true, email: true },
+                select: {
+                  id: true,
+                  name: true,
+                  lastName: true,
+                  email: true,
+                },
               },
               roleRef: { select: { id: true, name: true } },
             },
@@ -186,14 +257,19 @@ export class ClubService {
     }
 
     const clubMembers = await this.prisma.clubMember.findMany({
-      where: { userId: userId, isActive: true },
+      where: { userId, isActive: true },
       include: {
         club: {
           include: {
             members: {
               include: {
                 user: {
-                  select: { id: true, name: true, lastName: true, email: true },
+                  select: {
+                    id: true,
+                    name: true,
+                    lastName: true,
+                    email: true,
+                  },
                 },
                 roleRef: { select: { id: true, name: true } },
               },
@@ -216,13 +292,23 @@ export class ClubService {
                 members: {
                   include: {
                     user: {
-                      select: { id: true, name: true, lastName: true, email: true },
+                      select: {
+                        id: true,
+                        name: true,
+                        lastName: true,
+                        email: true,
+                      },
                     },
                     roleRef: { select: { id: true, name: true } },
                   },
                 },
                 teams: {
-                  select: { id: true, name: true, category: true, season: true },
+                  select: {
+                    id: true,
+                    name: true,
+                    category: true,
+                    season: true,
+                  },
                 },
               },
             },
@@ -262,7 +348,11 @@ export class ClubService {
     const canSee = this.buildPrivateDataFilter(userId, scope);
 
     if (!scope.isSuperAdmin) {
-      const isActive = await isActiveClubMember(this.prisma, userId, clubId);
+      const isActive = await isActiveClubMember(
+        this.prisma,
+        userId,
+        clubId,
+      );
       if (!isActive) {
         const hasMembership = await this.prisma.teamMembership.findFirst({
           where: { userId, status: 'ACTIVE', team: { clubId } },
@@ -327,13 +417,13 @@ export class ClubService {
   async update(userId: string, clubId: string, updateClubDto: UpdateClubDto) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('No tienes permisos para editar este club');
+        throw new ForbiddenException(
+          'No tienes permisos para editar este club',
+        );
       }
     }
 
-    // ✅ Normalizamos '' → null para los campos opcionales. Solo afecta
-    // a los campos presentes en el DTO; los ausentes se respetan.
-    const data = normalizeOptionalClubStrings(updateClubDto)
+    const data = normalizeOptionalClubStrings(updateClubDto);
 
     return this.prisma.club.update({
       where: { id: clubId },
@@ -344,7 +434,9 @@ export class ClubService {
   async remove(userId: string, clubId: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('No tienes permisos para eliminar este club');
+        throw new ForbiddenException(
+          'No tienes permisos para eliminar este club',
+        );
       }
     }
 
@@ -353,16 +445,20 @@ export class ClubService {
     });
   }
 
-  // ============================================
-  // GESTIÓN DE MIEMBROS DEL CLUB
-  // ============================================
+  // ─────────────────────────────────────────────
+  // MIEMBROS
+  // ─────────────────────────────────────────────
 
   async getMembers(userId: string, clubId: string) {
     const scope = await getViewerPrivateDataScope(this.prisma, userId);
     const canSee = this.buildPrivateDataFilter(userId, scope);
 
     const isSuper = scope.isSuperAdmin;
-    const isActive = await isActiveClubMember(this.prisma, userId, clubId);
+    const isActive = await isActiveClubMember(
+      this.prisma,
+      userId,
+      clubId,
+    );
 
     if (!isActive && !isSuper) {
       throw new ForbiddenException('No tienes acceso a este club');
@@ -389,9 +485,7 @@ export class ClubService {
       m.user
         ? {
             ...m,
-            user: this.filterUserPrivateFields(m.user, canSee, {
-              clubId,
-            }),
+            user: this.filterUserPrivateFields(m.user, canSee, { clubId }),
           }
         : m,
     );
@@ -411,10 +505,7 @@ export class ClubService {
       );
     }
 
-    const userToInvite = await this.prisma.user.findUnique({
-      where: { email },
-    });
-
+    const userToInvite = await this.prisma.user.findUnique({ where: { email } });
     if (!userToInvite) {
       throw new NotFoundException(
         'Usuario no encontrado. Primero debe registrarse en la app.',
@@ -424,7 +515,7 @@ export class ClubService {
     const roleId = await resolveClubRoleId(this.prisma, clubId, role);
 
     const existingMember = await this.prisma.clubMember.findFirst({
-      where: { userId: userToInvite.id, clubId: clubId },
+      where: { userId: userToInvite.id, clubId },
     });
 
     if (existingMember) {
@@ -445,7 +536,7 @@ export class ClubService {
     return this.prisma.clubMember.create({
       data: {
         userId: userToInvite.id,
-        clubId: clubId,
+        clubId,
         roleId,
       },
       include: {
@@ -508,7 +599,7 @@ export class ClubService {
     if (memberToDelete.roleRef.name === 'ADMIN_CLUB') {
       const adminCount = await this.prisma.clubMember.count({
         where: {
-          clubId: clubId,
+          clubId,
           isActive: true,
           roleRef: { name: 'ADMIN_CLUB' },
         },
@@ -546,7 +637,11 @@ export class ClubService {
       remainingMembers.length === 1 &&
       remainingMembers[0].roleRef.name !== 'ADMIN_CLUB'
     ) {
-      const adminRoleId = await resolveClubRoleId(this.prisma, clubId, 'ADMIN_CLUB');
+      const adminRoleId = await resolveClubRoleId(
+        this.prisma,
+        clubId,
+        'ADMIN_CLUB',
+      );
       await this.prisma.clubMember.update({
         where: { id: remainingMembers[0].id },
         data: { roleId: adminRoleId },
@@ -598,10 +693,6 @@ export class ClubService {
     return { message: 'Contraseña reseteada correctamente' };
   }
 
-  // ============================================
-  // GESTIÓN DE EQUIPOS POR MIEMBRO
-  // ============================================
-
   async getMemberTeams(userId: string, clubId: string, memberId: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
@@ -638,8 +729,8 @@ export class ClubService {
 
     const membershipMap = new Map(
       memberMemberships.map((m) => {
-        const normalized = normalizeMembershipRolesList([m])[0]
-        return [m.teamId, normalized.roles.join(', ') || 'PLAYER']
+        const normalized = normalizeMembershipRolesList([m])[0];
+        return [m.teamId, normalized.roles.join(', ') || 'PLAYER'];
       }),
     );
 
@@ -682,7 +773,11 @@ export class ClubService {
       throw new NotFoundException('Miembro no encontrado');
     }
 
-    const coachTeamRoleId = await resolveTeamRoleId(this.prisma, clubId, 'COACH');
+    const coachTeamRoleId = await resolveTeamRoleId(
+      this.prisma,
+      clubId,
+      'COACH',
+    );
 
     const existing = await this.prisma.teamMembership.findFirst({
       where: { userId: member.userId, teamId },
@@ -745,7 +840,9 @@ export class ClubService {
     });
 
     if (!membership) {
-      throw new NotFoundException('El miembro no está asignado a este equipo');
+      throw new NotFoundException(
+        'El miembro no está asignado a este equipo',
+      );
     }
 
     return this.prisma.teamMembership.update({
@@ -757,20 +854,16 @@ export class ClubService {
     });
   }
 
-  // ============================================
-  // SUBIR LOGO DEL CLUB
-  // ============================================
-
   async uploadLogo(userId: string, clubId: string, base64Image: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('No tienes permisos para editar este club');
+        throw new ForbiddenException(
+          'No tienes permisos para editar este club',
+        );
       }
     }
 
-    const club = await this.prisma.club.findUnique({
-      where: { id: clubId },
-    });
+    const club = await this.prisma.club.findUnique({ where: { id: clubId } });
 
     if (!club) {
       throw new NotFoundException('Club no encontrado');
@@ -790,7 +883,9 @@ export class ClubService {
   async removeLogo(userId: string, clubId: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
       if (!(await isClubAdmin(this.prisma, userId, clubId))) {
-        throw new ForbiddenException('No tienes permisos para editar este club');
+        throw new ForbiddenException(
+          'No tienes permisos para editar este club',
+        );
       }
     }
 
@@ -800,13 +895,13 @@ export class ClubService {
     });
   }
 
-  // ============================================
-  // JUGADORES DEL CLUB (vista global)
-  // ============================================
-
   async findClubPlayers(userId: string, clubId: string) {
     if (!(await isSuperAdmin(this.prisma, userId))) {
-      const isActive = await isActiveClubMember(this.prisma, userId, clubId);
+      const isActive = await isActiveClubMember(
+        this.prisma,
+        userId,
+        clubId,
+      );
       if (!isActive) {
         throw new ForbiddenException('No tienes acceso a este club');
       }
@@ -873,12 +968,12 @@ export class ClubService {
     }));
   }
 
-  // ============================================
-  // RECORDATORIOS DE PAGO
-  // ============================================
-
   async getRemindersConfig(viewerId: string, clubId: string) {
-    const isMember = await isActiveClubMember(this.prisma, viewerId, clubId);
+    const isMember = await isActiveClubMember(
+      this.prisma,
+      viewerId,
+      clubId,
+    );
     const isSuper = await isSuperAdmin(this.prisma, viewerId);
     if (!isMember && !isSuper) {
       throw new ForbiddenException('No tienes acceso a este club');
