@@ -35,6 +35,8 @@ import { StatSessionsModule } from './stat-sessions/stat-sessions.module'
 import { LiveEventsModule } from './live-events/live-events.module'
 import { MatchImportModule } from './match-import/match-import.module'
 
+import { AnalyticsModule } from './analytics/analytics.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -48,6 +50,7 @@ import { MatchImportModule } from './match-import/match-import.module'
     UserModule,
     ClubModule,
     TeamModule,
+    AnalyticsModule,
 
     SessionModule,
     CalendarModule,

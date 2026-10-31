@@ -1516,3 +1516,15 @@ model MatchViewer {
   @@index([matchId])
   @@index([userId])
 }
+
+// ============================================
+// ANALYTICS & METRICS
+// ============================================
+
+model AppMetricEvent {
+  id        String   @id @default(cuid())
+  type      String   @default("DEMO_OPEN")
+  createdAt DateTime @default(now())
+
+  @@index([type, createdAt])
+}
