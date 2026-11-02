@@ -1,0 +1,35 @@
+name: Pause/Resume UptimeRobot Monitor
+
+on:
+  schedule:
+    # Pausar a la 01:00 (Madrid). En UTC es 00:00 (invierno) o 23:00 (verano).
+    - cron: '0 0 * * *'
+    # Reanudar a las 07:00 (Madrid). En UTC es 06:00 (invierno) o 05:00 (verano).
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Permite ejecutarlo manualmente para probar
+
+jobs:
+  toggle-monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pausar monitor (si es la 1 AM)
+        if: github.event.schedule == '0 0 * * *'
+        run: |
+          curl -X POST "https://api.uptimerobot.com/v2/editMonitor" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "api_key": "${{ secrets.UPTIMEROBOT_API_KEY }}",
+            "id": "${{ secrets.UPTIMEROBOT_MONITOR_ID }}",
+            "status": "0"
+          }'
+
+      - name: Reanudar monitor (si es la 7 AM)
+        if: github.event.schedule == '0 6 * * *'
+        run: |
+          curl -X POST "https://api.uptimerobot.com/v2/editMonitor" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "api_key": "${{ secrets.UPTIMEROBOT_API_KEY }}",
+            "id": "${{ secrets.UPTIMEROBOT_MONITOR_ID }}",
+            "status": "1"
+          }'
