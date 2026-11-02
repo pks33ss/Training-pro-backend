@@ -404,7 +404,7 @@ model MembershipRole {
   createdAt    DateTime @default(now())
 
   membership TeamMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
-  roleRef    Role           @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  roleRef Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@unique([membershipId, roleId])
   @@index([membershipId])

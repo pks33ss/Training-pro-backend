@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsInt, IsObject } from 'class-validator'
+import { IsOptional, IsString, IsInt, ValidateIf } from 'class-validator'
 
 export class UpdateStepDto {
   @IsOptional()
@@ -6,6 +6,7 @@ export class UpdateStepDto {
   description?: string
 
   @IsOptional()
+  @ValidateIf((o) => o.imageUrl !== null)
   @IsString()
   imageUrl?: string | null
 
@@ -13,8 +14,7 @@ export class UpdateStepDto {
   @IsInt()
   order?: number
 
-  // ✅ NUEVO — JSON serializado de la pizarra (opcional)
+  // ✅ Dejamos que Prisma valide el JSON directamente
   @IsOptional()
-  @IsObject()
-  tacticalData?: Record<string, any> | null
+  tacticalData?: any
 }

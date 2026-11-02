@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client'; // <-- IMPORTANTE: Añadir esta importación
 import { PrismaService } from '../prisma/prisma.service';
 import { canViewTeam, canEditTeam } from '../common/access';
 import { CreatePlayDto } from './dto/create-play.dto';
@@ -13,6 +14,31 @@ import { UpdateStepDto } from './dto/update-step.dto';
 @Injectable()
 export class PlaybookService {
   constructor(private prisma: PrismaService) {}
+
+  // ============================================
+  // FUNCIÓN AUXILIAR PARA MANEJAR EL JSON
+  // ============================================
+  private normalizeTacticalData(data: any): any {
+    if (data === undefined) return undefined;
+    if (data === null) return Prisma.DbNull;
+    
+    let parsed = data;
+    // Si por alguna razón llega como string, lo parseamos
+    if (typeof parsed === 'string') {
+      try {
+        parsed = JSON.parse(parsed);
+      } catch (e) {
+        return Prisma.DbNull;
+      }
+    }
+    
+    // Prisma exige que sea un objeto o array puro
+    if (typeof parsed !== 'object' || parsed === null) {
+      return Prisma.DbNull;
+    }
+    
+    return parsed;
+  }
 
   // ============================================
   // JUGADAS
@@ -177,6 +203,7 @@ export class PlaybookService {
     }
 
     const order = dto.order ?? play.steps.length;
+    const tacticalDataProcessed = this.normalizeTacticalData(dto.tacticalData);
 
     return this.prisma.playStep.create({
       data: {
@@ -184,8 +211,8 @@ export class PlaybookService {
         description: dto.description,
         imageUrl: dto.imageUrl,
         order,
-        ...(dto.tacticalData !== undefined && {
-          tacticalData: dto.tacticalData as any,
+        ...(tacticalDataProcessed !== undefined && {
+          tacticalData: tacticalDataProcessed,
         }),
       },
     });
@@ -218,7 +245,7 @@ export class PlaybookService {
     if (dto.order !== undefined) data.order = dto.order;
 
     if (dto.tacticalData !== undefined) {
-      data.tacticalData = dto.tacticalData
+      data.tacticalData = this.normalizeTacticalData(dto.tacticalData);
     }
 
     return this.prisma.playStep.update({
