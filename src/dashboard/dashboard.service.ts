@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { getTeamForViewer } from '../common/access'
 
@@ -7,6 +7,7 @@ export class DashboardService {
   constructor(private prisma: PrismaService) {}
 
   async getTeamSummary(userId: string, teamId: string) {
+    // ✅ Comprobación real de acceso
     const team = await getTeamForViewer(this.prisma, userId, teamId)
     const now = new Date()
 
@@ -418,30 +419,20 @@ export class DashboardService {
     }
   }
 
-    // ════════════════════════════════════════════
+  // ════════════════════════════════════════════
   // MULTI-EQUIPO — Plan semanal
   // ════════════════════════════════════════════
 
-  /**
-   * Devuelve las sesiones y partidos de la semana indicada para todos los
-   * equipos donde el user es miembro activo. También devuelve la lista de
-   * equipos con su nombre y color asignado (para pintarlos en el grid).
-   *
-   * `weekStart` es el lunes 00:00:00 de la semana en la zona horaria del
-   * navegador. La ventana se calcula como [weekStart, weekStart+7d).
-   */
   async getMultiTeamWeekly(userId: string, weekStart: Date) {
-    // Normalizamos por si acaso el cliente manda una hora rara.
     const start = new Date(
-  Date.UTC(
-    weekStart.getUTCFullYear(),
-    weekStart.getUTCMonth(),
-    weekStart.getUTCDate(),
-  ),
-)
-const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000)
+      Date.UTC(
+        weekStart.getUTCFullYear(),
+        weekStart.getUTCMonth(),
+        weekStart.getUTCDate(),
+      ),
+    )
+    const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000)
 
-    // Todos los equipos donde el user es miembro activo.
     const memberships = await this.prisma.teamMembership.findMany({
       where: { userId, status: 'ACTIVE' },
       select: {
@@ -456,7 +447,6 @@ const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000)
       },
     })
 
-    // De-duplicamos por si hubiese memberships duplicadas.
     const teamsMap = new Map<
       string,
       {
@@ -545,7 +535,6 @@ const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000)
   }
 
   async getMultiTeamSummary(userId: string, teamIds: string[]) {
-    // Validar que el usuario tiene acceso a todos los equipos
     for (const id of teamIds) {
       await getTeamForViewer(this.prisma, userId, id)
     }
@@ -556,10 +545,10 @@ const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000)
     })
 
     if (teams.length === 0) {
-      throw new Error('No hay equipos seleccionados')
+      throw new NotFoundException('No hay equipos seleccionados')
     }
 
-    const sport = teams[0].sport // Asumimos que el frontend solo manda equipos del mismo deporte
+    const sport = teams[0].sport
     const now = new Date()
 
     // 1. Asistencia (agregada)
@@ -738,6 +727,4 @@ const end = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000)
       matchBalance: { wins, losses, draws, winRate, last5, totalPlayed: finished.length },
     }
   }
-
-
 }

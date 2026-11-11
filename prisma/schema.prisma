@@ -129,6 +129,8 @@ model ClubMember {
   roleId   String
   isActive Boolean  @default(true)
   joinedAt DateTime @default(now())
+    // Lote 4.A — NUEVO
+  clubMemberRoles ClubMemberRole[]
 
   user    User @relation(fields: [userId], references: [id], onDelete: Cascade)
   club    Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
@@ -150,6 +152,8 @@ model Team {
   logo           String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+    // Lote 4.A — NUEVO
+  clubMemberRoleTeamScopes ClubMemberRoleTeamScope[]
 
   club Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
 
@@ -435,6 +439,8 @@ model Role {
   isDefault   Boolean   @default(false)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+    // Lote 4.A — NUEVO
+  clubMemberRoles ClubMemberRole[]
 
   club               Club                @relation(fields: [clubId], references: [id], onDelete: Cascade)
   permissions        RolePermission[]
@@ -451,6 +457,9 @@ model RolePermission {
   roleId    String
   resource  String
   action    String
+  // null → default del club (aplica a todos los equipos)
+  // teamId → override solo para ese equipo
+  teamId    String?
   scope     String?
   granted   Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -458,8 +467,9 @@ model RolePermission {
 
   role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
-  @@unique([roleId, resource, action, scope])
+  @@unique([roleId, resource, action, scope, teamId])
   @@index([roleId, resource, action])
+  @@index([teamId])
 }
 
 model PermissionAuditLog {
@@ -1527,4 +1537,47 @@ model AppMetricEvent {
   createdAt DateTime @default(now())
 
   @@index([type, createdAt])
+}
+
+// ============================================
+// LOTE 4.A — NUEVO MODELO DE ROLES (expand)
+// ============================================
+//
+// Estas tablas conviven con el modelo antiguo (ClubMember.roleId,
+// MembershipRole) durante la fase de transición. El código nuevo
+// (Lote 4.C) leerá de aquí. El código viejo sigue leyendo de las
+// columnas/tablas antiguas hasta el Lote 4.K (limpieza).
+//
+// NO BORRAR `ClubMember.roleId` ni `MembershipRole` hasta el Lote 4.K.
+
+model ClubMemberRole {
+  id           String   @id @default(cuid())
+  clubMemberId String
+  roleId       String
+  /// 'ALL' | 'TEAMS'
+  scope        String   @default("ALL")
+  createdAt    DateTime @default(now())
+
+  clubMember ClubMember                 @relation(fields: [clubMemberId], references: [id], onDelete: Cascade)
+  roleRef    Role                       @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  teamScopes ClubMemberRoleTeamScope[]
+
+  @@unique([clubMemberId, roleId])
+  @@index([clubMemberId])
+  @@index([roleId])
+  @@index([scope])
+}
+
+model ClubMemberRoleTeamScope {
+  id               String   @id @default(cuid())
+  clubMemberRoleId String
+  teamId           String
+  createdAt        DateTime @default(now())
+
+  clubMemberRole ClubMemberRole @relation(fields: [clubMemberRoleId], references: [id], onDelete: Cascade)
+  team           Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([clubMemberRoleId, teamId])
+  @@index([clubMemberRoleId])
+  @@index([teamId])
 }

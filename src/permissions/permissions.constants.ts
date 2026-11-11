@@ -1,6 +1,7 @@
 // backend/src/permissions/permissions.constants.ts
-// Lote 8.0 — Constantes de la matriz de permisos.
-// Fuente de verdad: docs/permissions.md
+// Lote 8.5 — Constantes de la matriz de permisos.
+// Se han añadido: session, match, attendance, season, library.
+// Se mantiene `event` como legacy (para el calendario).
 
 export const PERMISSION_RESOURCES = [
   'team',
@@ -8,8 +9,13 @@ export const PERMISSION_RESOURCES = [
   'invitation',
   'membership_role',
   'payment',
-  'event',
-  'document',
+  'session',    // ✅ NUEVO
+  'match',      // ✅ NUEVO
+  'attendance', // ✅ NUEVO
+  'season',     // ✅ NUEVO
+  'event',      // legacy (calendario)
+  'document',   // Playbook
+  'library',    // ✅ NUEVO (Biblioteca)
   'club_settings',
   'club_branding',
   'report',
@@ -31,8 +37,13 @@ export const RESOURCE_LABELS_ES: Record<PermissionResource, string> = {
   invitation: 'Invitaciones',
   membership_role: 'Roles de equipo',
   payment: 'Pagos',
-  event: 'Eventos',
-  document: 'Documentos',
+  session: 'Sesiones de entrenamiento',
+  match: 'Partidos',
+  attendance: 'Asistencia',       // ✅ NUEVO
+  season: 'Planificación',        // ✅ NUEVO
+  event: 'Calendario',            // ✅ Cambiado (antes Eventos)
+  document: 'Playbook',           // ✅ Cambiado (antes Documentos)
+  library: 'Biblioteca',          // ✅ NUEVO
   club_settings: 'Configuración del club',
   club_branding: 'Branding',
   report: 'Reportes',
@@ -69,12 +80,15 @@ export function actionsFor(resource: PermissionResource): readonly PermissionAct
   return ACTIONS_BY_RESOURCE[resource] ?? PERMISSION_ACTIONS;
 }
 
-/** Recursos que un MEMBER ve por defecto. */
+/**
+ * Recursos que un usuario SIN ClubMember ve por defecto.
+ * `event`, `session`, `match`, `attendance`, `season` dependen de la matriz.
+ */
 export const DEFAULT_VIEWABLE_RESOURCES: readonly PermissionResource[] = [
   'team',
   'member',
-  'event',
   'document',
+  'library', // ✅ Añadido
   'club_settings',
   'club_branding',
 ];

@@ -82,9 +82,7 @@ const result = await create({
 });
 
 if (isDatabaseSuccess(result)) {
-  console.log(result.connectionString);
-  console.log(result.claimUrl);
-  console.log(result.deletionDate);
+
 }
 
 if (isDatabaseError(result)) {
@@ -98,7 +96,7 @@ List regions programmatically:
 import { regions } from "create-db";
 
 const available = await regions();
-console.log(available);
+
 ```
 
 Programmatic `create()` defaults to `us-east-1` if no region is passed.

@@ -20,9 +20,12 @@ import { ClubService } from './club.service';
 import { CreateClubDto } from './dto/create-club.dto';
 import { UpdateClubDto } from './dto/update-club.dto';
 import { UpdatePaymentRemindersDto } from './dto/update-payment-reminders.dto';
+import { UpdateMemberRolesDto } from './dto/update-member-roles.dto';
+import { InviteMemberDto } from './dto/invite-member.dto';
 import { AuthGuard } from '../auth/auth.guard';
 import { PermissionsGuard } from '../permissions/permissions.guard';
 import { RequirePermission } from '../permissions/require-permission.decorator';
+
 
 @ApiTags('clubs')
 @Controller('clubs')
@@ -111,6 +114,30 @@ export class ClubController {
     );
   }
 
+  /**
+   * ✅ Lote 4.H.1 — Reemplaza al antiguo `updateMemberRole` (que queda como
+   * legacy hasta el 4.K). Acepta múltiples roles a la vez y usa el modelo
+   * nuevo (`ClubMemberRole`). Sincroniza `ClubMember.roleId` (legacy) para
+   * no romper el resto del código durante la transición.
+   *
+   * `MEMBER` es un rol válido y asignable, como cualquier otro.
+   */
+  @Put(':clubId/members/:memberId/roles')
+  @RequirePermission('member', 'edit', { clubIdFrom: { param: 'clubId' } })
+  updateMemberRoles(
+    @Request() req,
+    @Param('clubId') clubId: string,
+    @Param('memberId') memberId: string,
+    @Body() dto: UpdateMemberRolesDto,
+  ) {
+    return this.clubService.updateMemberRoles(
+      req.user.id,
+      clubId,
+      memberId,
+      dto.roles,
+    );
+  }
+
   @Delete(':clubId/members/:memberId')
   @RequirePermission('member', 'delete', { clubIdFrom: { param: 'clubId' } })
   removeMember(
@@ -184,16 +211,13 @@ export class ClubController {
       teamId,
     );
   }
-
-  @Get(':clubId/players')
+ @Get(':clubId/players')
   @ApiOperation({ summary: 'Listar todos los jugadores del club' })
   @ApiResponse({ status: 200, description: 'Lista de jugadores' })
   @ApiResponse({ status: 403, description: 'Sin permisos' })
-  @RequirePermission('member', 'view', { clubIdFrom: { param: 'clubId' } })
-  findClubPlayers(@Request() req, @Param('clubId') clubId: string) {
+   findClubPlayers(@Request() req, @Param('clubId') clubId: string) {
     return this.clubService.findClubPlayers(req.user.id, clubId);
   }
-
   @Post(':id/upload-logo')
   @ApiOperation({ summary: 'Subir logo del club (base64)' })
   @RequirePermission('club_branding', 'edit', { clubIdFrom: { param: 'id' } })
@@ -231,5 +255,16 @@ export class ClubController {
     @Body() dto: UpdatePaymentRemindersDto,
   ) {
     return this.clubService.updatePaymentReminders(req.user.id, id, dto.enabled);
+  }
+
+
+    @Post(':clubId/members')
+  @RequirePermission('member', 'edit', { clubIdFrom: { param: 'clubId' } })
+  createMemberWithRoles(
+    @Request() req,
+    @Param('clubId') clubId: string,
+    @Body() dto: InviteMemberDto,
+  ) {
+    return this.clubService.createMemberWithRoles(req.user.id, clubId, dto)
   }
 }

@@ -37,7 +37,7 @@ async function main() {
       GROUP BY role
       ORDER BY role
     `
-    console.log(`\n2) Distribución TeamMembership.role:`)
+    
     dist.forEach((r) =>
       console.log(`     ${r.role ?? 'NULL'}: ${Number(r.count)}`),
     )
@@ -48,7 +48,7 @@ async function main() {
     SELECT COUNT(*)::bigint AS count FROM "MembershipRole"
   `
   const mrTotal = Number(mrCount[0].count)
-  console.log(`\n3) Total MembershipRole:            ${mrTotal} (esperado 49)`)
+  
 
   const mrDist = await prisma.$queryRaw<{ role: string; count: bigint }[]>`
     SELECT role, COUNT(*)::bigint AS count
@@ -56,7 +56,7 @@ async function main() {
     GROUP BY role
     ORDER BY role
   `
-  console.log(`   Distribución MembershipRole:`)
+ 
   mrDist.forEach((r) => console.log(`     ${r.role}: ${Number(r.count)}`))
 
   // 5) Memberships sin rol
@@ -67,7 +67,7 @@ async function main() {
     WHERE mr.id IS NULL
   `
   const sinRolN = Number(sinRol[0].count)
-  console.log(`\n4) Memberships SIN rol:             ${sinRolN} ${sinRolN === 0 ? '✅' : '⚠️'}`)
+  
 
   // 6) Comparar role actual vs MembershipRole (si la columna existe)
   if (hasRole) {
@@ -89,10 +89,10 @@ async function main() {
     WHERE tablename = 'TeamMembership' AND indexdef LIKE '%UNIQUE%'
     ORDER BY indexname
   `
-  console.log(`\n6) Índices únicos en TeamMembership:`)
+  
   idx.forEach((i) => console.log(`     ${i.indexname}`))
 
-  console.log('\n═══════════════════════════════════════════')
+  
   process.exit(0)
 }
 

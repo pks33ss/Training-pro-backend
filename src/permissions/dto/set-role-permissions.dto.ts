@@ -1,7 +1,6 @@
 // backend/src/permissions/dto/set-role-permissions.dto.ts
-import { Type } from 'class-transformer'
+
 import {
-  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -9,22 +8,25 @@ import {
   IsString,
   ValidateNested,
 } from 'class-validator'
-import {
-  PERMISSION_ACTIONS,
-  PERMISSION_RESOURCES,
-} from '../permissions.constants'
+import { Type } from 'class-transformer'
+import { PERMISSION_RESOURCES } from '../permissions.constants'
 
 export class RolePermissionInput {
-  @IsIn(PERMISSION_RESOURCES)
+  @IsString()
+  @IsIn(PERMISSION_RESOURCES as unknown as string[])
   resource!: string
 
-  @IsIn(PERMISSION_ACTIONS)
-  action!: string
+  @IsString()
+  @IsIn(['view', 'create', 'edit', 'delete'])
+  action!: 'view' | 'create' | 'edit' | 'delete'
 
-  /** null = club-wide; "team:<id>" = solo ese equipo. */
   @IsOptional()
   @IsString()
   scope?: string | null
+
+  @IsOptional()
+  @IsString()
+  teamId?: string | null
 
   @IsBoolean()
   granted!: boolean
@@ -32,7 +34,6 @@ export class RolePermissionInput {
 
 export class SetRolePermissionsDto {
   @IsArray()
-  @ArrayMaxSize(500)
   @ValidateNested({ each: true })
   @Type(() => RolePermissionInput)
   permissions!: RolePermissionInput[]

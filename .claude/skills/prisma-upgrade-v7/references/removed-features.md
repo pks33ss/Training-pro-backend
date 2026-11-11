@@ -12,7 +12,7 @@ prisma.$use(async (params, next) => {
   const before = Date.now()
   const result = await next(params)
   const after = Date.now()
-  console.log(`Query took ${after - before}ms`)
+ 
   return result
 })
 ```
@@ -28,7 +28,7 @@ const prisma = new PrismaClient({ adapter }).$extends({
         const before = Date.now()
         const result = await query(args)
         const after = Date.now()
-        console.log(`${model}.${operation} took ${after - before}ms`)
+        
         return result
       },
     },
@@ -68,7 +68,7 @@ const prisma = new PrismaClient({ adapter }).$extends({
   query: {
     $allModels: {
       async $allOperations({ operation, model, args, query }) {
-        console.log(`${model}.${operation}`, JSON.stringify(args))
+  
         return query(args)
       },
     },

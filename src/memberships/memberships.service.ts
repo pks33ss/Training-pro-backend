@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException, // ← nuevo
 } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import {
@@ -22,10 +23,15 @@ import {
 } from '../common/access'
 import { resolveTeamRoleId } from '../permissions/resolve-role-id'
 import { normalizeMembershipRolesList } from '../common/serialize'
+import { PermissionsService } from '../permissions/permissions.service'
+import { generateUniqueUsername } from '../user/utils/generate-username'
 
 @Injectable()
 export class MembershipsService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+  private prisma: PrismaService,
+  private permissionsService: PermissionsService,
+) {}
 
   // ============================================
   // MIS MEMBERSHIPS
@@ -59,12 +65,42 @@ export class MembershipsService {
   // ============================================
 
   async findByTeam(userId: string, teamId: string) {
-    if (!(await canViewTeam(this.prisma, userId, teamId))) {
-      throw new ForbiddenException('No tienes acceso a este equipo')
+    // ✅ Buscamos el equipo (necesitamos su clubId)
+    const team = await this.prisma.team.findUnique({
+      where: { id: teamId },
+      select: { id: true, clubId: true },
+    })
+    if (!team) {
+      throw new NotFoundException('Equipo no encontrado')
     }
 
-    const memberships = await this.prisma.teamMembership.findMany({
-      where: { teamId },
+    // ✅ Comprobamos member:view (el servicio recibe el prisma como primer argumento)
+    const canViewMembers = await this.permissionsService.can(
+      this.prisma,
+      userId,
+      'member',
+      'view',
+      { clubId: team.clubId, teamId },
+    )
+    if (!canViewMembers) {
+      throw new ForbiddenException('No tienes permiso para ver los miembros')
+    }
+
+    
+
+    const clubMembers = await this.prisma.clubMember.findMany({
+      where: {
+        clubId: team.clubId,
+        isActive: true,
+        clubMemberRoles: {
+          some: {
+            OR: [
+              { scope: 'ALL' },
+              { scope: 'TEAMS', teamScopes: { some: { teamId } } },
+            ],
+          },
+        },
+      },
       include: {
         user: {
           select: {
@@ -79,13 +115,52 @@ export class MembershipsService {
             bio: true,
           },
         },
-        season: true,
-        roles: { include: { roleRef: { select: { name: true } } } },
+        clubMemberRoles: {
+          where: {
+            OR: [
+              { scope: 'ALL' },
+              { scope: 'TEAMS', teamScopes: { some: { teamId } } },
+            ],
+          },
+          include: {
+            roleRef: { select: { id: true, name: true } },
+            teamScopes: {
+              include: { team: { select: { id: true, name: true } } },
+            },
+          },
+        },
       },
-      orderBy: [{ status: 'asc' }, { jerseyNumber: 'asc' }],
     })
 
-    return normalizeMembershipRolesList(memberships)
+    // ✅ Traemos los TeamMembership de estos usuarios en este equipo (para dorsal y posición)
+    const userIds = clubMembers.map((cm) => cm.userId)
+    const memberships = await this.prisma.teamMembership.findMany({
+      where: { userId: { in: userIds }, teamId },
+      select: { userId: true, jerseyNumber: true, position: true, joinedAt: true },
+    })
+    const tmByUserId = new Map(memberships.map((m) => [m.userId, m]))
+
+    return clubMembers.map((cm) => {
+      const roles = cm.clubMemberRoles.map((cmr) => cmr.roleRef.name)
+      const tm = tmByUserId.get(cm.userId)
+
+      return {
+        id: cm.id,                 // ID del ClubMember (lo usa el modal para el PUT)
+        userId: cm.userId,
+        teamId: teamId,
+        clubId: team.clubId,
+        status: 'ACTIVE',
+        joinedAt: tm?.joinedAt ?? cm.joinedAt,
+        jerseyNumber: tm?.jerseyNumber ?? null,
+        position: tm?.position ?? null,
+        roles: roles,
+        role: roles[0] ?? null,
+        user: cm.user,
+        // ✅ Lote 4.H.3 — Incluimos clubMemberRoles completos para el modal
+        clubMemberRoles: cm.clubMemberRoles,
+        isGlobalRole: true,
+      }
+    })
   }
 
   // ============================================
@@ -407,7 +482,8 @@ export class MembershipsService {
     return updated
   }
 
-  // ============================================
+
+// ============================================
   // ACTUALIZAR MEMBERSHIP
   // ============================================
 
@@ -470,33 +546,145 @@ export class MembershipsService {
       },
     })
   }
-
   // ============================================
-  // AÑADIR MIEMBRO EXISTENTE AL EQUIPO (directo)
+  // AÑADIR MIEMBRO AL EQUIPO (existente o ghost)
   // ============================================
 
   async addMember(
     requesterId: string,
     teamId: string,
-    dto: { userId: string; role?: string; jerseyNumber?: number; position?: string },
+    dto: {
+      userId?: string
+      name?: string
+      lastName?: string
+      email?: string
+      phone?: string
+      role?: string
+      jerseyNumber?: number
+      position?: string
+    },
   ) {
-    await assertCanManageMembers(this.prisma, requesterId, teamId)
-
+    // ✅ Guía 9.1: Añadir miembro = member:edit
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
       select: { clubId: true },
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
-    const targetUser = await this.prisma.user.findUnique({
-      where: { id: dto.userId },
-    })
-    if (!targetUser) {
-      throw new NotFoundException('Usuario no encontrado')
+    const canEditMembers = await this.permissionsService.can(
+      this.prisma,
+      requesterId,
+      'member',
+      'edit',
+      { clubId: team.clubId, teamId },
+    )
+    if (!canEditMembers) {
+      throw new ForbiddenException(
+        'No tienes permisos para añadir miembros a este equipo',
+      )
     }
 
+    // ─────────────────────────────────────────
+    // Resolver targetUserId: existente o ghost
+    // ─────────────────────────────────────────
+    let targetUserId: string
+
+    if (dto.userId) {
+      const existingUser = await this.prisma.user.findUnique({
+        where: { id: dto.userId },
+        select: { id: true, deletedAt: true },
+      })
+      if (!existingUser || existingUser.deletedAt) {
+        throw new NotFoundException('Usuario no encontrado')
+      }
+      targetUserId = existingUser.id
+    } else {
+      if (!dto.name || !dto.lastName) {
+        throw new BadRequestException(
+          'Debes indicar userId o (name + lastName) para crear un miembro nuevo',
+        )
+      }
+
+      // Pre-chequeo de email/phone duplicados
+      if (dto.email) {
+        const emailTaken = await this.prisma.user.findUnique({
+          where: { email: dto.email },
+          select: { id: true, deletedAt: true },
+        })
+        if (emailTaken && !emailTaken.deletedAt) {
+          throw new ConflictException({
+            code: 'USER_ALREADY_EXISTS_USE_EMAIL_INVITE',
+            message:
+              'Ya existe un usuario con ese email. Usa la opción "invitar" en lugar de "crear".',
+          })
+        }
+      }
+
+      if (dto.phone) {
+        const phoneTaken = await this.prisma.user.findFirst({
+          where: { phone: dto.phone },
+          select: { id: true, deletedAt: true },
+        })
+        if (phoneTaken && !phoneTaken.deletedAt) {
+          throw new ConflictException({
+            code: 'USER_ALREADY_EXISTS_USE_PHONE_INVITE',
+            message:
+              'Ya existe un usuario con ese teléfono. Usa la opción "invitar" en lugar de "crear".',
+          })
+        }
+      }
+
+      const username = await generateUniqueUsername(
+        this.prisma,
+        dto.name,
+        dto.lastName,
+      )
+
+      let ghost: { id: string }
+      try {
+        ghost = await this.prisma.user.create({
+          data: {
+            email: dto.email || null,
+            name: dto.name,
+            lastName: dto.lastName,
+            phone: dto.phone || null,
+            isGhost: true,
+            username,
+          },
+          select: { id: true },
+        })
+      } catch (err: any) {
+        if (err?.code === 'P2002') {
+          const target = (err.meta?.target as string[] | undefined) ?? []
+          if (target.includes('email')) {
+            throw new ConflictException({
+              code: 'USER_ALREADY_EXISTS_USE_EMAIL_INVITE',
+              message:
+                'Ya existe un usuario con ese email. Usa la opción "invitar" en lugar de "crear".',
+            })
+          }
+          throw new ConflictException({
+            code: 'USER_ALREADY_EXISTS',
+            message: 'Ya existe un usuario con esos datos.',
+          })
+        }
+        throw err
+      }
+
+      targetUserId = ghost.id
+    }
+
+    // ─────────────────────────────────────────
+    // Resolver rol (por defecto PLAYER)
+    // ─────────────────────────────────────────
+    const roleName = dto.role || 'PLAYER'
+    const roleId = await resolveTeamRoleId(this.prisma, team.clubId, roleName)
+
+    // ─────────────────────────────────────────
+    // Upsert de TeamMembership
+    // ─────────────────────────────────────────
     const existing = await this.prisma.teamMembership.findFirst({
-      where: { userId: dto.userId, teamId },
+      where: { userId: targetUserId, teamId },
     })
 
     if (existing) {
@@ -507,23 +695,14 @@ export class MembershipsService {
         throw new BadRequestException('Ya tiene una solicitud pendiente')
       }
 
-      const newRole = dto.role || null
-      let createRoles: { roleId: string }[] | undefined
-      if (newRole) {
-        const roleId = await resolveTeamRoleId(this.prisma, team.clubId, newRole)
-        createRoles = [{ roleId }]
-      }
-
       const membership = await this.prisma.teamMembership.update({
         where: { id: existing.id },
         data: {
           status: 'ACTIVE',
-          ...(createRoles && {
-            roles: {
-              deleteMany: {},
-              create: createRoles,
-            },
-          }),
+          roles: {
+            deleteMany: {},
+            create: [{ roleId }],
+          },
           jerseyNumber: dto.jerseyNumber ?? existing.jerseyNumber,
           position: dto.position ?? existing.position,
           joinedAt: new Date(),
@@ -547,17 +726,14 @@ export class MembershipsService {
         },
       })
 
-      await ensureClubMemberForTeam(this.prisma, dto.userId, teamId)
+      await ensureClubMemberForTeam(this.prisma, targetUserId, teamId)
 
       return membership
     }
 
-    const roleName = dto.role || 'PLAYER'
-    const roleId = await resolveTeamRoleId(this.prisma, team.clubId, roleName)
-
     const membership = await this.prisma.teamMembership.create({
       data: {
-        userId: dto.userId,
+        userId: targetUserId,
         teamId,
         roles: { create: [{ roleId }] },
         status: 'ACTIVE',
@@ -582,7 +758,7 @@ export class MembershipsService {
       },
     })
 
-    await ensureClubMemberForTeam(this.prisma, dto.userId, teamId)
+    await ensureClubMemberForTeam(this.prisma, targetUserId, teamId)
 
     return membership
   }

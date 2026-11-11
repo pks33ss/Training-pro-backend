@@ -13,6 +13,7 @@ import { CreateInvitationDto } from './dto'
 import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member'
 import { assertCanManageMembers } from '../common/access'
 import { resolveTeamRoleId } from '../permissions/resolve-role-id'
+import { assertCanInviteToTeam } from '../common/access'
 
 const INVITATION_EXPIRY_DAYS = 7
 
@@ -26,7 +27,8 @@ export class InvitationsService {
   ) {}
 
   private async verifyCanInvite(userId: string, teamId: string) {
-    await assertCanManageMembers(this.prisma, userId, teamId)
+    // B3: aceptar member:edit || invitation:create (antes team:edit)
+    await assertCanInviteToTeam(this.prisma, userId, teamId)
   }
 
   // ============================================

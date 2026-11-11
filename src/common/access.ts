@@ -125,6 +125,7 @@ export async function getTeamRoles(
     )
 }
 
+
 async function isParentOfTeamMember(
   prisma: PrismaLike,
   userId: string,
@@ -156,12 +157,48 @@ export async function canViewTeam(
   })
   if (!team) return false
 
+  // 1. ADMIN_CLUB siempre puede
   if (await isClubAdmin(prisma, userId, team.clubId)) return true
 
+  // 2. ¿Es miembro del equipo?
   const roles = await getTeamRoles(prisma, userId, teamId)
   if (roles.length > 0) return true
 
+  // 3. ¿Es tutor de alguien del equipo?
   if (await isParentOfTeamMember(prisma, userId, teamId)) return true
+
+  // 4. Buscamos si tiene algún ClubMemberRole (nuevo modelo) que aplique
+  const clubMember = await prisma.clubMember.findUnique({
+    where: { userId_clubId: { userId, clubId: team.clubId } },
+    select: {
+      clubMemberRoles: {
+        where: {
+          OR: [
+            { scope: 'ALL' }, // Permiso para todo el club
+            { scope: 'TEAMS', teamScopes: { some: { teamId } } }, // Permiso específico para ESTE equipo
+          ],
+        },
+        select: {
+          roleRef: {
+            select: {
+              permissions: {
+                where: { resource: 'team', action: 'view', granted: true },
+                select: { id: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  })
+
+  if (clubMember) {
+    // Si alguno de sus roles (que aplican a este equipo) tiene team:view, devolvemos true
+    const hasTeamViewRole = clubMember.clubMemberRoles.some(
+      (cmr) => cmr.roleRef.permissions.length > 0,
+    )
+    if (hasTeamViewRole) return true
+  }
 
   return false
 }
@@ -377,6 +414,68 @@ export async function assertCanManageMembers(
   if (!(await canManageMembers(prisma, userId, teamId))) {
     throw new ForbiddenException(
       'No tienes permisos para gestionar miembros de este equipo',
+    )
+  }
+}
+
+// ─────────────────────────────────────────────
+// INVITACIONES A EQUIPO (B3)
+// ─────────────────────────────────────────────
+//
+// Invitar a un equipo debe aceptar:
+//   - member:edit     (gestión de miembros del equipo)
+//   - invitation:create (permiso "natural" de invitaciones a nivel club)
+//
+// No exigimos team:edit (demasiado estricto para una invitación).
+
+export async function canInviteToTeam(
+  prisma: PrismaLike,
+  userId: string,
+  teamId: string,
+): Promise<boolean> {
+  if (await isSuperAdmin(prisma, userId)) return true
+
+  const team = await prisma.team.findUnique({
+    where: { id: teamId },
+    select: { clubId: true },
+  })
+  if (!team) return false
+
+  if (await isClubAdmin(prisma, userId, team.clubId)) return true
+
+  const canEditMembers = await permissionsService.can(
+    prisma,
+    userId,
+    'member',
+    'edit',
+    { clubId: team.clubId, teamId },
+  )
+  if (canEditMembers) return true
+
+  const canCreateInvitations = await permissionsService.can(
+    prisma,
+    userId,
+    'invitation',
+    'create',
+    { clubId: team.clubId, teamId },
+  )
+  return canCreateInvitations
+}
+
+export async function assertCanInviteToTeam(
+  prisma: PrismaLike,
+  userId: string,
+  teamId: string,
+): Promise<void> {
+  const team = await prisma.team.findUnique({
+    where: { id: teamId },
+    select: { id: true },
+  })
+  if (!team) throw new NotFoundException('Equipo no encontrado')
+
+  if (!(await canInviteToTeam(prisma, userId, teamId))) {
+    throw new ForbiddenException(
+      'No tienes permisos para invitar miembros a este equipo',
     )
   }
 }
@@ -1125,6 +1224,29 @@ export async function canManageLiveStats(
 
   if (await isClubAdmin(prisma, userId, team.clubId)) return true
 
+  // ✅ Consultamos el nuevo sistema de permisos
+  // Permitimos a quien tenga stats:create (que es lo que abrirá el modal)
+  // O stats:edit (por si en el futuro un rol tiene solo edición)
+  const canCreate = await permissionsService.can(
+    prisma,
+    userId,
+    'report',
+    'create',
+    { clubId: team.clubId, teamId },
+  )
+  if (canCreate) return true
+
+  const canEdit = await permissionsService.can(
+    prisma,
+    userId,
+    'report',
+    'edit',
+    { clubId: team.clubId, teamId },
+  )
+  if (canEdit) return true
+
+  // Opcional: si quieres mantener compatibilidad con los roles hardcodeados
+  // por si tienes algún rol antiguo que no haya migrado bien
   const roles = await getTeamRoles(prisma, userId, teamId)
   return roles.some((r) =>
     ['COACH', 'ASSISTANT', 'ADMIN_TEAM'].includes(r),

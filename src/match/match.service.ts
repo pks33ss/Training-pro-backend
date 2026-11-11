@@ -372,7 +372,7 @@ export class MatchService {
         })
         results.push(callup)
       } catch (error) {
-        console.log(`Error con usuario ${targetUserId}:`, error)
+        
       }
     }
 

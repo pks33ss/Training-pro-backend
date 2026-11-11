@@ -22,13 +22,12 @@ const { UserService } = require('./dist/user/user.service');
   const me = await svc.getMe('cmu0cs6dr000258v4y9rz4cvh');
   const json = JSON.stringify(me);
 
-  console.log('Bytes totales:', Buffer.byteLength(json, 'utf8'));
-  console.log('Memberships:', me.memberships.length);
+ 
 
   // ── Desglose de bytes por campo ──
   const bytesOf = (v) => Buffer.byteLength(JSON.stringify(v ?? null), 'utf8');
 
-  console.log('\n=== Bytes por campo del user (escalares) ===');
+
   const scalarKeys = [
     'id', 'email', 'username', 'name', 'lastName', 'phone', 'avatar', 'bio',
     'role', 'isGhost', 'createdAt', 'emailNotificationsEnabled', 'emailOptOut',
@@ -36,28 +35,25 @@ const { UserService } = require('./dist/user/user.service');
     'tacticalBackgroundMode', 'hiddenTabs',
   ];
   for (const k of scalarKeys) {
-    console.log(`user.${k}:`, bytesOf(me[k]));
+    
   }
 
-  console.log('\n=== Bytes por array ===');
-  console.log('memberships:', bytesOf(me.memberships));
-  console.log('tutorRelationships:', bytesOf(me.tutorRelationships));
-  console.log('playerRelationships:', bytesOf(me.playerRelationships));
+
 
   if (me.memberships[0]) {
     const m = me.memberships[0];
-    console.log('\n=== Bytes de memberships[0] ===');
+  
     for (const k of Object.keys(m)) {
-      console.log(`membership.${k}:`, bytesOf(m[k]));
+  
     }
     if (m.team) {
-      console.log('\n=== Bytes de memberships[0].team ===');
+     
       for (const k of Object.keys(m.team)) {
-        console.log(`team.${k}:`, bytesOf(m.team[k]));
+    
       }
     }
     if (m.season) {
-      console.log('membership.season:', bytesOf(m.season));
+
     }
   }
 

@@ -42,6 +42,7 @@ export class TeamService {
     );
 
     const team = await this.prisma.$transaction(async (tx) => {
+      // 1) Crear el equipo
       const newTeam = await tx.team.create({
         data: {
           name: createTeamDto.name,
@@ -58,6 +59,7 @@ export class TeamService {
         },
       });
 
+      // 2) Crear la TeamMembership (modelo antiguo, para compatibilidad)
       await tx.teamMembership.create({
         data: {
           userId,
@@ -68,6 +70,79 @@ export class TeamService {
           },
         },
       });
+
+      // 3) Sincronizar el rol ADMIN_TEAM en el modelo nuevo (ClubMemberRole)
+      let clubMember = await tx.clubMember.findUnique({
+        where: {
+          userId_clubId: {
+            userId,
+            clubId: createTeamDto.clubId,
+          },
+        },
+      });
+
+      if (!clubMember) {
+        const { resolveClubRoleId } = await import('../permissions/resolve-role-id');
+        const defaultClubRoleId = await resolveClubRoleId(
+          tx,
+          createTeamDto.clubId,
+          'MEMBER',
+        );
+        clubMember = await tx.clubMember.create({
+          data: {
+            userId,
+            clubId: createTeamDto.clubId,
+            roleId: defaultClubRoleId,
+            isActive: true,
+          },
+        });
+      }
+
+      // 4) Crear (o actualizar) el ClubMemberRole con scope TEAMS y el teamId del nuevo equipo
+      const adminTeamRoleInClub = await tx.role.findFirst({
+        where: {
+          clubId: createTeamDto.clubId,
+          name: 'ADMIN_TEAM',
+        },
+        select: { id: true },
+      });
+
+      if (adminTeamRoleInClub) {
+        const existingRole = await tx.clubMemberRole.findFirst({
+          where: {
+            clubMemberId: clubMember.id,
+            roleId: adminTeamRoleInClub.id,
+          },
+          include: { teamScopes: true },
+        });
+
+        if (existingRole) {
+          const alreadyHasThisTeam = existingRole.teamScopes.some(
+            (ts) => ts.teamId === newTeam.id,
+          );
+          if (!alreadyHasThisTeam) {
+            await tx.clubMemberRole.update({
+              where: { id: existingRole.id },
+              data: {
+                ...(existingRole.scope === 'TEAMS'
+                  ? { teamScopes: { create: { teamId: newTeam.id } } }
+                  : {}),
+              },
+            });
+          }
+        } else {
+          await tx.clubMemberRole.create({
+            data: {
+              clubMemberId: clubMember.id,
+              roleId: adminTeamRoleInClub.id,
+              scope: 'TEAMS',
+              teamScopes: {
+                create: { teamId: newTeam.id },
+              },
+            },
+          });
+        }
+      }
 
       return newTeam;
     });
@@ -209,6 +284,7 @@ export class TeamService {
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
+    // ✅ Comprobación real de acceso
     const canView = await canViewTeam(this.prisma, userId, teamId)
     if (!canView) {
       throw new ForbiddenException('No tienes acceso a este equipo')
@@ -369,7 +445,7 @@ export class TeamService {
       matchesCount,
       minutes: 0,
       seconds: 0,
-      points: totalOpponentScore, // ← del marcador final manual
+      points: totalOpponentScore,
       rebounds: 0,
       reboundsOff: 0,
       reboundsDef: 0,
@@ -427,5 +503,4 @@ export class TeamService {
       },
     ]
   }
-
 }

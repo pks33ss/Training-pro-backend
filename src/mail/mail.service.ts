@@ -53,10 +53,6 @@ export class MailService implements OnModuleInit {
     );
   }
 
-  /**
-   * Comprueba si una dirección de email es "real" (no ghost).
-   * Los ghosts tienen el sufijo @joinsportapp.local.
-   */
   isRealEmail(email: string | null | undefined): boolean {
     if (!email) return false;
     if (!email.includes('@')) return false;
@@ -205,5 +201,99 @@ export class MailService implements OnModuleInit {
 
     const { subject, html, text } = renderPaymentReminderEmail(data);
     return this.sendViaResend({ to, subject, html, text });
+  }
+
+  // ─────────────────────────────────────────────
+  // WELCOME EMAIL
+  // ─────────────────────────────────────────────
+
+    async sendWelcomeEmail(to: string, name: string): Promise<SendResult> {
+    if (!this.apiKey) {
+      this.logger.warn(
+        `No se envía email de bienvenida a ${to}: Resend no configurado.`,
+      );
+      return { sent: false, reason: 'Resend not configured' };
+    }
+    
+    if (!this.isRealEmail(to)) {
+      this.logger.debug(
+        `No se envía email de bienvenida a ${to}: email no válido (ghost).`,
+      );
+      return { sent: false, reason: 'Invalid or ghost email' };
+    }
+
+    const subject = '¡Bienvenido/a a JoinSport! 🏆 · Welcome to JoinSport!';
+    
+    const html = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #333;">
+        <div style="text-align: center; padding: 20px 0;">
+          <h1 style="color: #00E676; margin: 0;">JoinSport</h1>
+        </div>
+        
+        <!-- ─── VERSIÓN EN ESPAÑOL ─── -->
+        <div style="background-color: #f9f9f9; padding: 30px; border-radius: 8px; text-align: center; margin-bottom: 20px;">
+          <h2 style="color: #1a1a1a;">¡Hola ${name}!</h2>
+          <p style="font-size: 16px; line-height: 1.5; color: #555;">
+            Te damos la bienvenida a <strong>JoinSport</strong>. Estamos encantados de tenerte con nosotros.
+          </p>
+          <p style="font-size: 16px; line-height: 1.5; color: #555;">
+            Nuestra misión es ayudarte a gestionar tu club y tus equipos de la forma más profesional y sencilla posible. Esperamos que la aplicación te sea de gran utilidad.
+          </p>
+          
+          <div style="margin: 30px 0;">
+            <p style="font-size: 16px; color: #555; margin-bottom: 10px;">
+              Síguenos en nuestras redes sociales para estar al día de todas las novedades, mejoras y nuevas funciones que iremos integrando:
+            </p>
+            <a href="https://instagram.com/joinsportapp" style="display: inline-block; margin: 5px; padding: 10px 20px; background-color: #E1306C; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">Instagram</a>
+            <a href="https://x.com/joinsportapp" style="display: inline-block; margin: 5px; padding: 10px 20px; background-color: #000000; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">X (Twitter)</a>
+          </div>
+          
+          <p style="font-size: 14px; color: #888; margin-top: 30px;">
+            Si tienes cualquier duda o necesitas ayuda, no dudes en escribirnos a 
+            <a href="mailto:support@joinsportapp.com" style="color: #00E676;">support@joinsportapp.com</a>.
+          </p>
+        </div>
+
+        <!-- SEPARADOR -->
+        <hr style="border: none; border-top: 2px dashed #ccc; margin: 30px 0;" />
+
+        <!-- ─── VERSIÓN EN INGLÉS ─── -->
+        <div style="background-color: #f9f9f9; padding: 30px; border-radius: 8px; text-align: center;">
+          <h2 style="color: #1a1a1a;">Hello ${name}!</h2>
+          <p style="font-size: 16px; line-height: 1.5; color: #555;">
+            Welcome to <strong>JoinSport</strong>. We are thrilled to have you with us.
+          </p>
+          <p style="font-size: 16px; line-height: 1.5; color: #555;">
+            Our mission is to help you manage your club and teams in the most professional and simple way possible. We hope you find the app very useful.
+          </p>
+          
+          <div style="margin: 30px 0;">
+            <p style="font-size: 16px; color: #555; margin-bottom: 10px;">
+              Follow us on our social media to stay up to date with all the news, improvements, and new features we will be rolling out:
+            </p>
+            <a href="https://instagram.com/joinsportapp" style="display: inline-block; margin: 5px; padding: 10px 20px; background-color: #E1306C; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">Instagram</a>
+            <a href="https://x.com/joinsportapp" style="display: inline-block; margin: 5px; padding: 10px 20px; background-color: #000000; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">X (Twitter)</a>
+          </div>
+          
+          <p style="font-size: 14px; color: #888; margin-top: 30px;">
+            If you have any questions or need help, don't hesitate to write to us at 
+            <a href="mailto:support@joinsportapp.com" style="color: #00E676;">support@joinsportapp.com</a>.
+          </p>
+        </div>
+        
+        <div style="text-align: center; padding: 20px; font-size: 12px; color: #aaa;">
+          <p>© ${new Date().getFullYear()} JoinSport. Todos los derechos reservados / All rights reserved.</p>
+        </div>
+      </div>
+    `;
+
+    const text = `¡Hola ${name}!\n\nTe damos la bienvenida a JoinSport. Estamos encantados de tenerte con nosotros.\n\nNuestra misión es ayudarte a gestionar tu club y tus equipos de la forma más profesional y sencilla posible.\n\nSíguenos en nuestras redes sociales:\n- Instagram: https://instagram.com/joinsportapp\n- X (Twitter): https://x.com/joinsportapp\n\nSi tienes cualquier duda, escríbenos a support@joinsportapp.com.\n\n-----------------------------------\n\nHello ${name}!\n\nWelcome to JoinSport. We are thrilled to have you with us.\n\nOur mission is to help you manage your club and teams in the most professional and simple way possible.\n\nFollow us on our social media:\n- Instagram: https://instagram.com/joinsportapp\n- X (Twitter): https://x.com/joinsportapp\n\nIf you have any questions, write to us at support@joinsportapp.com.\n\n© ${new Date().getFullYear()} JoinSport. All rights reserved.`;
+
+    return this.sendViaResend({
+      to,
+      subject,
+      html,
+      text,
+    });
   }
 }

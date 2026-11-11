@@ -36,32 +36,139 @@ export class UserService {
     private cloudinaryService: CloudinaryService,
   ) {}
 
-  async findAll(includeDeleted = false) {
+  async findAll(options: {
+    search?: string
+    sortBy?: string
+    sortOrder?: 'asc' | 'desc'
+    includeDeleted?: boolean
+  }) {
+    const { search, sortBy = 'name', sortOrder = 'asc', includeDeleted = false } = options
+
+    const where: any = {}
+    if (!includeDeleted) where.deletedAt = null
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } },
+        { email: { contains: search, mode: 'insensitive' } },
+        { username: { contains: search, mode: 'insensitive' } },
+      ]
+    }
+
+    let orderBy: any = { name: sortOrder }
+    if (sortBy === 'email') orderBy = { email: sortOrder }
+    if (sortBy === 'createdAt') orderBy = { createdAt: sortOrder }
+    if (sortBy === 'lastName') orderBy = { lastName: sortOrder }
+
     return this.prisma.user.findMany({
-      where: includeDeleted ? {} : { deletedAt: null },
+      where,
       select: {
         id: true,
+        username: true,
         email: true,
         name: true,
         lastName: true,
         role: true,
         createdAt: true,
+        isGhost: true,
         clubs: {
           include: {
-            club: {
-              select: {
-                id: true,
-                name: true,
-              },
-            },
+            club: { select: { id: true, name: true } },
           },
         },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy,
     })
   }
+
+  async getUserMemberships(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        lastName: true,
+        username: true,
+        email: true,
+        isGhost: true,
+        clubs: {
+          include: {
+            club: { select: { id: true, name: true, logo: true } },
+            clubMemberRoles: {
+              include: { roleRef: { select: { name: true } } },
+            },
+          },
+        },
+        memberships: {
+          where: { status: 'ACTIVE' },
+          include: {
+            team: {
+              select: {
+                id: true,
+                name: true,
+                clubId: true,
+                club: { select: { id: true, name: true } },
+              },
+            },
+            roles: { include: { roleRef: { select: { name: true } } } },
+          },
+        },
+      },
+    })
+
+    if (!user) throw new NotFoundException('Usuario no encontrado')
+    return user
+  }
+  async findById(viewerId: string, id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        username: true,
+        name: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        avatar: true,
+        bio: true,
+        role: true,
+        isGhost: true,
+        memberships: {
+          where: { status: 'ACTIVE' },
+          include: {
+            team: {
+              select: {
+                id: true,
+                name: true,
+                sport: true,
+                category: true,
+                club: { select: { id: true, name: true, logo: true } },
+              },
+            },
+          },
+          orderBy: { joinedAt: 'desc' },
+        },
+      },
+    })
+
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado')
+    }
+
+    // Filtrado de datos privados (igual que en findByUsername)
+    const scope = await getViewerPrivateDataScope(this.prisma, viewerId)
+   const canSeePrivate = isUserInPrivateDataScope(scope, viewerId, user.id)
+    const canSeePrivateFull = canSeePrivate
+      ? true
+      : await canViewUserPrivateData(this.prisma, viewerId, user.id)
+
+    return {
+      ...user,
+      email: canSeePrivateFull ? user.email : undefined,
+      phone: canSeePrivateFull ? user.phone : undefined,
+    }
+  }
+
 
   async findOne(id: string) {
     const user = await this.prisma.user.findUnique({

@@ -61,6 +61,7 @@ export class RolesService {
             resource: true,
             action: true,
             scope: true,
+            teamId: true, 
             granted: true,
           },
           orderBy: [{ resource: 'asc' }, { action: 'asc' }],
@@ -105,6 +106,7 @@ export class RolesService {
             resource: true,
             action: true,
             scope: true,
+            teamId: true, 
             granted: true,
           },
           orderBy: [{ resource: 'asc' }, { action: 'asc' }],
@@ -322,86 +324,114 @@ export class RolesService {
   // SET PERMISSIONS (bulk)
   // ============================================
 
-  async setPermissions(
-    actorId: string,
-    clubId: string,
-    roleId: string,
-    dto: SetRolePermissionsDto,
-  ) {
-    await this.assertCanManageRoles(actorId, clubId)
+async setPermissions(
+  actorId: string,
+  clubId: string,
+  roleId: string,
+  dto: SetRolePermissionsDto,
+) {
+  await this.assertCanManageRoles(actorId, clubId)
 
-    const role = await this.prisma.role.findFirst({
-      where: { id: roleId, clubId },
-      include: {
-        permissions: {
-          select: {
-            id: true,
-            resource: true,
-            action: true,
-            scope: true,
-            granted: true,
-          },
+  const role = await this.prisma.role.findFirst({
+    where: { id: roleId, clubId },
+    include: {
+      permissions: {
+        select: {
+          id: true,
+          resource: true,
+          action: true,
+          scope: true,
+          teamId: true,
+          granted: true,
         },
       },
-    })
-    if (!role) throw new NotFoundException('Rol no encontrado')
+    },
+  })
+  if (!role) throw new NotFoundException('Rol no encontrado')
 
-    // Normalizar: quitar duplicados por (resource, action, scope).
-    const keyOf = (p: RolePermissionInput) =>
-      `${p.resource}|${p.action}|${p.scope ?? ''}`
-    const seen = new Map<string, RolePermissionInput>()
-    for (const p of dto.permissions) {
-      const k = keyOf(p)
-      if (seen.has(k)) {
-        throw new BadRequestException(
-          `Permiso duplicado en el payload: ${p.resource}:${p.action} (scope=${
-            p.scope ?? 'null'
-          })`,
-        )
-      }
-      seen.set(k, p)
+  // Normalizar: quitar duplicados por (resource, action, scope, teamId).
+  const keyOf = (p: {
+    resource: string
+    action: string
+    scope?: string | null
+    teamId?: string | null
+  }) => `${p.resource}|${p.action}|${p.scope ?? ''}|${p.teamId ?? ''}`
+
+  const seen = new Map<string, RolePermissionInput>()
+  for (const p of dto.permissions) {
+    const k = keyOf(p)
+    if (seen.has(k)) {
+      throw new BadRequestException(
+        `Permiso duplicado en el payload: ${p.resource}:${p.action} (scope=${
+          p.scope ?? 'null'
+        }, teamId=${p.teamId ?? 'null'})`,
+      )
     }
+    seen.set(k, p)
+  }
 
-    const before = role.permissions.map((p) => ({
+  // ⚠️ Solo borramos los permisos de los teamIds del payload.
+  //    Los permisos de OTROS equipos NO se tocan.
+  const teamIdsInPayload = new Set<string | null>(
+    dto.permissions.map((p) => p.teamId ?? null),
+  )
+  const nonNullTeamIds = Array.from(teamIdsInPayload).filter(
+    (t): t is string => t !== null,
+  )
+  const hasNullTeamId = teamIdsInPayload.has(null)
+
+  const before = role.permissions
+    .filter((p) => teamIdsInPayload.has(p.teamId))
+    .map((p) => ({
       resource: p.resource,
       action: p.action,
       scope: p.scope,
+      teamId: p.teamId,
       granted: p.granted,
     }))
 
-    await this.prisma.$transaction(async (tx) => {
-      // Borrar todo y recrear. Es la operación más simple y consistente.
-      await tx.rolePermission.deleteMany({ where: { roleId } })
-
-      if (dto.permissions.length > 0) {
-        await tx.rolePermission.createMany({
-          data: dto.permissions.map((p) => ({
-            roleId,
-            resource: p.resource,
-            action: p.action,
-            scope: p.scope ?? null,
-            granted: p.granted,
-          })),
-        })
-      }
-
-      await tx.permissionAuditLog.create({
-        data: {
-          clubId,
-          actorId,
-          targetType: 'role_permission',
-          targetId: roleId,
-          action: 'update',
-          before: before as any,
-          after: dto.permissions as any,
-        },
+  await this.prisma.$transaction(async (tx) => {
+    // Borrar SOLO los del teamId que viene en el payload.
+    if (nonNullTeamIds.length > 0) {
+      await tx.rolePermission.deleteMany({
+        where: { roleId, teamId: { in: nonNullTeamIds } },
       })
+    }
+    if (hasNullTeamId) {
+      await tx.rolePermission.deleteMany({
+        where: { roleId, teamId: null },
+      })
+    }
+
+    if (dto.permissions.length > 0) {
+      await tx.rolePermission.createMany({
+        data: dto.permissions.map((p) => ({
+          roleId,
+          resource: p.resource,
+          action: p.action,
+          scope: p.scope ?? null,
+          teamId: p.teamId ?? null,
+          granted: p.granted,
+        })),
+      })
+    }
+
+    await tx.permissionAuditLog.create({
+      data: {
+        clubId,
+        actorId,
+        targetType: 'role_permission',
+        targetId: roleId,
+        action: 'update',
+        before: before as any,
+        after: dto.permissions as any,
+      },
     })
+  })
 
-    this.permissionsService.invalidateAll()
-    return this.getRole(actorId, clubId, roleId)
-  }
-
+  this.permissionsService.invalidateAll()
+  return this.getRole(actorId, clubId, roleId)
+}
   // ============================================
   // PREVIEW DE IMPACTO
   // ============================================

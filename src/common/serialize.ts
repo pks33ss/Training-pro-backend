@@ -17,6 +17,7 @@ function extractRoleName(r: any): string | null {
 /**
  * Normaliza una membership (`TeamMembership`) para que `roles` sea siempre
  * `string[]` de nombres, y `role` el primero.
+ * ✅ Deduplica los roles para evitar keys duplicadas en React.
  */
 export function normalizeMembershipRoles<T extends Record<string, any>>(
   m: T,
@@ -33,10 +34,13 @@ export function normalizeMembershipRoles<T extends Record<string, any>>(
     roleNames.unshift(fallbackRole)
   }
 
+  // ✅ Lote 4.H.2 — Deduplicar roles (evita keys duplicadas en React)
+  const uniqueRoleNames = Array.from(new Set(roleNames))
+
   return {
     ...m,
-    roles: roleNames,
-    role: roleNames[0] ?? null,
+    roles: uniqueRoleNames,
+    role: uniqueRoleNames[0] ?? null,
   }
 }
 

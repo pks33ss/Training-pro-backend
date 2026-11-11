@@ -1,4 +1,17 @@
-import { Controller, Get, Post, Put, Delete, Body, Param, Query, Request, UseGuards, ForbiddenException } from '@nestjs/common'
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Param,
+  Query,
+  Request,
+  UseGuards,
+  ForbiddenException,
+  NotFoundException, // ✅ Añadir
+} from '@nestjs/common'
 import { UserService } from './user.service'
 import { AuthGuard } from '../auth/auth.guard'
 import { CreateGhostDto } from './dto/create-ghost.dto'
@@ -8,6 +21,7 @@ import { UpdateInjuryDto } from './dto/update-injury.dto'
 import { UpdateEmailOptOutDto } from './dto/update-email-optout.dto'
 import { UpdateTacticalBackgroundDto } from './dto/update-tactical-background.dto'
 import { UpdatePreferencesDto } from './dto/update-preferences.dto'
+import { ApiOperation } from '@nestjs/swagger'
 
 @Controller('users')
 @UseGuards(AuthGuard)
@@ -41,7 +55,11 @@ export class UserController {
   getMe(@Request() req) {
     return this.userService.getMe(req.user.id)
   }
-
+  @Get('me/memberships')
+  async getMyMemberships(@Request() req) {
+    // Devuelve las membresías del usuario logueado, sin restricción de SUPER_ADMIN
+    return this.userService.getUserMemberships(req.user.id)
+  }
   @Put('me')
   updateMe(@Request() req, @Body() data: any) {
     return this.userService.updateMe(req.user.id, data)
@@ -84,6 +102,11 @@ export class UserController {
   findByUsername(@Request() req, @Param('username') username: string) {
     return this.userService.findByUsername(req.user.id, username)
   }
+   @Get('by-id/:id')
+  async getById(@Request() req, @Param('id') id: string) {
+    return this.userService.findById(req.user.id, id)
+  }
+
 
   @Get('lookup')
   lookup(
@@ -103,12 +126,31 @@ export class UserController {
   // GESTIÓN DE USUARIOS (solo SUPER_ADMIN)
   // ============================================
 
-  @Get()
-  async findAll(@Request() req, @Query('includeDeleted') includeDeleted?: string) {
+   @Get()
+  async findAll(
+    @Request() req,
+    @Query('search') search?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
+    @Query('includeDeleted') includeDeleted?: string,
+  ) {
     if (req.user.role !== 'SUPER_ADMIN') {
       throw new ForbiddenException('Solo los super administradores pueden ver todos los usuarios')
     }
-    return this.userService.findAll(includeDeleted === 'true')
+    return this.userService.findAll({
+      search,
+      sortBy,
+      sortOrder,
+      includeDeleted: includeDeleted === 'true',
+    })
+  }
+
+  @Get(':id/memberships')
+  async getUserMemberships(@Request() req, @Param('id') id: string) {
+    if (req.user.role !== 'SUPER_ADMIN' && req.user.id !== id) {
+      throw new ForbiddenException('No tienes permisos para ver las membresías de este usuario')
+    }
+    return this.userService.getUserMemberships(id)
   }
 
   // ============================================
@@ -245,4 +287,6 @@ export class UserController {
 
     return this.userService.resetPassword(id, newPassword)
   }
+
+ 
 }

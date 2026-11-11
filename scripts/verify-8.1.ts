@@ -25,16 +25,7 @@ async function main() {
   const okCm = cmNull === 0
   const okMr = mrNull === 0
 
-  console.log('─── Verificación 8.1 ───')
-  console.log(`Clubs: ${clubs}`)
-  console.log(`Roles totales: ${roles} (sistema: ${rolesSystem}, esperados: ${expectedRoles})`)
-  console.log(`RolePermission: ${perms}`)
-  console.log(`ClubMember: ${cmTotal} (sin roleId: ${cmNull})`)
-  console.log(`MembershipRole: ${mrTotal} (sin roleId: ${mrNull})`)
-  console.log('───')
-  console.log(`Roles de sistema OK: ${okRoles ? '✅' : '❌'}`)
-  console.log(`ClubMember.roleId OK: ${okCm ? '✅' : '❌'}`)
-  console.log(`MembershipRole.roleId OK: ${okMr ? '✅' : '❌'}`)
+
 
   const sample = await prisma.club.findFirst({
     include: {
@@ -45,9 +36,9 @@ async function main() {
     },
   })
   if (sample) {
-    console.log(`\nClub de ejemplo: ${sample.name}`)
+
     for (const r of sample.roles) {
-      console.log(`  [${r.scope}] ${r.name} — ${r.permissions.length} permisos (system=${r.isSystem}, default=${r.isDefault})`)
+   
     }
   }
 

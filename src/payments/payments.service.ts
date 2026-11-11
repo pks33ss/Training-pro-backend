@@ -26,6 +26,7 @@ import { ListConceptsDto } from './dto/list-concepts.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { SummaryQueryDto } from './dto/summary-query.dto';
 import { RunRemindersDto } from './dto/run-reminders.dto';
+import { PermissionsService } from '../permissions/permissions.service';
 
 import {
   generateReceiptPdf,
@@ -46,6 +47,7 @@ export class PaymentsService {
     private prisma: PrismaService,
     private cloudinary: CloudinaryService,
     private mail: MailService,
+    private permissionsService: PermissionsService,
   ) {}
 
   // ─────────────────────────────────────────────
@@ -69,7 +71,7 @@ return 'PENDING';
   // CONCEPTOS — CRUD
   // ─────────────────────────────────────────────
 
-  async createConcept(userId: string, dto: CreateConceptDto) {
+   async createConcept(userId: string, dto: CreateConceptDto) {
     const club = await this.prisma.club.findUnique({
       where: { id: dto.clubId },
       select: { id: true },
@@ -87,17 +89,26 @@ return 'PENDING';
       }
     }
 
-    await assertCanManagePaymentConcept(this.prisma, userId, {
-      clubId: dto.clubId,
-      teamId: dto.teamId ?? null,
-    });
+    // ✅ Comprobamos payment:create usando el servicio de permisos
+    const canCreate = await this.permissionsService.can(
+      this.prisma,
+      userId,
+      'payment',
+      'create',
+      { clubId: dto.clubId, teamId: dto.teamId ?? null },
+    );
+
+    if (!canCreate) {
+      throw new ForbiddenException(
+        'No tienes permisos para crear conceptos de pago',
+      );
+    }
 
     const assignmentMode =
       dto.assignmentMode ?? (dto.teamId ? 'ALL_TEAM' : 'NONE');
     if (assignmentMode === 'ALL_TEAM' && !dto.teamId) {
       throw new BadRequestException('assignmentMode ALL_TEAM requiere teamId');
     }
-
     const created = await this.prisma.$transaction(async (tx) => {
       const concept = await tx.paymentConcept.create({
         data: {

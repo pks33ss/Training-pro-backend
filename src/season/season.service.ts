@@ -1,86 +1,148 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common'
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import { PermissionsService } from '../permissions/permissions.service'
+import type { PermissionAction } from '../permissions/permissions.constants'
 
 @Injectable()
 export class SeasonService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private permissions: PermissionsService,
+  ) {}
 
   // ============================================
-  // HELPERS
+  // HELPERS (AHORA USAN `season`)
   // ============================================
 
-  private async verifyTeamAccess(userId: string, teamId: string) {
+  private async assertSeasonForTeam(
+    userId: string,
+    teamId: string,
+    action: PermissionAction,
+    message?: string,
+  ): Promise<void> {
     const team = await this.prisma.team.findUnique({
       where: { id: teamId },
-      include: { club: true },
+      select: { clubId: true },
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    if (user?.role === 'SUPER_ADMIN') return team
-
-    // 1) Admin del club (acceso global al club)
-    const clubAdmin = await this.prisma.clubMember.findFirst({
-      where: {
-        userId,
+    await this.permissions.assert(
+      this.prisma,
+      userId,
+      'season', // ✅ CAMBIADO
+      action,
+      {
         clubId: team.clubId,
-        isActive: true,
-        roleRef: { name: 'ADMIN_CLUB' },
-      },
-    })
-    if (clubAdmin) return team
-
-    // 2) ClubMember cualquiera (coach, assistant) — compatibilidad
-    const clubMember = await this.prisma.clubMember.findFirst({
-      where: { userId, clubId: team.clubId, isActive: true },
-    })
-    if (clubMember) return team
-
-    // 3) TeamMembership activa
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: {
-        userId,
         teamId,
-        status: 'ACTIVE',
+        message: message ?? `No tienes permiso para ${action} en planificación`,
       },
-    })
-    if (membership) return team
-
-    throw new ForbiddenException('No tienes acceso a este equipo')
+    )
   }
 
-  private async canManage(userId: string, teamId: string) {
-    const team = await this.prisma.team.findUnique({ where: { id: teamId } })
-    if (!team) throw new NotFoundException('Equipo no encontrado')
+  private async assertSeasonForSeason(
+    userId: string,
+    seasonId: string,
+    action: PermissionAction,
+    message?: string,
+  ): Promise<{ teamId: string; clubId: string }> {
+    const season = await this.prisma.season.findUnique({
+      where: { id: seasonId },
+      select: { teamId: true, team: { select: { clubId: true } } },
+    })
+    if (!season) throw new NotFoundException('Temporada no encontrada')
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } })
-    if (user?.role === 'SUPER_ADMIN') return true
+    const clubId = season.team.clubId
+    await this.permissions.assert(
+      this.prisma,
+      userId,
+      'season', // ✅ CAMBIADO
+      action,
+      {
+        clubId,
+        teamId: season.teamId,
+        message: message ?? `No tienes permiso para ${action} en planificación`,
+      },
+    )
+    return { teamId: season.teamId, clubId }
+  }
 
-    // 1) ADMIN_CLUB del club
-    const adminClub = await this.prisma.clubMember.findFirst({
-      where: {
-        userId,
-        clubId: team.clubId,
-        isActive: true,
-        roleRef: { name: 'ADMIN_CLUB' },
+  private async assertSeasonForBlock(
+    userId: string,
+    blockId: string,
+    action: PermissionAction,
+    message?: string,
+  ): Promise<{ seasonId: string; teamId: string; clubId: string }> {
+    const block = await this.prisma.seasonBlock.findUnique({
+      where: { id: blockId },
+      select: {
+        seasonId: true,
+        season: {
+          select: { teamId: true, team: { select: { clubId: true } } },
+        },
       },
     })
-    if (adminClub) return true
+    if (!block) throw new NotFoundException('Bloque no encontrado')
 
-    // 2) TeamMembership con rol de gestión
-    const membership = await this.prisma.teamMembership.findFirst({
-      where: {
-        userId,
+    const teamId = block.season.teamId
+    const clubId = block.season.team.clubId
+
+    await this.permissions.assert(
+      this.prisma,
+      userId,
+      'season', // ✅ CAMBIADO
+      action,
+      {
+        clubId,
         teamId,
-        status: 'ACTIVE',
-        roles: {
-          some: {
-            roleRef: { name: { in: ['COACH', 'ASSISTANT', 'ADMIN_TEAM'] } },
+        message: message ?? `No tienes permiso para ${action} en planificación`,
+      },
+    )
+    return { seasonId: block.seasonId, teamId, clubId }
+  }
+
+  private async assertSeasonForSection(
+    userId: string,
+    sectionId: string,
+    action: PermissionAction,
+    message?: string,
+  ): Promise<{
+    blockId: string
+    seasonId: string
+    teamId: string
+    clubId: string
+  }> {
+    const section = await this.prisma.seasonSection.findUnique({
+      where: { id: sectionId },
+      select: {
+        blockId: true,
+        block: {
+          select: {
+            seasonId: true,
+            season: {
+              select: { teamId: true, team: { select: { clubId: true } } },
+            },
           },
         },
       },
     })
-    return !!membership
+    if (!section) throw new NotFoundException('Sección no encontrada')
+
+    const seasonId = section.block.seasonId
+    const teamId = section.block.season.teamId
+    const clubId = section.block.season.team.clubId
+
+    await this.permissions.assert(
+      this.prisma,
+      userId,
+      'season', // ✅ CAMBIADO
+      action,
+      {
+        clubId,
+        teamId,
+        message: message ?? `No tienes permiso para ${action} en planificación`,
+      },
+    )
+    return { blockId: section.blockId, seasonId, teamId, clubId }
   }
 
   // ============================================
@@ -88,13 +150,10 @@ export class SeasonService {
   // ============================================
 
   async findAllByTeam(userId: string, teamId: string) {
-    await this.verifyTeamAccess(userId, teamId)
-
+    await this.assertSeasonForTeam(userId, teamId, 'view')
     return this.prisma.season.findMany({
       where: { teamId },
-      include: {
-        _count: { select: { blocks: true } },
-      },
+      include: { _count: { select: { blocks: true } } },
       orderBy: [{ startDate: 'desc' }, { createdAt: 'desc' }],
     })
   }
@@ -107,11 +166,7 @@ export class SeasonService {
     endDate?: string
     color?: string
   }) {
-    await this.verifyTeamAccess(userId, data.teamId)
-    if (!(await this.canManage(userId, data.teamId))) {
-      throw new ForbiddenException('No tienes permiso para crear temporadas')
-    }
-
+    await this.assertSeasonForTeam(userId, data.teamId, 'create')
     return this.prisma.season.create({
       data: {
         teamId: data.teamId,
@@ -127,32 +182,36 @@ export class SeasonService {
   async findOne(userId: string, seasonId: string) {
     const season = await this.prisma.season.findUnique({
       where: { id: seasonId },
-      include: {
-        team: {
-          include: { club: true },
-        },
-      },
+      include: { team: { include: { club: true } } },
     })
     if (!season) throw new NotFoundException('Temporada no encontrada')
 
-    await this.verifyTeamAccess(userId, season.teamId)
-    const canManage = await this.canManage(userId, season.teamId)
+    const clubId = season.team.clubId
+    const teamId = season.teamId
+
+    await this.permissions.assert(
+      this.prisma,
+      userId,
+      'season', // ✅ CAMBIADO
+      'view',
+      { clubId, teamId, message: 'No tienes permiso para ver esta temporada' },
+    )
+
+    const canManage = await this.permissions.can(
+      this.prisma,
+      userId,
+      'season', // ✅ CAMBIADO
+      'edit',
+      { clubId, teamId },
+    )
 
     const blocks = await this.prisma.seasonBlock.findMany({
       where: { seasonId },
-      include: {
-        sections: {
-          orderBy: { order: 'asc' },
-        },
-      },
+      include: { sections: { orderBy: { order: 'asc' } } },
       orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
     })
 
-    return {
-      ...season,
-      canManage,
-      blocks,
-    }
+    return { ...season, canManage, blocks }
   }
 
   async update(userId: string, seasonId: string, data: {
@@ -162,21 +221,12 @@ export class SeasonService {
     endDate?: string | null
     color?: string | null
   }) {
-    const season = await this.prisma.season.findUnique({ where: { id: seasonId } })
-    if (!season) throw new NotFoundException('Temporada no encontrada')
-
-    await this.verifyTeamAccess(userId, season.teamId)
-    if (!(await this.canManage(userId, season.teamId))) {
-      throw new ForbiddenException('No tienes permiso para editar esta temporada')
-    }
+    await this.assertSeasonForSeason(userId, seasonId, 'edit',
+      'No tienes permiso para editar esta temporada')
 
     const updateData: any = { ...data }
-    if (data.startDate !== undefined) {
-      updateData.startDate = data.startDate ? new Date(data.startDate) : null
-    }
-    if (data.endDate !== undefined) {
-      updateData.endDate = data.endDate ? new Date(data.endDate) : null
-    }
+    if (data.startDate !== undefined) updateData.startDate = data.startDate ? new Date(data.startDate) : null
+    if (data.endDate !== undefined) updateData.endDate = data.endDate ? new Date(data.endDate) : null
 
     return this.prisma.season.update({
       where: { id: seasonId },
@@ -185,14 +235,8 @@ export class SeasonService {
   }
 
   async remove(userId: string, seasonId: string) {
-    const season = await this.prisma.season.findUnique({ where: { id: seasonId } })
-    if (!season) throw new NotFoundException('Temporada no encontrada')
-
-    await this.verifyTeamAccess(userId, season.teamId)
-    if (!(await this.canManage(userId, season.teamId))) {
-      throw new ForbiddenException('No tienes permiso para eliminar esta temporada')
-    }
-
+    await this.assertSeasonForSeason(userId, seasonId, 'delete',
+      'No tienes permiso para eliminar esta temporada')
     return this.prisma.season.delete({ where: { id: seasonId } })
   }
 
@@ -208,21 +252,12 @@ export class SeasonService {
     startDate?: string
     endDate?: string
   }) {
-    const season = await this.prisma.season.findUnique({ where: { id: seasonId } })
-    if (!season) throw new NotFoundException('Temporada no encontrada')
-
-    await this.verifyTeamAccess(userId, season.teamId)
-    if (!(await this.canManage(userId, season.teamId))) {
-      throw new ForbiddenException('No tienes permiso para crear bloques')
-    }
+    await this.assertSeasonForSeason(userId, seasonId, 'create',
+      'No tienes permiso para crear bloques')
 
     if (data.parentId) {
-      const parent = await this.prisma.seasonBlock.findUnique({
-        where: { id: data.parentId },
-      })
-      if (!parent || parent.seasonId !== seasonId) {
-        throw new BadRequestException('El bloque padre no es válido')
-      }
+      const parent = await this.prisma.seasonBlock.findUnique({ where: { id: data.parentId } })
+      if (!parent || parent.seasonId !== seasonId) throw new BadRequestException('El bloque padre no es válido')
     }
 
     const siblings = await this.prisma.seasonBlock.findMany({
@@ -254,24 +289,12 @@ export class SeasonService {
     startDate?: string | null
     endDate?: string | null
   }) {
-    const block = await this.prisma.seasonBlock.findUnique({
-      where: { id: blockId },
-      include: { season: true },
-    })
-    if (!block) throw new NotFoundException('Bloque no encontrado')
-
-    await this.verifyTeamAccess(userId, block.season.teamId)
-    if (!(await this.canManage(userId, block.season.teamId))) {
-      throw new ForbiddenException('No tienes permiso para editar este bloque')
-    }
+    await this.assertSeasonForBlock(userId, blockId, 'edit',
+      'No tienes permiso para editar este bloque')
 
     const updateData: any = { ...data }
-    if (data.startDate !== undefined) {
-      updateData.startDate = data.startDate ? new Date(data.startDate) : null
-    }
-    if (data.endDate !== undefined) {
-      updateData.endDate = data.endDate ? new Date(data.endDate) : null
-    }
+    if (data.startDate !== undefined) updateData.startDate = data.startDate ? new Date(data.startDate) : null
+    if (data.endDate !== undefined) updateData.endDate = data.endDate ? new Date(data.endDate) : null
 
     return this.prisma.seasonBlock.update({
       where: { id: blockId },
@@ -281,28 +304,18 @@ export class SeasonService {
   }
 
   async removeBlock(userId: string, blockId: string) {
-    const block = await this.prisma.seasonBlock.findUnique({
-      where: { id: blockId },
-      include: { season: true },
-    })
-    if (!block) throw new NotFoundException('Bloque no encontrado')
-
-    await this.verifyTeamAccess(userId, block.season.teamId)
-    if (!(await this.canManage(userId, block.season.teamId))) {
-      throw new ForbiddenException('No tienes permiso para eliminar este bloque')
-    }
-
+    await this.assertSeasonForBlock(userId, blockId, 'delete',
+      'No tienes permiso para eliminar este bloque')
     return this.prisma.seasonBlock.delete({ where: { id: blockId } })
   }
 
-  async reorderBlocks(userId: string, seasonId: string, blocks: { id: string; order: number; parentId: string | null }[]) {
-    const season = await this.prisma.season.findUnique({ where: { id: seasonId } })
-    if (!season) throw new NotFoundException('Temporada no encontrada')
-
-    await this.verifyTeamAccess(userId, season.teamId)
-    if (!(await this.canManage(userId, season.teamId))) {
-      throw new ForbiddenException('No tienes permiso para reordenar')
-    }
+  async reorderBlocks(
+    userId: string,
+    seasonId: string,
+    blocks: { id: string; order: number; parentId: string | null }[],
+  ) {
+    await this.assertSeasonForSeason(userId, seasonId, 'edit',
+      'No tienes permiso para reordenar bloques')
 
     await this.prisma.$transaction(
       blocks.map((b) =>
@@ -312,7 +325,6 @@ export class SeasonService {
         }),
       ),
     )
-
     return { ok: true }
   }
 
@@ -327,16 +339,8 @@ export class SeasonService {
     startDate?: string
     endDate?: string
   }) {
-    const block = await this.prisma.seasonBlock.findUnique({
-      where: { id: blockId },
-      include: { season: true },
-    })
-    if (!block) throw new NotFoundException('Bloque no encontrado')
-
-    await this.verifyTeamAccess(userId, block.season.teamId)
-    if (!(await this.canManage(userId, block.season.teamId))) {
-      throw new ForbiddenException('No tienes permiso para crear secciones')
-    }
+    await this.assertSeasonForBlock(userId, blockId, 'create',
+      'No tienes permiso para crear secciones')
 
     const siblings = await this.prisma.seasonSection.findMany({
       where: { blockId },
@@ -365,24 +369,12 @@ export class SeasonService {
     startDate?: string | null
     endDate?: string | null
   }) {
-    const section = await this.prisma.seasonSection.findUnique({
-      where: { id: sectionId },
-      include: { block: { include: { season: true } } },
-    })
-    if (!section) throw new NotFoundException('Sección no encontrada')
-
-    await this.verifyTeamAccess(userId, section.block.season.teamId)
-    if (!(await this.canManage(userId, section.block.season.teamId))) {
-      throw new ForbiddenException('No tienes permiso para editar esta sección')
-    }
+    await this.assertSeasonForSection(userId, sectionId, 'edit',
+      'No tienes permiso para editar esta sección')
 
     const updateData: any = { ...data }
-    if (data.startDate !== undefined) {
-      updateData.startDate = data.startDate ? new Date(data.startDate) : null
-    }
-    if (data.endDate !== undefined) {
-      updateData.endDate = data.endDate ? new Date(data.endDate) : null
-    }
+    if (data.startDate !== undefined) updateData.startDate = data.startDate ? new Date(data.startDate) : null
+    if (data.endDate !== undefined) updateData.endDate = data.endDate ? new Date(data.endDate) : null
 
     return this.prisma.seasonSection.update({
       where: { id: sectionId },
@@ -391,31 +383,18 @@ export class SeasonService {
   }
 
   async removeSection(userId: string, sectionId: string) {
-    const section = await this.prisma.seasonSection.findUnique({
-      where: { id: sectionId },
-      include: { block: { include: { season: true } } },
-    })
-    if (!section) throw new NotFoundException('Sección no encontrada')
-
-    await this.verifyTeamAccess(userId, section.block.season.teamId)
-    if (!(await this.canManage(userId, section.block.season.teamId))) {
-      throw new ForbiddenException('No tienes permiso para eliminar esta sección')
-    }
-
+    await this.assertSeasonForSection(userId, sectionId, 'delete',
+      'No tienes permiso para eliminar esta sección')
     return this.prisma.seasonSection.delete({ where: { id: sectionId } })
   }
 
-  async reorderSections(userId: string, blockId: string, sections: { id: string; order: number }[]) {
-    const block = await this.prisma.seasonBlock.findUnique({
-      where: { id: blockId },
-      include: { season: true },
-    })
-    if (!block) throw new NotFoundException('Bloque no encontrado')
-
-    await this.verifyTeamAccess(userId, block.season.teamId)
-    if (!(await this.canManage(userId, block.season.teamId))) {
-      throw new ForbiddenException('No tienes permiso para reordenar')
-    }
+  async reorderSections(
+    userId: string,
+    blockId: string,
+    sections: { id: string; order: number }[],
+  ) {
+    await this.assertSeasonForBlock(userId, blockId, 'edit',
+      'No tienes permiso para reordenar secciones')
 
     await this.prisma.$transaction(
       sections.map((s) =>
@@ -425,7 +404,6 @@ export class SeasonService {
         }),
       ),
     )
-
     return { ok: true }
   }
 }

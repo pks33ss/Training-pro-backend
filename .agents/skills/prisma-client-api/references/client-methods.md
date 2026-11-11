@@ -24,7 +24,7 @@ Usually not needed - Prisma connects automatically on first query. Use for:
 async function main() {
   try {
     await prisma.$connect()
-    console.log('Database connected')
+    
   } catch (e) {
     console.error('Failed to connect:', e)
     process.exit(1)
@@ -75,9 +75,7 @@ const prisma = new PrismaClient({
 })
 
 prisma.$on('query', (e) => {
-  console.log('Query:', e.query)
-  console.log('Params:', e.params)
-  console.log('Duration:', e.duration, 'ms')
+
 })
 ```
 
@@ -163,7 +161,7 @@ const prisma = new PrismaClient({ adapter }).$extends({
 })
 
 const user = await prisma.user.findFirst()
-console.log(user.fullName) // Computed field
+
 ```
 
 ### Chain extensions

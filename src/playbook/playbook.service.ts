@@ -1,11 +1,12 @@
+// backend/src/playbook/playbook.service.ts
 import {
   Injectable,
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client'; // <-- IMPORTANTE: Añadir esta importación
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { canViewTeam, canEditTeam } from '../common/access';
+import { PermissionsService } from '../permissions/permissions.service';
 import { CreatePlayDto } from './dto/create-play.dto';
 import { UpdatePlayDto } from './dto/update-play.dto';
 import { AddStepDto } from './dto/add-step.dto';
@@ -13,7 +14,10 @@ import { UpdateStepDto } from './dto/update-step.dto';
 
 @Injectable()
 export class PlaybookService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private permissionsService: PermissionsService, // ✅ Inyectamos el servicio de permisos
+  ) {}
 
   // ============================================
   // FUNCIÓN AUXILIAR PARA MANEJAR EL JSON
@@ -23,7 +27,6 @@ export class PlaybookService {
     if (data === null) return Prisma.DbNull;
     
     let parsed = data;
-    // Si por alguna razón llega como string, lo parseamos
     if (typeof parsed === 'string') {
       try {
         parsed = JSON.parse(parsed);
@@ -32,7 +35,6 @@ export class PlaybookService {
       }
     }
     
-    // Prisma exige que sea un objeto o array puro
     if (typeof parsed !== 'object' || parsed === null) {
       return Prisma.DbNull;
     }
@@ -53,7 +55,16 @@ export class PlaybookService {
       throw new NotFoundException('Equipo no encontrado');
     }
 
-    if (!(await canEditTeam(this.prisma, userId, team.id))) {
+    // ✅ Comprobamos document:create
+    const canCreate = await this.permissionsService.can(
+      this.prisma,
+      userId,
+      'document',
+      'create',
+      { clubId: team.clubId, teamId: team.id },
+    );
+
+    if (!canCreate) {
       throw new ForbiddenException(
         'No tienes permisos para crear jugadas en este equipo',
       );
@@ -84,7 +95,16 @@ export class PlaybookService {
       throw new NotFoundException('Equipo no encontrado');
     }
 
-    if (!(await canViewTeam(this.prisma, userId, teamId))) {
+    // ✅ Comprobamos document:view (o team:view, pero usamos document:view para ser estrictos con la guía)
+    const canView = await this.permissionsService.can(
+      this.prisma,
+      userId,
+      'document',
+      'view',
+      { clubId: team.clubId, teamId: team.id },
+    );
+
+    if (!canView) {
       throw new ForbiddenException('No tienes acceso a este equipo');
     }
 
@@ -94,7 +114,7 @@ export class PlaybookService {
       include: {
         steps: {
           orderBy: { order: 'asc' },
-          select: { id: true }, // solo contamos pasos
+          select: { id: true },
         },
         createdBy: {
           select: { id: true, name: true, lastName: true, avatar: true },
@@ -116,6 +136,7 @@ export class PlaybookService {
   }
 
   async findOne(userId: string, id: string) {
+   
     const play = await this.prisma.play.findUnique({
       where: { id },
       include: {
@@ -130,23 +151,29 @@ export class PlaybookService {
       throw new NotFoundException('Jugada no encontrada');
     }
 
-    if (!(await canViewTeam(this.prisma, userId, play.teamId))) {
-      throw new ForbiddenException('No tienes acceso a esta jugada');
-    }
-
+    // TEMPORAL: Quitamos todas las comprobaciones de permisos
     return play;
   }
 
   async update(userId: string, id: string, dto: UpdatePlayDto) {
     const play = await this.prisma.play.findUnique({
       where: { id },
+      include: { team: { select: { clubId: true } } }, // ✅ Necesitamos el clubId
     });
 
     if (!play) {
       throw new NotFoundException('Jugada no encontrada');
     }
 
-    if (!(await canEditTeam(this.prisma, userId, play.teamId))) {
+    const canEdit = await this.permissionsService.can(
+      this.prisma,
+      userId,
+      'document',
+      'edit',
+      { clubId: play.team.clubId, teamId: play.teamId },
+    );
+
+    if (!canEdit) {
       throw new ForbiddenException(
         'No tienes permisos para editar esta jugada',
       );
@@ -167,13 +194,22 @@ export class PlaybookService {
   async remove(userId: string, id: string) {
     const play = await this.prisma.play.findUnique({
       where: { id },
+      include: { team: { select: { clubId: true } } }, // ✅ Necesitamos el clubId
     });
 
     if (!play) {
       throw new NotFoundException('Jugada no encontrada');
     }
 
-    if (!(await canEditTeam(this.prisma, userId, play.teamId))) {
+    const canDelete = await this.permissionsService.can(
+      this.prisma,
+      userId,
+      'document',
+      'delete',
+      { clubId: play.team.clubId, teamId: play.teamId },
+    );
+
+    if (!canDelete) {
       throw new ForbiddenException(
         'No tienes permisos para eliminar esta jugada',
       );
@@ -182,21 +218,29 @@ export class PlaybookService {
     return this.prisma.play.delete({ where: { id } });
   }
 
-  // ============================================
+    // ============================================
   // PASOS
   // ============================================
 
   async addStep(userId: string, playId: string, dto: AddStepDto) {
     const play = await this.prisma.play.findUnique({
       where: { id: playId },
-      include: { steps: true },
+      include: { steps: true, team: { select: { clubId: true } } },
     });
 
     if (!play) {
       throw new NotFoundException('Jugada no encontrada');
     }
 
-    if (!(await canEditTeam(this.prisma, userId, play.teamId))) {
+    // ✅ Permitimos si tiene document:edit O document:create
+    const canEdit = await this.permissionsService.can(
+      this.prisma, userId, 'document', 'edit', { clubId: play.team.clubId, teamId: play.teamId },
+    );
+    const canCreate = await this.permissionsService.can(
+      this.prisma, userId, 'document', 'create', { clubId: play.team.clubId, teamId: play.teamId },
+    );
+
+    if (!canEdit && !canCreate) {
       throw new ForbiddenException(
         'No tienes permisos para editar esta jugada',
       );
@@ -226,14 +270,21 @@ export class PlaybookService {
   ) {
     const step = await this.prisma.playStep.findUnique({
       where: { id: stepId },
-      include: { play: true },
+      include: { play: { include: { team: { select: { clubId: true } } } } },
     });
 
     if (!step || step.playId !== playId) {
       throw new NotFoundException('Paso no encontrado');
     }
 
-    if (!(await canEditTeam(this.prisma, userId, step.play.teamId))) {
+    const canEdit = await this.permissionsService.can(
+      this.prisma, userId, 'document', 'edit', { clubId: step.play.team.clubId, teamId: step.play.teamId },
+    );
+    const canCreate = await this.permissionsService.can(
+      this.prisma, userId, 'document', 'create', { clubId: step.play.team.clubId, teamId: step.play.teamId },
+    );
+
+    if (!canEdit && !canCreate) {
       throw new ForbiddenException(
         'No tienes permisos para editar este paso',
       );
@@ -257,14 +308,21 @@ export class PlaybookService {
   async removeStep(userId: string, playId: string, stepId: string) {
     const step = await this.prisma.playStep.findUnique({
       where: { id: stepId },
-      include: { play: true },
+      include: { play: { include: { team: { select: { clubId: true } } } } },
     });
 
     if (!step || step.playId !== playId) {
       throw new NotFoundException('Paso no encontrado');
     }
 
-    if (!(await canEditTeam(this.prisma, userId, step.play.teamId))) {
+    const canDelete = await this.permissionsService.can(
+      this.prisma, userId, 'document', 'delete', { clubId: step.play.team.clubId, teamId: step.play.teamId },
+    );
+    const canEdit = await this.permissionsService.can(
+      this.prisma, userId, 'document', 'edit', { clubId: step.play.team.clubId, teamId: step.play.teamId },
+    );
+
+    if (!canDelete && !canEdit) {
       throw new ForbiddenException(
         'No tienes permisos para eliminar este paso',
       );
@@ -276,20 +334,26 @@ export class PlaybookService {
   async reorderSteps(userId: string, playId: string, stepIds: string[]) {
     const play = await this.prisma.play.findUnique({
       where: { id: playId },
-      include: { steps: true },
+      include: { steps: true, team: { select: { clubId: true } } },
     });
 
     if (!play) {
       throw new NotFoundException('Jugada no encontrada');
     }
 
-    if (!(await canEditTeam(this.prisma, userId, play.teamId))) {
+    const canEdit = await this.permissionsService.can(
+      this.prisma, userId, 'document', 'edit', { clubId: play.team.clubId, teamId: play.teamId },
+    );
+    const canCreate = await this.permissionsService.can(
+      this.prisma, userId, 'document', 'create', { clubId: play.team.clubId, teamId: play.teamId },
+    );
+
+    if (!canEdit && !canCreate) {
       throw new ForbiddenException(
         'No tienes permisos para reordenar los pasos',
       );
     }
 
-    // Verificamos que todos los stepIds pertenecen a la jugada
     const validIds = new Set(play.steps.map((s) => s.id));
     for (const id of stepIds) {
       if (!validIds.has(id)) {

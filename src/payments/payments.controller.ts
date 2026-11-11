@@ -38,7 +38,10 @@ export class PaymentsController {
   // ============================================
 
   @Post('concepts')
-  @RequirePermission('payment', 'create', { clubIdFrom: { body: 'clubId' } })
+  @RequirePermission('payment', 'create', { 
+    teamIdFrom: { body: 'teamId' },
+    clubIdFrom: { body: 'clubId' } // Si el frontend no lo envía, el guard fallará. 
+  })
   createConcept(@Request() req, @Body() dto: CreateConceptDto) {
     return this.paymentsService.createConcept(req.user.id, dto);
   }

@@ -137,7 +137,11 @@ export class AuthService {
         );
       }
     }
-
+ if (user.email) {
+      this.mailService
+        .sendWelcomeEmail(user.email, user.name)
+        .catch((err) => console.error('Error enviando email de bienvenida:', err));
+    }
     // ✅ Notificación admin (no bloquea la respuesta si falla)
     this.mailService
       .sendAdminNotification({
@@ -435,7 +439,11 @@ export class AuthService {
         );
       }
     }
-
+  if (isNewGoogleUser && user.email) {
+      this.mailService
+        .sendWelcomeEmail(user.email, user.name)
+        .catch((err) => console.error('Error enviando email de bienvenida:', err));
+    }
     // ✅ Notificación admin solo si es usuario nuevo
     if (isNewGoogleUser) {
       this.mailService

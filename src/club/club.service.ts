@@ -1,12 +1,18 @@
 // backend/src/club/club.service.ts
 
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateClubDto } from './dto/create-club.dto';
 import { UpdateClubDto } from './dto/update-club.dto';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import { MailService } from '../mail/mail.service';
 import * as bcrypt from 'bcrypt';
+import { generateUniqueUsername } from '../user/utils/generate-username';
 import {
   isSuperAdmin,
   isClubAdmin,
@@ -107,7 +113,6 @@ export class ClubService {
     try {
       club = await this.prisma.$transaction(
         async (tx) => {
-          // 1) Crear el club
           const created = await tx.club.create({
             data: {
               name: data.name,
@@ -119,13 +124,11 @@ export class ClubService {
             },
           });
 
-          // 2) Sembrar roles del sistema
           const { seedSystemRolesForClub } = await import(
             '../permissions/seed-roles'
           );
           await seedSystemRolesForClub(tx, created.id);
 
-          // 3) Resolver rol ADMIN_CLUB (con fallback)
           let adminRoleId: string;
           try {
             adminRoleId = await resolveClubRoleId(
@@ -155,8 +158,7 @@ export class ClubService {
             adminRoleId = fallback.id;
           }
 
-          // 4) Crear el ClubMember
-          await tx.clubMember.create({
+          const clubMember = await tx.clubMember.create({
             data: {
               userId,
               clubId: created.id,
@@ -165,7 +167,14 @@ export class ClubService {
             },
           });
 
-          // 5) Devolver el club con miembros
+          await tx.clubMemberRole.create({
+            data: {
+              clubMemberId: clubMember.id,
+              roleId: adminRoleId,
+              scope: 'ALL',
+            },
+          });
+
           return tx.club.findUniqueOrThrow({
             where: { id: created.id },
             include: {
@@ -180,6 +189,14 @@ export class ClubService {
                     },
                   },
                   roleRef: { select: { id: true, name: true } },
+                  clubMemberRoles: {
+                    include: {
+                      roleRef: { select: { id: true, name: true } },
+                      teamScopes: {
+                        include: { team: { select: { id: true, name: true } } },
+                      },
+                    },
+                  },
                 },
               },
             },
@@ -196,7 +213,6 @@ export class ClubService {
       throw err;
     }
 
-    // Notificación por email (no bloqueante)
     const creator = club.members.find((m) => m.userId === userId)?.user;
     this.mailService
       .sendAdminNotification({
@@ -348,11 +364,7 @@ export class ClubService {
     const canSee = this.buildPrivateDataFilter(userId, scope);
 
     if (!scope.isSuperAdmin) {
-      const isActive = await isActiveClubMember(
-        this.prisma,
-        userId,
-        clubId,
-      );
+      const isActive = await isActiveClubMember(this.prisma, userId, clubId);
       if (!isActive) {
         const hasMembership = await this.prisma.teamMembership.findFirst({
           where: { userId, status: 'ACTIVE', team: { clubId } },
@@ -377,6 +389,14 @@ export class ClubService {
               },
             },
             roleRef: { select: { id: true, name: true } },
+            clubMemberRoles: {
+              include: {
+                roleRef: { select: { id: true, name: true } },
+                teamScopes: {
+                  include: { team: { select: { id: true, name: true } } },
+                },
+              },
+            },
           },
         },
         teams: {
@@ -454,11 +474,7 @@ export class ClubService {
     const canSee = this.buildPrivateDataFilter(userId, scope);
 
     const isSuper = scope.isSuperAdmin;
-    const isActive = await isActiveClubMember(
-      this.prisma,
-      userId,
-      clubId,
-    );
+    const isActive = await isActiveClubMember(this.prisma, userId, clubId);
 
     if (!isActive && !isSuper) {
       throw new ForbiddenException('No tienes acceso a este club');
@@ -477,6 +493,14 @@ export class ClubService {
           },
         },
         roleRef: { select: { id: true, name: true } },
+        clubMemberRoles: {
+          include: {
+            roleRef: { select: { id: true, name: true } },
+            teamScopes: {
+              include: { team: { select: { id: true, name: true } } },
+            },
+          },
+        },
       },
       orderBy: { joinedAt: 'asc' },
     });
@@ -571,6 +595,184 @@ export class ClubService {
           select: { id: true, email: true, name: true, lastName: true },
         },
       },
+    });
+  }
+
+  async updateMemberRoles(
+    actorId: string,
+    clubId: string,
+    memberId: string,
+    roleAssignments: { name: string; scope: 'ALL' | 'TEAMS'; teamIds?: string[] }[],
+  ) {
+    if (!(await isSuperAdmin(this.prisma, actorId))) {
+      if (!(await isClubAdmin(this.prisma, actorId, clubId))) {
+        throw new ForbiddenException(
+          'Solo los administradores del club pueden cambiar roles',
+        );
+      }
+    }
+
+    if (!Array.isArray(roleAssignments) || roleAssignments.length === 0) {
+      throw new BadRequestException('El miembro debe tener al menos un rol');
+    }
+
+    const cleanAssignments = roleAssignments.map((a) => ({
+      name: typeof a.name === 'string' ? a.name.trim() : '',
+      scope: a.scope === 'TEAMS' ? 'TEAMS' : 'ALL',
+      teamIds: Array.isArray(a.teamIds) ? a.teamIds : [],
+    })).filter(a => a.name.length > 0);
+    
+    const cleanNames = Array.from(new Set(cleanAssignments.map(a => a.name)));
+
+    const member = await this.prisma.clubMember.findUnique({
+      where: { id: memberId },
+      select: { id: true, clubId: true, userId: true },
+    });
+    if (!member) {
+      throw new NotFoundException('Miembro no encontrado');
+    }
+    if (member.clubId !== clubId) {
+      throw new ForbiddenException('Este miembro no pertenece a tu club');
+    }
+
+    const roles = await this.prisma.role.findMany({
+      where: { clubId, name: { in: cleanNames } },
+      select: { id: true, name: true, scope: true },
+    });
+    
+    // Validaciones básicas...
+    const foundNames = new Set(roles.map((r) => r.name));
+    const missing = cleanNames.filter((n) => !foundNames.has(n));
+    if (missing.length > 0) {
+      throw new BadRequestException(`Roles no válidos para este club: ${missing.join(', ')}`);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      // 1. Actualizar roles a nivel de club (ClubMemberRole)
+      await tx.clubMemberRole.deleteMany({
+        where: { clubMemberId: memberId },
+      });
+
+      for (const assignment of cleanAssignments) {
+        const roleRef = roles.find((r) => r.name === assignment.name);
+        if (!roleRef) continue;
+        const hasTeams = assignment.teamIds.length > 0;
+        const scope = assignment.scope || (hasTeams ? 'TEAMS' : 'ALL');
+
+        await tx.clubMemberRole.create({
+          data: {
+            clubMemberId: memberId,
+            roleId: roleRef.id,
+            scope: scope,
+            ...(hasTeams
+              ? { teamScopes: { create: assignment.teamIds.map((tId) => ({ teamId: tId })) } }
+              : {}),
+          },
+        });
+      }
+
+      const legacyRole = roles.find(r => r.name === cleanNames[0])!;
+      await tx.clubMember.update({
+        where: { id: memberId },
+        data: { roleId: legacyRole.id },
+      });
+
+      // 2. Sincronizar equipos (TeamMembership)
+      // Leemos los equipos actuales del usuario
+      const currentMemberships = await tx.teamMembership.findMany({
+        where: { userId: member.userId, team: { clubId } },
+        select: { id: true, teamId: true, status: true, roles: { select: { roleId: true } } },
+      });
+
+      // ¿Qué roles de equipo tiene en el payload?
+      const teamRolesInPayload = cleanAssignments.filter(a => {
+        const r = roles.find(x => x.name === a.name);
+        return r && r.scope === 'TEAM';
+      });
+
+      const allTeamsOfClub = await tx.team.findMany({
+        where: { clubId },
+        select: { id: true },
+      });
+      const allTeamIdsOfClub = allTeamsOfClub.map(t => t.id);
+
+      const desiredRolesByTeam = new Map<string, Set<string>>();
+
+      for (const assignment of teamRolesInPayload) {
+        const roleRef = roles.find(r => r.name === assignment.name)!;
+        
+        let targetTeams: string[] = [];
+        
+        if (assignment.scope === 'ALL') {
+          targetTeams = allTeamIdsOfClub;
+        } else if (assignment.teamIds.length > 0) {
+          targetTeams = assignment.teamIds;
+        } else {
+          // Si es scope TEAMS pero no mandaron equipos en el payload,
+          // mantenemos los equipos donde el usuario YA estaba.
+          const currentTeamsForThisUser = currentMemberships
+            .filter(m => m.status === 'ACTIVE')
+            .map(m => m.teamId);
+          targetTeams = currentTeamsForThisUser;
+        }
+
+        for (const tId of targetTeams) {
+          if (!desiredRolesByTeam.has(tId)) desiredRolesByTeam.set(tId, new Set());
+          desiredRolesByTeam.get(tId)!.add(roleRef.id);
+        }
+      }
+
+      // Si desiredRolesByTeam está vacío, significa que no hay roles de equipo (solo roles de club).
+      // En ese caso, NO tocamos las membresías del usuario.
+      if (desiredRolesByTeam.size > 0) {
+        // Desactivar las que ya no estén en la lista
+        for (const m of currentMemberships) {
+          if (!desiredRolesByTeam.has(m.teamId) && m.status === 'ACTIVE') {
+            await tx.teamMembership.update({
+              where: { id: m.id },
+              data: { status: 'LEFT', leftAt: new Date() },
+            });
+          }
+        }
+
+        // Crear o actualizar las que sí están
+        for (const [tId, roleIds] of desiredRolesByTeam.entries()) {
+          const existing = currentMemberships.find(m => m.teamId === tId);
+          if (!existing) {
+            await tx.teamMembership.create({
+              data: {
+                userId: member.userId,
+                teamId: tId,
+                status: 'ACTIVE',
+                roles: { create: Array.from(roleIds).map(id => ({ roleId: id })) },
+              },
+            });
+          } else {
+            await tx.teamMembership.update({
+              where: { id: existing.id },
+              data: {
+                status: 'ACTIVE',
+                leftAt: null,
+                roles: {
+                  deleteMany: {},
+                  create: Array.from(roleIds).map(id => ({ roleId: id })),
+                },
+              },
+            });
+          }
+        }
+      }
+
+      return tx.clubMember.findUniqueOrThrow({
+        where: { id: memberId },
+        include: {
+          user: { select: { id: true, name: true, lastName: true, email: true } },
+          roleRef: { select: { id: true, name: true } },
+          clubMemberRoles: {
+            include: { roleRef: { select: { id: true, name: true } }, teamScopes: { include: { team: { select: { id: true, name: true } } } } },
+          },
+        },
+      });
     });
   }
 
@@ -1041,6 +1243,179 @@ export class ClubService {
       clubName: updated.name,
       enabled: updated.paymentRemindersEnabled,
     };
+  }
+
+  async createMemberWithRoles(
+    actorId: string,
+    clubId: string,
+    dto: { email?: string; name?: string; lastName?: string; phone?: string; roles: { name: string; scope: 'ALL' | 'TEAMS'; teamIds?: string[] }[] },
+  ) {
+    if (!(await isSuperAdmin(this.prisma, actorId))) {
+      if (!(await isClubAdmin(this.prisma, actorId, clubId))) {
+        throw new ForbiddenException(
+          'Solo los administradores del club pueden añadir miembros',
+        )
+      }
+    }
+
+    if (!dto.roles || dto.roles.length === 0) {
+      throw new BadRequestException('Debes asignar al menos un rol')
+    }
+
+    const cleanNames = dto.roles.map(r => r.name)
+    const roles = await this.prisma.role.findMany({
+      where: { clubId, name: { in: cleanNames } },
+      select: { id: true, name: true, scope: true },
+    })
+    const missing = cleanNames.filter(n => !roles.some(r => r.name === n))
+    if (missing.length > 0) {
+      throw new BadRequestException(`Roles no válidos: ${missing.join(', ')}`)
+    }
+
+    let user = dto.email 
+      ? await this.prisma.user.findUnique({ where: { email: dto.email } })
+      : null
+
+    if (!user) {
+      const username = await generateUniqueUsername(
+        this.prisma,
+        dto.name || 'Usuario',
+        dto.lastName || 'Invitado',
+      )
+      user = await this.prisma.user.create({
+        data: {
+          email: dto.email || null,
+          name: dto.name || 'Usuario',
+          lastName: dto.lastName || 'Invitado',
+          phone: dto.phone || null,
+          isGhost: true,
+          username,
+        },
+      })
+    }
+
+    const existingMember = await this.prisma.clubMember.findUnique({
+      where: { userId_clubId: { userId: user.id, clubId } },
+    })
+    if (existingMember && existingMember.isActive) {
+      throw new BadRequestException('El usuario ya es miembro del club')
+    }
+
+    const legacyRoleName = cleanNames.includes('ADMIN_CLUB') ? 'ADMIN_CLUB'
+      : cleanNames.includes('COACH') ? 'COACH'
+      : cleanNames.includes('ASSISTANT') ? 'ASSISTANT'
+      : cleanNames[0]
+    const legacyRole = roles.find(r => r.name === legacyRoleName)!
+
+    return this.prisma.$transaction(async (tx) => {
+      let clubMemberId: string
+      if (existingMember) {
+        const updated = await tx.clubMember.update({
+          where: { id: existingMember.id },
+          data: { isActive: true, roleId: legacyRole.id, joinedAt: new Date() },
+        })
+        clubMemberId = updated.id
+      } else {
+        const created = await tx.clubMember.create({
+          data: { userId: user!.id, clubId, roleId: legacyRole.id, isActive: true },
+        })
+        clubMemberId = created.id
+      }
+
+      for (const assignment of dto.roles) {
+        const roleRef = roles.find(r => r.name === assignment.name)!
+        const hasTeams = Array.isArray(assignment.teamIds) && assignment.teamIds.length > 0
+        const scope = assignment.scope || (hasTeams ? 'TEAMS' : 'ALL')
+
+        await tx.clubMemberRole.create({
+          data: {
+            clubMemberId,
+            roleId: roleRef.id,
+            scope: scope,
+            ...(hasTeams
+              ? { teamScopes: { create: assignment.teamIds!.map(tId => ({ teamId: tId })) } }
+              : {}),
+          },
+        })
+      }
+
+      const allTeamsOfClub = await tx.team.findMany({
+        where: { clubId },
+        select: { id: true },
+      })
+      const allTeamIdsOfClub = allTeamsOfClub.map(t => t.id)
+
+      const desiredRolesByTeam = new Map<string, Set<string>>()
+
+      for (const assignment of dto.roles) {
+        const roleRef = roles.find(r => r.name === assignment.name)
+        if (!roleRef) continue
+        // ✅ FIX: Solo sincronizar roles de tipo TEAM
+        if (roleRef.scope !== 'TEAM') continue
+
+        const targetTeams = assignment.scope === 'ALL' 
+          ? allTeamIdsOfClub 
+          : (assignment.teamIds || [])
+        for (const tId of targetTeams) {
+          if (!desiredRolesByTeam.has(tId)) desiredRolesByTeam.set(tId, new Set())
+          desiredRolesByTeam.get(tId)!.add(roleRef.id)
+        }
+      }
+
+      const currentMemberships = await tx.teamMembership.findMany({
+        where: { userId: user!.id, team: { clubId } },
+        select: { id: true, teamId: true, status: true },
+      })
+
+      if (desiredRolesByTeam.size > 0) {
+        for (const m of currentMemberships) {
+          if (!desiredRolesByTeam.has(m.teamId) && m.status === 'ACTIVE') {
+            await tx.teamMembership.update({
+              where: { id: m.id },
+              data: { status: 'LEFT', leftAt: new Date() },
+            })
+          }
+        }
+
+        for (const [tId, roleIds] of desiredRolesByTeam.entries()) {
+          const existing = currentMemberships.find(m => m.teamId === tId)
+          if (!existing) {
+            await tx.teamMembership.create({
+              data: {
+                userId: user!.id,
+                teamId: tId,
+                status: 'ACTIVE',
+                roles: { create: Array.from(roleIds).map(id => ({ roleId: id })) },
+              },
+            })
+          } else {
+            await tx.teamMembership.update({
+              where: { id: existing.id },
+              data: {
+                status: 'ACTIVE',
+                leftAt: null,
+                joinedAt: existing.status === 'ACTIVE' ? undefined : new Date(),
+                roles: {
+                  deleteMany: {},
+                  create: Array.from(roleIds).map(id => ({ roleId: id })),
+                },
+              },
+            })
+          }
+        }
+      }
+
+      return tx.clubMember.findUniqueOrThrow({
+        where: { id: clubMemberId },
+        include: {
+          user: { select: { id: true, name: true, lastName: true, email: true } },
+          roleRef: { select: { id: true, name: true } },
+          clubMemberRoles: {
+            include: { roleRef: { select: { id: true, name: true } }, teamScopes: { include: { team: { select: { id: true, name: true } } } } },
+          },
+        },
+      })
+    })
   }
 
   private parseCronHour(expr: string): string | null {

@@ -1,51 +1,78 @@
 // backend/src/permissions/permissions.service.ts
-// Lote 8.2 — Resolución de permisos.
-// Fuente de verdad: docs/permissions.md
+// Lote 4.C + 4.M.2 — Modelo de suma pura con overrides por equipo.
 //
-// Reglas:
-//   1. SUPER_ADMIN global → allow total.
-//   2. ADMIN_CLUB del club → allow total.
-//   3. Rol de club (ClubMember.roleRef): filas con scope null (club-wide).
-//   4. Roles de equipo (MembershipRole): filas con scope "team:<id>".
-//   5. Si no hay fila → deny (o defaults solo view si no hay ClubMember).
+// Un usuario tiene N roles en el club (ClubMemberRole). Cada rol tiene:
+//   - scope = 'ALL'   → aplica a todo el club.
+//   - scope = 'TEAMS' → aplica solo a los equipos en `teamScopes`.
 //
-// Cache: por (userId, clubId), TTL 10s.
+// Los permisos de un rol se resuelven así:
+//   1. Defaults (RolePermission con teamId = null) → aplican a todos los equipos.
+//   2. Overrides (RolePermission con teamId = <teamId>) → aplican solo a ese equipo.
+//      El override GANA sobre el default (sea granted=true o granted=false).
+//
+// `can(userId, resource, action, { clubId, teamId })`:
+//   1. SUPER_ADMIN → true
+//   2. ADMIN_CLUB en ese club → true
+//   3. Recopila los ClubMemberRole que aplican al contexto
+//      (scope=ALL, o scope=TEAMS con teamId en teamScopes)
+//   4. Para cada rol, aplica defaults + overrides
+//   5. Si algún rol tiene (resource, action, granted=true) final → true
+//   6. Si no → false
 
 import { Injectable } from '@nestjs/common'
-import type { PrismaClient, RoleScope } from '@prisma/client'
-import {
-  DEFAULT_VIEWABLE_RESOURCES,
-  type PermissionAction,
-  type PermissionResource,
+import type { PrismaClient } from '@prisma/client'
+import type {
+  PermissionAction,
+  PermissionResource,
 } from './permissions.constants'
-import { keyOf, type EffectivePermissions } from './permissions.types'
 
 type PrismaLike = PrismaClient
 
-interface Cached {
-  expiresAt: number
-  perms: EffectivePermissions
+// ─────────────────────────────────────────────
+// Tipos públicos
+// ─────────────────────────────────────────────
+
+export interface ApplicableRole {
+  /** id del ClubMemberRole */
+  clubMemberRoleId: string
+  /** id del Role */
+  roleId: string
+  /** nombre del Role (MEMBER, ADMIN_CLUB, PLAYER, etc.) */
+  roleName: string
+  /** scope del ClubMemberRole: 'ALL' | 'TEAMS' */
+  scope: 'ALL' | 'TEAMS'
+  /** teamIds si scope = 'TEAMS' */
+  teamIds: string[]
+  /** permisos granted=true finales (defaults + overrides) de ese Role */
+  permissions: Set<string> // "resource:action"
 }
 
-const CACHE_TTL_MS = 10_000
+// ─────────────────────────────────────────────
+// Service
+// ─────────────────────────────────────────────
 
 @Injectable()
 export class PermissionsService {
-  private cache = new Map<string, Cached>()
-
-  private cacheKey(userId: string, clubId: string): string {
-    return `${userId}::${clubId}`
-  }
+  // ─────────────────────────────────────────────
+  // Invalidación (sin caché por ahora; se puede añadir si hace falta)
+  // ─────────────────────────────────────────────
 
   invalidateAll(): void {
-    this.cache.clear()
+    // No-op. Se puede añadir caché en el futuro.
   }
 
-  invalidate(userId: string, clubId: string): void {
-    this.cache.delete(this.cacheKey(userId, clubId))
+  invalidate(_userId: string, _clubId: string): void {
+    // No-op. Se puede añadir caché en el futuro.
   }
 
-  async isSuperAdmin(prisma: PrismaLike, userId: string): Promise<boolean> {
+  // ─────────────────────────────────────────────
+  // Helpers básicos
+  // ─────────────────────────────────────────────
+
+  async isSuperAdmin(
+    prisma: PrismaLike,
+    userId: string,
+  ): Promise<boolean> {
     const u = await prisma.user.findUnique({
       where: { id: userId },
       select: { role: true, deletedAt: true },
@@ -53,179 +80,149 @@ export class PermissionsService {
     return !!u && u.role === 'SUPER_ADMIN' && u.deletedAt === null
   }
 
-  async getClubRoleName(
+  /**
+   * Devuelve los nombres de los roles de club del usuario en ese club.
+   * (Puede tener varios.)
+   */
+  async getClubRoleNames(
     prisma: PrismaLike,
     userId: string,
     clubId: string,
-  ): Promise<string | null> {
-    const cm = await prisma.clubMember.findFirst({
-      where: { userId, clubId, isActive: true },
-      select: { roleRef: { select: { name: true } } },
-    })
-    return cm?.roleRef.name ?? null
-  }
-
-  async resolve(
-    prisma: PrismaLike,
-    userId: string,
-    clubId: string,
-  ): Promise<EffectivePermissions> {
-    const k = this.cacheKey(userId, clubId)
-    const hit = this.cache.get(k)
-    if (hit && hit.expiresAt > Date.now()) return hit.perms
-
-    const perms = await this.resolveUncached(prisma, userId, clubId)
-    this.cache.set(k, { expiresAt: Date.now() + CACHE_TTL_MS, perms })
-    return perms
-  }
-
-  private async resolveUncached(
-    prisma: PrismaLike,
-    userId: string,
-    clubId: string,
-  ): Promise<EffectivePermissions> {
-    const result: EffectivePermissions = {
-      clubWide: new Set(),
-      perTeam: new Map(),
-    }
-
-    // 1) SUPER_ADMIN
-    if (await this.isSuperAdmin(prisma, userId)) {
-      this.grantAll(result)
-      return result
-    }
-
-    // 2) Rol de club
-    const clubRoleName = await this.getClubRoleName(prisma, userId, clubId)
-
-    if (!clubRoleName) {
-      for (const r of DEFAULT_VIEWABLE_RESOURCES) {
-        result.clubWide.add(keyOf(r, 'view'))
-      }
-      return result
-    }
-
-    if (clubRoleName === 'ADMIN_CLUB') {
-      this.grantAll(result)
-      return result
-    }
-
-    // 3) Permisos del rol de club
-    const clubRole = await prisma.role.findUnique({
-      where: {
-        clubId_scope_name: {
-          clubId,
-          scope: 'CLUB' as RoleScope,
-          name: clubRoleName,
+  ): Promise<string[]> {
+    const cm = await prisma.clubMember.findUnique({
+      where: { userId_clubId: { userId, clubId } },
+      select: {
+        isActive: true,
+        clubMemberRoles: {
+          select: { roleRef: { select: { name: true } } },
         },
       },
+    })
+    if (!cm || !cm.isActive) return []
+    return cm.clubMemberRoles.map((r) => r.roleRef.name)
+  }
+
+  /**
+   * Devuelve true si el usuario tiene el rol `ADMIN_CLUB` en ese club.
+   */
+  async isClubAdmin(
+    prisma: PrismaLike,
+    userId: string,
+    clubId: string,
+  ): Promise<boolean> {
+    const names = await this.getClubRoleNames(prisma, userId, clubId)
+    return names.includes('ADMIN_CLUB')
+  }
+
+  // ─────────────────────────────────────────────
+  // Roles aplicables al contexto
+  // ─────────────────────────────────────────────
+
+  /**
+   * Devuelve los ClubMemberRole del usuario en el club que aplican
+   * al contexto:
+   *   - scope = 'ALL' → siempre.
+   *   - scope = 'TEAMS' → solo si teamId está en teamScopes.
+   *
+   * Si `teamId` es null/undefined, solo devuelve los 'ALL'.
+   *
+   * Los permisos de cada rol se calculan con:
+   *   1. Defaults (teamId = null) → aplican a todos los equipos.
+   *   2. Overrides (teamId = <teamId>) → aplican solo a ese equipo.
+   *      El override GANA sobre el default.
+   *   3. Solo los que quedan granted = true.
+   */
+  async getApplicableRoles(
+    prisma: PrismaLike,
+    userId: string,
+    clubId: string,
+    teamId?: string | null,
+  ): Promise<ApplicableRole[]> {
+    const cm = await prisma.clubMember.findUnique({
+      where: { userId_clubId: { userId, clubId } },
       select: {
-        permissions: {
+        isActive: true,
+        clubMemberRoles: {
           select: {
-            resource: true,
-            action: true,
+            id: true,
             scope: true,
-            granted: true,
-          },
-        },
-      },
-    })
-
-    if (clubRole) {
-      this.applyRows(result, clubRole.permissions)
-    }
-
-    // 4) Permisos de roles de equipo (solo scope team:<id>)
-    const teamRoles = await prisma.membershipRole.findMany({
-      where: {
-        membership: {
-          userId,
-          status: 'ACTIVE',
-          team: { clubId },
-        },
-      },
-      select: {
-        membership: { select: { teamId: true } },
-        roleRef: {
-          select: {
-            permissions: {
+            roleRef: {
               select: {
-                resource: true,
-                action: true,
-                scope: true,
-                granted: true,
+                id: true,
+                name: true,
+                permissions: {
+                  select: {
+                    resource: true,
+                    action: true,
+                    teamId: true,
+                    granted: true,
+                  },
+                },
               },
             },
+            teamScopes: { select: { teamId: true } },
           },
         },
       },
     })
 
-    for (const mr of teamRoles) {
-      const teamId = mr.membership.teamId
-      for (const row of mr.roleRef.permissions) {
-        if (row.granted === false) continue
-        const res = row.resource as PermissionResource
-        const act = row.action as PermissionAction
+    if (!cm || !cm.isActive) return []
 
-        if (row.scope === null) {
-          // scope club → aplica a club-wide (también cubre este team).
-          result.clubWide.add(keyOf(res, act))
-        } else if (row.scope.startsWith('team:')) {
-          const scopedTeamId = row.scope.slice('team:'.length)
-          if (scopedTeamId === teamId) {
-            this.addToTeam(result, teamId, keyOf(res, act))
-          }
+    const result: ApplicableRole[] = []
+
+    for (const cmr of cm.clubMemberRoles) {
+      const isAll = cmr.scope === 'ALL'
+      const isForTeam =
+        cmr.scope === 'TEAMS' &&
+        teamId != null &&
+        cmr.teamScopes.some((ts) => ts.teamId === teamId)
+
+      if (!isAll && !isForTeam) continue
+
+      // 1) Defaults: teamId = null
+      const map = new Map<string, boolean>()
+      for (const p of cmr.roleRef.permissions) {
+        if (p.teamId !== null) continue
+        map.set(`${p.resource}:${p.action}`, p.granted)
+      }
+
+      // 2) Overrides: teamId = <teamId> (solo si teamId no es null)
+      if (teamId) {
+        for (const p of cmr.roleRef.permissions) {
+          if (p.teamId !== teamId) continue
+          map.set(`${p.resource}:${p.action}`, p.granted)
         }
       }
+
+      // 3) Solo los granted = true
+      const permissions = new Set<string>()
+      for (const [k, v] of map) if (v) permissions.add(k)
+
+      result.push({
+        clubMemberRoleId: cmr.id,
+        roleId: cmr.roleRef.id,
+        roleName: cmr.roleRef.name,
+        scope: cmr.scope as 'ALL' | 'TEAMS',
+        teamIds: cmr.teamScopes.map((ts) => ts.teamId),
+        permissions,
+      })
     }
 
     return result
   }
 
-  private grantAll(result: EffectivePermissions): void {
-    const all: PermissionResource[] = [
-      'team', 'member', 'invitation', 'membership_role', 'payment',
-      'event', 'document', 'club_settings', 'club_branding', 'report',
-      'role_admin', 'player_profile', 'stats_config',
-      'user_private_data', 'ghost_edit',
-    ]
-    const acts: PermissionAction[] = ['view', 'create', 'edit', 'delete']
-    for (const r of all) {
-      for (const a of acts) result.clubWide.add(keyOf(r, a))
-    }
-  }
+  // ─────────────────────────────────────────────
+  // `can` y `assert`
+  // ─────────────────────────────────────────────
 
-  private applyRows(
-    result: EffectivePermissions,
-    rows: { resource: string; action: string; scope: string | null; granted: boolean }[],
-  ): void {
-    for (const row of rows) {
-      if (row.granted === false) continue
-      const res = row.resource as PermissionResource
-      const act = row.action as PermissionAction
-      if (row.scope === null) {
-        result.clubWide.add(keyOf(res, act))
-      } else if (row.scope.startsWith('team:')) {
-        const teamId = row.scope.slice('team:'.length)
-        this.addToTeam(result, teamId, keyOf(res, act))
-      }
-    }
-  }
-
-  private addToTeam(
-    result: EffectivePermissions,
-    teamId: string,
-    key: string,
-  ): void {
-    let s = result.perTeam.get(teamId)
-    if (!s) {
-      s = new Set()
-      result.perTeam.set(teamId, s)
-    }
-    s.add(key)
-  }
-
+  /**
+   * Comprueba si el usuario puede hacer `resource:action` en el contexto.
+   *
+   * - SUPER_ADMIN → true
+   * - ADMIN_CLUB → true
+   * - Suma de roles aplicables: si alguno tiene el permiso final → true
+   * - Si no → false
+   */
   async can(
     prisma: PrismaLike,
     userId: string,
@@ -233,13 +230,23 @@ export class PermissionsService {
     action: PermissionAction,
     opts: { clubId: string; teamId?: string | null },
   ): Promise<boolean> {
-    const perms = await this.resolve(prisma, userId, opts.clubId)
-    const k = keyOf(resource, action)
-    if (opts.teamId) {
-      const t = perms.perTeam.get(opts.teamId)
-      if (t?.has(k)) return true
-    }
-    return perms.clubWide.has(k)
+    // 1. SUPER_ADMIN
+    if (await this.isSuperAdmin(prisma, userId)) return true
+
+    // 2. ADMIN_CLUB
+    if (await this.isClubAdmin(prisma, userId, opts.clubId)) return true
+
+    // 3. Roles aplicables
+    const roles = await this.getApplicableRoles(
+      prisma,
+      userId,
+      opts.clubId,
+      opts.teamId,
+    )
+    if (roles.length === 0) return false
+
+    const key = `${resource}:${action}`
+    return roles.some((r) => r.permissions.has(key))
   }
 
   async assert(

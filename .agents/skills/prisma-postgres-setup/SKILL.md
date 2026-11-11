@@ -211,7 +211,7 @@ const adapter = new PrismaPg(pool)
 const prisma = new PrismaClient({ adapter })
 
 const result = await prisma.$queryRawUnsafe('SELECT 1 as connected')
-console.log('Connected to Prisma Postgres:', result)
+
 
 await prisma.$disconnect()
 await pool.end()

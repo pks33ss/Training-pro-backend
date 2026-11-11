@@ -9,14 +9,15 @@ export const PERMISSION_RESOURCES = [
   'membership_role',
   'payment',
   'event',
-  'document',
+  'library',
+  'document', // En la UI se muestra como "Playbook"
   'club_settings',
   'club_branding',
-  'report',
+  'stats',
   'role_admin',
   'player_profile',
   'stats_config',
-  'user_private_data',
+  'user_data',
   'ghost_edit',
 ] as const;
 
@@ -27,20 +28,21 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number];
 
 export const RESOURCE_LABELS_ES: Record<PermissionResource, string> = {
   team: 'Equipos',
-  member: 'Miembros',
+  member: 'Gestión de miembros',
   invitation: 'Invitaciones',
   membership_role: 'Roles de equipo',
   payment: 'Pagos',
   event: 'Eventos',
-  document: 'Documentos',
+  library: 'Biblioteca',
+  document: 'Playbook',
   club_settings: 'Configuración del club',
   club_branding: 'Branding',
-  report: 'Reportes',
+  stats: 'Estadísticas',
   role_admin: 'Gestión de roles',
   player_profile: 'Perfiles de jugador',
   stats_config: 'Configuración de estadísticas',
-  user_private_data: 'Datos privados de usuarios',
-  ghost_edit: 'Edición de ghosts',
+  user_data: 'Datos privados de usuarios',
+  ghost_edit: 'Edición de miembros no registrados',
 };
 
 export const ACTION_LABELS_ES: Record<PermissionAction, string> = {
@@ -57,10 +59,10 @@ export const ACTIONS_BY_RESOURCE: Partial<
   membership_role: ['view', 'create', 'delete'],
   club_settings: ['view', 'edit'],
   club_branding: ['view', 'edit'],
-  report: ['view'],
+  stats: ['view'], // ✅ Antes "report"
   player_profile: ['view', 'edit'],
   stats_config: ['view', 'edit'],
-  user_private_data: ['view'],
+  user_data: ['view'], // ✅ Antes "user_private_data"
   ghost_edit: ['edit'],
 };
 
@@ -72,6 +74,7 @@ export const DEFAULT_VIEWABLE_RESOURCES: readonly PermissionResource[] = [
   'team',
   'member',
   'event',
+  'library',
   'document',
   'club_settings',
   'club_branding',

@@ -315,22 +315,22 @@ const SESSIONS: DemoSession[] = [
 // ============================================
 
 async function cleanDemo() {
-  console.log('🧹 Limpiando datos demo...')
+  
 
   const sessions = await prisma.session.deleteMany({
     where: { teamId: TEAM_ID, title: { startsWith: DEMO } },
   })
-  console.log(`   Sesiones borradas: ${sessions.count}`)
+  
 
   const matches = await prisma.match.deleteMany({
     where: { teamId: TEAM_ID, opponent: { startsWith: DEMO } },
   })
-  console.log(`   Partidos borrados: ${matches.count}`)
+  
 
   const plays = await prisma.play.deleteMany({
     where: { teamId: TEAM_ID, name: { startsWith: DEMO } },
   })
-  console.log(`   Jugadas borradas: ${plays.count}`)
+
 
   // Biblioteca: buscar el user por email y borrar los suyos
   const author = await prisma.user.findUnique({
@@ -341,10 +341,10 @@ async function cleanDemo() {
     const lib = await prisma.libraryExercise.deleteMany({
       where: { ownerId: author.id, name: { startsWith: DEMO } },
     })
-    console.log(`   Ejercicios de biblioteca borrados: ${lib.count}`)
+    
   }
 
-  console.log('✅ Limpieza completada.')
+ 
 }
 
 // ============================================
@@ -372,7 +372,7 @@ async function verifyContext() {
       `El equipo ${TEAM_ID} no pertenece al club ${CLUB_ID} (pertenece a ${team.clubId})`,
     )
   }
-  console.log(`   Equipo OK: ${team.name} (${team.sport})`)
+  
 
   const author = await prisma.user.findUnique({
     where: { email: AUTHOR_EMAIL },
@@ -381,7 +381,7 @@ async function verifyContext() {
   if (!author) {
     throw new Error(`No existe el user con email ${AUTHOR_EMAIL}`)
   }
-  console.log(`   Autor OK: ${author.name} ${author.lastName}`)
+  
 
   // Verificar membership activa del autor en el equipo
   const membership = await prisma.teamMembership.findFirst({
@@ -392,7 +392,7 @@ async function verifyContext() {
       `El autor ${AUTHOR_EMAIL} no tiene membership ACTIVA en el equipo ${TEAM_ID}`,
     )
   }
-  console.log(`   Membership activa del autor OK`)
+  
 
   // Jugadores del equipo (para stats y convocatorias)
         const players = await prisma.teamMembership.findMany({
@@ -438,7 +438,7 @@ const SESSION_IMAGES = [
 ]
 
 async function seedSessions(authorId: string) {
-  console.log('\n🏋️  Creando sesiones...')
+  
 
   let created = 0
   let idx = 0
@@ -512,7 +512,7 @@ async function seedSessions(authorId: string) {
     }
 
     created++
-    console.log(`   [${created}/${SESSIONS.length}] ${s.title}`)
+    
   }
 
   return created
@@ -666,7 +666,7 @@ function generatePlayerStats(
 }
 
 async function seedMatches(authorId: string, players: any[]) {
-  console.log('\n🏀 Creando partidos y estadísticas...')
+ 
 
   let created = 0
 
@@ -751,7 +751,7 @@ const LIBRARY_EXERCISES = [
 ]
 
 async function seedLibrary(authorId: string) {
-  console.log('\n📚 Creando ejercicios de biblioteca...')
+
 
   let created = 0
   for (let i = 0; i < LIBRARY_EXERCISES.length; i++) {
@@ -794,7 +794,7 @@ async function seedLibrary(authorId: string) {
     }
 
     created++
-    console.log(`   [${created}/${LIBRARY_EXERCISES.length}] ${ex.name}`)
+    
   }
 
   return created
@@ -858,7 +858,7 @@ const PLAYS = [
 ]
 
 async function seedPlaybook(authorId: string) {
-  console.log('\n🎬 Creando jugadas de playbook...')
+
 
   let created = 0
   for (let i = 0; i < PLAYS.length; i++) {
@@ -886,7 +886,7 @@ async function seedPlaybook(authorId: string) {
     }
 
     created++
-    console.log(`   [${created}/${PLAYS.length}] ${p.name}`)
+    
   }
 
   return created
@@ -897,7 +897,7 @@ async function seedPlaybook(authorId: string) {
 // ============================================
 
 async function seedLiveStreamForFutureMatch(authorId: string) {
-  console.log('\n📺 Añadiendo LiveStream al partido futuro...')
+
 
   const futureMatch = await prisma.match.findFirst({
     where: { teamId: TEAM_ID, opponent: { startsWith: DEMO }, status: 'SCHEDULED' },
@@ -905,7 +905,7 @@ async function seedLiveStreamForFutureMatch(authorId: string) {
   })
 
   if (!futureMatch) {
-    console.log('   ⚠️  No hay partido futuro; se omite LiveStream')
+   
     return
   }
 
@@ -913,7 +913,7 @@ async function seedLiveStreamForFutureMatch(authorId: string) {
     where: { matchId: futureMatch.id },
   })
   if (existing) {
-    console.log('   ℹ️  Ya existe LiveStream para ese partido, no se duplica')
+   
     return
   }
 
@@ -938,7 +938,7 @@ async function seedLiveStreamForFutureMatch(authorId: string) {
     },
   })
 
-  console.log(`   ✅ LiveStream creado para el partido del ${futureMatch.date.toLocaleDateString('es-ES')}`)
+
 }
 
 // ============================================
@@ -966,15 +966,7 @@ async function main() {
   const playsCount = await seedPlaybook(author.id)
   await seedLiveStreamForFutureMatch(author.id)
 
-  console.log('\n═══════════════════════════════════════════════')
-  console.log('  ✅ Resumen:')
-  console.log(`     Sesiones:           ${sessionsCount}`)
-  console.log(`     Partidos:           ${matchesCount}`)
-  console.log(`     Biblioteca:         ${libraryCount}`)
-  console.log(`     Jugadas:            ${playsCount}`)
-  console.log('═══════════════════════════════════════════════')
-  console.log('\n💡 Si quieres borrar todo lo demo, ejecuta:')
-  console.log('   npx tsx scripts/seed-demo.ts --clean\n')
+
 }
 
 main()
