@@ -19,6 +19,7 @@ import {
   isActiveClubMember,
   canInviteToClub,
   getViewerPrivateDataScope,
+  getViewerLicenseSport,
   type ViewerPrivateDataScope,
 } from '../common/access';
 import {
@@ -29,6 +30,7 @@ import {
   normalizeClubMemberRoleList,
   normalizeMembershipRolesList,
 } from '../common/serialize';
+import { ensureLicenseSportOnTeamJoin } from '../common/license-sport';
 
 const OPTIONAL_CLUB_STRING_FIELDS = [
   'description',
@@ -109,12 +111,11 @@ export class ClubService {
       cleanColors.secondaryColor = data.secondaryColor;
     }
 
-    // ✅ NUEVO — Solo el SUPER_ADMIN puede fijar una licencia distinta a BETA
-    // al crear un club. Si no es SUPER_ADMIN o no envía `licenseType`,
-    // se aplica el @default(BETA) del schema.
     const superAdmin = await isSuperAdmin(this.prisma, userId);
     const licenseOverride =
       superAdmin && data.licenseType ? { licenseType: data.licenseType } : {};
+    const licenseSportOverride =
+      superAdmin && data.licenseSport ? { licenseSport: data.licenseSport } : {};
 
     let club;
     try {
@@ -129,6 +130,7 @@ export class ClubService {
               email: data.email,
               ...cleanColors,
               ...licenseOverride,
+              ...licenseSportOverride,
             },
           });
 
@@ -453,12 +455,13 @@ export class ClubService {
 
     const data = normalizeOptionalClubStrings(updateClubDto);
 
-    // ✅ NUEVO — Solo el SUPER_ADMIN puede cambiar `licenseType`.
-    // Si un ADMIN_CLUB (u otro rol con permiso de edición) lo envía,
-    // se ignora silenciosamente.
+    // ✅ Solo el SUPER_ADMIN puede cambiar `licenseType` y `licenseSport`.
     const superAdmin = await isSuperAdmin(this.prisma, userId);
     if (!superAdmin && 'licenseType' in data) {
       delete (data as any).licenseType;
+    }
+    if (!superAdmin && 'licenseSport' in data) {
+      delete (data as any).licenseSport;
     }
 
     return this.prisma.club.update({
@@ -637,7 +640,7 @@ export class ClubService {
       scope: a.scope === 'TEAMS' ? 'TEAMS' : 'ALL',
       teamIds: Array.isArray(a.teamIds) ? a.teamIds : [],
     })).filter(a => a.name.length > 0);
-    
+
     const cleanNames = Array.from(new Set(cleanAssignments.map(a => a.name)));
 
     const member = await this.prisma.clubMember.findUnique({
@@ -655,16 +658,14 @@ export class ClubService {
       where: { clubId, name: { in: cleanNames } },
       select: { id: true, name: true, scope: true },
     });
-    
-    // Validaciones básicas...
+
     const foundNames = new Set(roles.map((r) => r.name));
     const missing = cleanNames.filter((n) => !foundNames.has(n));
     if (missing.length > 0) {
       throw new BadRequestException(`Roles no válidos para este club: ${missing.join(', ')}`);
     }
 
-    return this.prisma.$transaction(async (tx) => {
-      // 1. Actualizar roles a nivel de club (ClubMemberRole)
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.clubMemberRole.deleteMany({
         where: { clubMemberId: memberId },
       });
@@ -693,14 +694,11 @@ export class ClubService {
         data: { roleId: legacyRole.id },
       });
 
-      // 2. Sincronizar equipos (TeamMembership)
-      // Leemos los equipos actuales del usuario
       const currentMemberships = await tx.teamMembership.findMany({
         where: { userId: member.userId, team: { clubId } },
         select: { id: true, teamId: true, status: true, roles: { select: { roleId: true } } },
       });
 
-      // ¿Qué roles de equipo tiene en el payload?
       const teamRolesInPayload = cleanAssignments.filter(a => {
         const r = roles.find(x => x.name === a.name);
         return r && r.scope === 'TEAM';
@@ -716,16 +714,14 @@ export class ClubService {
 
       for (const assignment of teamRolesInPayload) {
         const roleRef = roles.find(r => r.name === assignment.name)!;
-        
+
         let targetTeams: string[] = [];
-        
+
         if (assignment.scope === 'ALL') {
           targetTeams = allTeamIdsOfClub;
         } else if (assignment.teamIds.length > 0) {
           targetTeams = assignment.teamIds;
         } else {
-          // Si es scope TEAMS pero no mandaron equipos en el payload,
-          // mantenemos los equipos donde el usuario YA estaba.
           const currentTeamsForThisUser = currentMemberships
             .filter(m => m.status === 'ACTIVE')
             .map(m => m.teamId);
@@ -738,10 +734,7 @@ export class ClubService {
         }
       }
 
-      // Si desiredRolesByTeam está vacío, significa que no hay roles de equipo (solo roles de club).
-      // En ese caso, NO tocamos las membresías del usuario.
       if (desiredRolesByTeam.size > 0) {
-        // Desactivar las que ya no estén en la lista
         for (const m of currentMemberships) {
           if (!desiredRolesByTeam.has(m.teamId) && m.status === 'ACTIVE') {
             await tx.teamMembership.update({
@@ -751,7 +744,6 @@ export class ClubService {
           }
         }
 
-        // Crear o actualizar las que sí están
         for (const [tId, roleIds] of desiredRolesByTeam.entries()) {
           const existing = currentMemberships.find(m => m.teamId === tId);
           if (!existing) {
@@ -779,17 +771,28 @@ export class ClubService {
         }
       }
 
-      return tx.clubMember.findUniqueOrThrow({
-        where: { id: memberId },
-        include: {
-          user: { select: { id: true, name: true, lastName: true, email: true } },
-          roleRef: { select: { id: true, name: true } },
-          clubMemberRoles: {
-            include: { roleRef: { select: { id: true, name: true } }, teamScopes: { include: { team: { select: { id: true, name: true } } } } },
+      return {
+        memberId,
+        joinedTeamIds: Array.from(desiredRolesByTeam.keys()),
+        result: await tx.clubMember.findUniqueOrThrow({
+          where: { id: memberId },
+          include: {
+            user: { select: { id: true, name: true, lastName: true, email: true } },
+            roleRef: { select: { id: true, name: true } },
+            clubMemberRoles: {
+              include: { roleRef: { select: { id: true, name: true } }, teamScopes: { include: { team: { select: { id: true, name: true } } } } },
+            },
           },
-        },
-      });
+        }),
+      };
     });
+
+    // ✅ Asignación automática de licenseSport para cada equipo al que se ha unido
+    for (const tId of result.joinedTeamIds) {
+      await ensureLicenseSportOnTeamJoin(this.prisma, member.userId, tId);
+    }
+
+    return result.result;
   }
 
   async removeMember(userId: string, clubId: string, memberId: string) {
@@ -1001,13 +1004,14 @@ export class ClubService {
       where: { userId: member.userId, teamId },
     });
 
+    let result;
     if (existing) {
       if (existing.status === 'ACTIVE') {
         throw new ForbiddenException(
           'El miembro ya está asignado a este equipo',
         );
       }
-      return this.prisma.teamMembership.update({
+      result = await this.prisma.teamMembership.update({
         where: { id: existing.id },
         data: {
           status: 'ACTIVE',
@@ -1019,16 +1023,21 @@ export class ClubService {
           },
         },
       });
+    } else {
+      result = await this.prisma.teamMembership.create({
+        data: {
+          userId: member.userId,
+          teamId,
+          status: 'ACTIVE',
+          roles: { create: [{ roleId: coachTeamRoleId }] },
+        },
+      });
     }
 
-    return this.prisma.teamMembership.create({
-      data: {
-        userId: member.userId,
-        teamId,
-        status: 'ACTIVE',
-        roles: { create: [{ roleId: coachTeamRoleId }] },
-      },
-    });
+    // ✅ Asignación automática de licenseSport
+    await ensureLicenseSportOnTeamJoin(this.prisma, member.userId, teamId);
+
+    return result;
   }
 
   async removeMemberFromTeam(
@@ -1113,57 +1122,61 @@ export class ClubService {
     });
   }
 
-  async findClubPlayers(userId: string, clubId: string) {
-    if (!(await isSuperAdmin(this.prisma, userId))) {
-      const isActive = await isActiveClubMember(
-        this.prisma,
-        userId,
-        clubId,
-      );
-      if (!isActive) {
-        throw new ForbiddenException('No tienes acceso a este club');
-      }
+async findClubPlayers(userId: string, clubId: string) {
+  if (!(await isSuperAdmin(this.prisma, userId))) {
+    const isActive = await isActiveClubMember(this.prisma, userId, clubId);
+    if (!isActive) {
+      throw new ForbiddenException('No tienes acceso a este club');
     }
+  }
 
-    const players = await this.prisma.user.findMany({
-      where: {
-        memberships: {
-          some: {
-            roles: { some: { roleRef: { name: 'PLAYER' } } },
-            status: 'ACTIVE',
-            team: { clubId },
-          },
+  // ✅ NUEVO — Deporte restringido para licencia BETA
+  const viewerLicenseSport = await getViewerLicenseSport(this.prisma, userId);
+
+  const teamFilter = {
+    clubId,
+    ...(viewerLicenseSport ? { sport: viewerLicenseSport } : {}),
+  };
+
+  const players = await this.prisma.user.findMany({
+    where: {
+      memberships: {
+        some: {
+          roles: { some: { roleRef: { name: 'PLAYER' } } },
+          status: 'ACTIVE',
+          team: teamFilter,
         },
       },
-      select: {
-        id: true,
-        username: true,
-        name: true,
-        lastName: true,
-        avatar: true,
-        bio: true,
-        isGhost: true,
-        memberships: {
-          where: {
-            roles: { some: { roleRef: { name: 'PLAYER' } } },
-            status: 'ACTIVE',
-            team: { clubId },
-          },
-          include: {
-            team: {
-              select: {
-                id: true,
-                name: true,
-                sport: true,
-                category: true,
-              },
+    },
+    select: {
+      id: true,
+      username: true,
+      name: true,
+      lastName: true,
+      avatar: true,
+      bio: true,
+      isGhost: true,
+      memberships: {
+        where: {
+          roles: { some: { roleRef: { name: 'PLAYER' } } },
+          status: 'ACTIVE',
+          team: teamFilter,
+        },
+        include: {
+          team: {
+            select: {
+              id: true,
+              name: true,
+              sport: true,
+              category: true,
             },
           },
-          orderBy: { joinedAt: 'desc' },
         },
+        orderBy: { joinedAt: 'desc' },
       },
-      orderBy: [{ lastName: 'asc' }, { name: 'asc' }],
-    });
+    },
+    orderBy: [{ lastName: 'asc' }, { name: 'asc' }],
+  });
 
     return players.map((player) => ({
       id: player.id,
@@ -1323,7 +1336,7 @@ export class ClubService {
       : cleanNames[0]
     const legacyRole = roles.find(r => r.name === legacyRoleName)!
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       let clubMemberId: string
       if (existingMember) {
         const updated = await tx.clubMember.update({
@@ -1366,7 +1379,6 @@ export class ClubService {
       for (const assignment of dto.roles) {
         const roleRef = roles.find(r => r.name === assignment.name)
         if (!roleRef) continue
-        // ✅ FIX: Solo sincronizar roles de tipo TEAM
         if (roleRef.scope !== 'TEAM') continue
 
         const targetTeams = assignment.scope === 'ALL' 
@@ -1421,17 +1433,27 @@ export class ClubService {
         }
       }
 
-      return tx.clubMember.findUniqueOrThrow({
-        where: { id: clubMemberId },
-        include: {
-          user: { select: { id: true, name: true, lastName: true, email: true } },
-          roleRef: { select: { id: true, name: true } },
-          clubMemberRoles: {
-            include: { roleRef: { select: { id: true, name: true } }, teamScopes: { include: { team: { select: { id: true, name: true } } } } },
+      return {
+        joinedTeamIds: Array.from(desiredRolesByTeam.keys()),
+        result: await tx.clubMember.findUniqueOrThrow({
+          where: { id: clubMemberId },
+          include: {
+            user: { select: { id: true, name: true, lastName: true, email: true } },
+            roleRef: { select: { id: true, name: true } },
+            clubMemberRoles: {
+              include: { roleRef: { select: { id: true, name: true } }, teamScopes: { include: { team: { select: { id: true, name: true } } } } },
+            },
           },
-        },
-      })
+        }),
+      }
     })
+
+    // ✅ Asignación automática de licenseSport
+    for (const tId of result.joinedTeamIds) {
+      await ensureLicenseSportOnTeamJoin(this.prisma, user!.id, tId)
+    }
+
+    return result.result
   }
 
   private parseCronHour(expr: string): string | null {

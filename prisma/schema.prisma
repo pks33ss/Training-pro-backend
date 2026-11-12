@@ -11,21 +11,24 @@ datasource db {
 // ============================================
 
 model User {
-  id          String      @id @default(cuid())
-  email       String?     @unique
-  password    String?
-  name        String
-  lastName    String
-  phone       String?
-  avatar      String?
-  bio         String?
-  role        GlobalRole  @default(USER)
-  licenseType LicenseType @default(BETA)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  username    String?     @unique
-  isGhost     Boolean     @default(false)
-  deletedAt   DateTime?
+  id           String      @id @default(cuid())
+  email        String?     @unique
+  password     String?
+  name         String
+  lastName     String
+  phone        String?
+  avatar       String?
+  bio          String?
+  role         GlobalRole  @default(USER)
+  licenseType  LicenseType @default(BETA)
+  /// Deporte restringido cuando licenseType = BETA.
+  /// null → sin restricción (o aún no asignado).
+  licenseSport Sport?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  username     String?     @unique
+  isGhost      Boolean     @default(false)
+  deletedAt    DateTime?
 
   emailNotificationsEnabled Boolean @default(true)
   emailOptOut               Boolean @default(false)
@@ -48,7 +51,7 @@ model User {
 
   paymentConceptsCreated PaymentConcept[]    @relation("PaymentConceptCreatedBy")
   paymentAssignments     PaymentAssignment[] @relation("PaymentAssignments")
-  payments               Payment[]           @relation("Payments")
+  payments               Payment[]
   paymentsCreated        Payment[]           @relation("PaymentCreatedBy")
 
   createdMatches      Match[]
@@ -113,6 +116,9 @@ model Club {
   updatedAt               DateTime    @updatedAt
   paymentRemindersEnabled Boolean     @default(true)
   licenseType             LicenseType @default(BETA)
+  /// Deporte restringido cuando licenseType = BETA.
+  /// null → sin restricción (o aún no asignado).
+  licenseSport            Sport?
 
   members         ClubMember[]
   teams           Team[]
@@ -155,6 +161,9 @@ model Team {
   createdAt                DateTime                  @default(now())
   updatedAt                DateTime                  @updatedAt
   licenseType              LicenseType               @default(BETA)
+  /// Deporte restringido cuando licenseType = BETA.
+  /// null → sin restricción (o aún no asignado).
+  licenseSport             Sport?
   // Lote 4.A — NUEVO
   clubMemberRoleTeamScopes ClubMemberRoleTeamScope[]
 
@@ -1098,7 +1107,7 @@ model Payment {
   createdAt   DateTime @default(now())
 
   concept   PaymentConcept @relation(fields: [conceptId], references: [id], onDelete: Cascade)
-  user      User           @relation("Payments", fields: [userId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdBy User           @relation("PaymentCreatedBy", fields: [createdById], references: [id])
 
   @@index([conceptId, userId])

@@ -14,9 +14,12 @@ import {
   getAddableRoles,
   isActiveClubMember,
   isSuperAdmin,
+  getViewerLicenseSport,
 } from '../common/access'
 import { resolveTeamRoleId } from '../permissions/resolve-role-id'
 import { normalizeMembershipRolesList } from '../common/serialize'
+import { ensureLicenseSportOnTeamJoin } from '../common/license-sport'
+
 
 @Injectable()
 export class TeamService {
@@ -42,9 +45,6 @@ export class TeamService {
       'ADMIN_TEAM',
     );
 
-    // ✅ NUEVO — Solo el SUPER_ADMIN puede fijar una licencia distinta a BETA
-    // al crear un equipo. Si no es SUPER_ADMIN o no envía `licenseType`,
-    // se aplica el @default(BETA) del schema.
     const superAdmin = await isSuperAdmin(this.prisma, userId);
     const licenseOverride =
       superAdmin && createTeamDto.licenseType
@@ -52,7 +52,6 @@ export class TeamService {
         : {};
 
     const team = await this.prisma.$transaction(async (tx) => {
-      // 1) Crear el equipo
       const newTeam = await tx.team.create({
         data: {
           name: createTeamDto.name,
@@ -70,7 +69,6 @@ export class TeamService {
         },
       });
 
-      // 2) Crear la TeamMembership (modelo antiguo, para compatibilidad)
       await tx.teamMembership.create({
         data: {
           userId,
@@ -82,7 +80,6 @@ export class TeamService {
         },
       });
 
-      // 3) Sincronizar el rol ADMIN_TEAM en el modelo nuevo (ClubMemberRole)
       let clubMember = await tx.clubMember.findUnique({
         where: {
           userId_clubId: {
@@ -109,7 +106,6 @@ export class TeamService {
         });
       }
 
-      // 4) Crear (o actualizar) el ClubMemberRole con scope TEAMS y el teamId del nuevo equipo
       const adminTeamRoleInClub = await tx.role.findFirst({
         where: {
           clubId: createTeamDto.clubId,
@@ -158,73 +154,94 @@ export class TeamService {
       return newTeam;
     });
 
-    const creator = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true, lastName: true, email: true },
-    });
+    // ✅ NUEVO — Asignación automática de licenseSport
+    // (al user, al team y al club si son BETA y no lo tenían)
+    await ensureLicenseSportOnTeamJoin(this.prisma, userId, team.id);
+
+    const refreshedTeam = await this.prisma.team.findUniqueOrThrow({
+  where: { id: team.id },
+  include: { club: true },
+});
+
+const creator = await this.prisma.user.findUnique({
+  where: { id: userId },
+  select: { name: true, lastName: true, email: true },
+});
 
     this.mailService
       .sendAdminNotification({
         eventTitle: 'Nuevo equipo creado',
         icon: '🏆',
         fields: [
-          { label: 'Equipo', value: team.name },
-          { label: 'Deporte', value: team.sport },
-          ...(team.category ? [{ label: 'Categoría', value: team.category }] : []),
-          ...(team.season ? [{ label: 'Temporada', value: team.season }] : []),
-          { label: 'Club', value: team.club?.name ?? '(sin club)' },
+          { label: 'Equipo', value: refreshedTeam.name },
+          { label: 'Deporte', value: refreshedTeam.sport },
+          ...(refreshedTeam.category ? [{ label: 'Categoría', value: refreshedTeam.category }] : []),
+          ...(refreshedTeam.season ? [{ label: 'Temporada', value: refreshedTeam.season }] : []),
+          { label: 'Club', value: refreshedTeam.club?.name ?? '(sin club)' },
           {
             label: 'Creador',
             value: creator
               ? `${creator.name} ${creator.lastName}`
               : '(desconocido)',
           },
-          { label: 'ID', value: team.id },
+          { label: 'ID', value: refreshedTeam.id },
         ],
       })
       .catch((err) => console.error('Error notificando creación de equipo:', err));
 
-    return team;
+    return refreshedTeam;
   }
 
-  async findAllByClub(userId: string, clubId: string) {
-    if (!(await isActiveClubMember(this.prisma, userId, clubId))) {
-      throw new ForbiddenException('No tienes acceso a este club')
-    }
 
-    return this.prisma.team.findMany({
-      where: { clubId },
-      include: {
-        memberships: {
-          where: {
-            roles: { some: { roleRef: { name: 'PLAYER' } } },
-            status: 'ACTIVE',
-          },
-          select: { id: true },
+
+async findAllByClub(userId: string, clubId: string) {
+  if (!(await isActiveClubMember(this.prisma, userId, clubId))) {
+    throw new ForbiddenException('No tienes acceso a este club')
+  }
+
+  const viewerSport = await getViewerLicenseSport(this.prisma, userId)
+
+  return this.prisma.team.findMany({
+    where: {
+      clubId,
+      ...(viewerSport ? { sport: viewerSport } : {}),
+    },
+    include: {
+      memberships: {
+        where: {
+          roles: { some: { roleRef: { name: 'PLAYER' } } },
+          status: 'ACTIVE',
         },
+        select: { id: true },
       },
-    })
+    },
+  })
+}
+
+async findAllByClubWithMembers(userId: string, clubId: string) {
+  if (!(await isActiveClubMember(this.prisma, userId, clubId))) {
+    throw new ForbiddenException('No tienes acceso a este club')
   }
 
-  async findAllByClubWithMembers(userId: string, clubId: string) {
-    if (!(await isActiveClubMember(this.prisma, userId, clubId))) {
-      throw new ForbiddenException('No tienes acceso a este club')
-    }
+  const viewerSport = await getViewerLicenseSport(this.prisma, userId)
 
-    return this.prisma.team.findMany({
-      where: { clubId },
-      include: {
-        memberships: {
-          where: {
-            roles: { some: { roleRef: { name: 'PLAYER' } } },
-            status: 'ACTIVE',
-          },
-          select: { id: true },
+  return this.prisma.team.findMany({
+    where: {
+      clubId,
+      ...(viewerSport ? { sport: viewerSport } : {}),
+    },
+    include: {
+      memberships: {
+        where: {
+          roles: { some: { roleRef: { name: 'PLAYER' } } },
+          status: 'ACTIVE',
         },
+        select: { id: true },
       },
-      orderBy: { name: 'asc' },
-    })
-  }
+    },
+    orderBy: { name: 'asc' },
+  })
+}
 
   async findOne(userId: string, teamId: string) {
     const team = await this.prisma.team.findUnique({
@@ -295,7 +312,6 @@ export class TeamService {
     })
     if (!team) throw new NotFoundException('Equipo no encontrado')
 
-    // ✅ Comprobación real de acceso
     const canView = await canViewTeam(this.prisma, userId, teamId)
     if (!canView) {
       throw new ForbiddenException('No tienes acceso a este equipo')
@@ -333,12 +349,15 @@ export class TeamService {
       throw new ForbiddenException('No tienes permisos para editar este equipo')
     }
 
-    // ✅ NUEVO — Solo el SUPER_ADMIN puede cambiar `licenseType`.
+    // ✅ NUEVO — Solo el SUPER_ADMIN puede cambiar `licenseType` y `licenseSport`.
     // Si otro rol con permiso de edición lo envía, se ignora silenciosamente.
     const data: any = { ...updateTeamDto }
     const superAdmin = await isSuperAdmin(this.prisma, userId)
     if (!superAdmin && 'licenseType' in data) {
       delete data.licenseType
+    }
+    if (!superAdmin && 'licenseSport' in data) {
+      delete data.licenseSport
     }
 
     return this.prisma.team.update({
@@ -415,7 +434,6 @@ export class TeamService {
       throw new ForbiddenException('No tienes acceso a este equipo')
     }
 
-    // Construir filtro de partidos (solo FINISHED)
     const matchWhere: any = {
       teamId,
       status: 'FINISHED',
@@ -438,7 +456,6 @@ export class TeamService {
       if (ids.length > 0) matchWhere.id = { in: ids }
     }
 
-    // 1. Partidos filtrados (para PJ y para sumar opponentScore)
     const matches = await this.prisma.match.findMany({
       where: matchWhere,
       select: {
@@ -453,13 +470,11 @@ export class TeamService {
       0,
     )
 
-    // 2. Todos los rivales de esos partidos con sus stats
     const rows = await this.prisma.matchOpponentPlayer.findMany({
       where: { match: matchWhere },
       include: { stats: true },
     })
 
-    // 3. Sumar todos los stats (excepto points, que viene de opponentScore)
     const total = {
       matchesCount,
       minutes: 0,

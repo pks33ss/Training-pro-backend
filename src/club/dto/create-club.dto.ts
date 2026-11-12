@@ -1,5 +1,5 @@
 import { IsString, IsNotEmpty, IsOptional, IsEmail, IsEnum, ValidateIf } from 'class-validator';
-import { LicenseType } from '@prisma/client';
+import { LicenseType, Sport } from '@prisma/client';
 
 export class CreateClubDto {
   @IsString()
@@ -32,9 +32,14 @@ export class CreateClubDto {
   @IsOptional()
   secondaryColor?: string;
 
-  // ✅ NUEVO — Tipo de licencia. Solo el SUPER_ADMIN puede cambiarlo
-  // (lo ignora el service si el actor no es SUPER_ADMIN).
+  // ✅ NUEVO — Tipo de licencia. Solo el SUPER_ADMIN puede cambiarlo.
   @IsEnum(LicenseType)
   @IsOptional()
   licenseType?: LicenseType;
+
+  // ✅ NUEVO — Deporte restringido (solo aplica cuando licenseType = BETA).
+  // Solo el SUPER_ADMIN puede cambiarlo.
+  @IsEnum(Sport)
+  @IsOptional()
+  licenseSport?: Sport;
 }

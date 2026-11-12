@@ -10,7 +10,7 @@ import {
   Request,
   UseGuards,
   ForbiddenException,
-  NotFoundException, // ✅ Añadir
+  NotFoundException,
 } from '@nestjs/common'
 import { UserService } from './user.service'
 import { AuthGuard } from '../auth/auth.guard'
@@ -58,7 +58,6 @@ export class UserController {
   }
   @Get('me/memberships')
   async getMyMemberships(@Request() req) {
-    // Devuelve las membresías del usuario logueado, sin restricción de SUPER_ADMIN
     return this.userService.getUserMemberships(req.user.id)
   }
   @Put('me')
@@ -66,7 +65,6 @@ export class UserController {
     return this.userService.updateMe(req.user.id, data)
   }
 
-  // ✅ NUEVO — Preferencia de opt-out del propio usuario
   @Put('me/email-optout')
   updateEmailOptOut(@Request() req, @Body() dto: UpdateEmailOptOutDto) {
     return this.userService.updateEmailOptOut(req.user.id, dto.optOut)
@@ -80,7 +78,6 @@ export class UserController {
     return this.userService.updateTacticalBackground(req.user.id, dto)
   }
 
-  // ✅ NUEVO — Preferencias del usuario (pestañas ocultas, etc.)
   @Put('me/preferences')
   updatePreferences(
     @Request() req,
@@ -103,7 +100,7 @@ export class UserController {
   findByUsername(@Request() req, @Param('username') username: string) {
     return this.userService.findByUsername(req.user.id, username)
   }
-   @Get('by-id/:id')
+  @Get('by-id/:id')
   async getById(@Request() req, @Param('id') id: string) {
     return this.userService.findById(req.user.id, id)
   }
@@ -127,7 +124,7 @@ export class UserController {
   // GESTIÓN DE USUARIOS (solo SUPER_ADMIN)
   // ============================================
 
-   @Get()
+  @Get()
   async findAll(
     @Request() req,
     @Query('search') search?: string,
@@ -238,7 +235,7 @@ export class UserController {
     return this.userService.updateRole(id, role)
   }
 
-  // ✅ NUEVO — Cambio de licencia de un usuario (solo SUPER_ADMIN)
+  // ✅ Licencia de un usuario (solo SUPER_ADMIN)
   @Put(':id/license')
   async updateLicense(
     @Request() req,
@@ -250,7 +247,12 @@ export class UserController {
         'Solo los super administradores pueden cambiar la licencia de un usuario',
       )
     }
-    return this.userService.updateLicense(id, dto.licenseType, req.user.id)
+    return this.userService.updateLicense(
+      id,
+      dto.licenseType,
+      dto.licenseSport,
+      req.user.id,
+    )
   }
 
   @Put(':id/ghost-profile')

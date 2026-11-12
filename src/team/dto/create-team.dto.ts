@@ -1,6 +1,7 @@
 import { IsString, IsNotEmpty, IsOptional, IsEnum } from 'class-validator'
-import { LicenseType } from '@prisma/client'
+import { LicenseType, Sport as PrismaSport } from '@prisma/client'
 
+// Enum local para no acoplar el DTO al enum de Prisma en el payload.
 export enum Sport {
   BASKETBALL = 'BASKETBALL',
   PADEL = 'PADEL',
@@ -44,9 +45,14 @@ export class CreateTeamDto {
   @IsOptional()
   logo?: string
 
-  // ✅ NUEVO — Tipo de licencia. Solo el SUPER_ADMIN puede cambiarlo
-  // (lo ignora el service si el actor no es SUPER_ADMIN).
+  // ✅ NUEVO — Tipo de licencia. Solo el SUPER_ADMIN puede cambiarlo.
   @IsEnum(LicenseType)
   @IsOptional()
   licenseType?: LicenseType
+
+  // ✅ NUEVO — Deporte restringido (solo aplica cuando licenseType = BETA).
+  // Solo el SUPER_ADMIN puede cambiarlo.
+  @IsEnum(PrismaSport)
+  @IsOptional()
+  licenseSport?: PrismaSport
 }

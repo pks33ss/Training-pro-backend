@@ -8,9 +8,10 @@
 // viven en `TeamPolicyService`, no aquí.
 
 import { ForbiddenException, NotFoundException } from '@nestjs/common'
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, Sport } from '@prisma/client'
 import { PermissionsService } from '../permissions/permissions.service'
 import { TeamPolicyService } from '../permissions/team-policy.service'
+
 
 type PrismaLike = PrismaClient
 
@@ -53,6 +54,34 @@ export async function assertSuperAdmin(
   if (!(await isSuperAdmin(prisma, userId))) {
     throw new ForbiddenException('Requiere permisos de super administrador')
   }
+}
+
+/**
+ * ✅ NUEVO — Devuelve el `licenseSport` del viewer si su licencia es BETA
+ * y tiene un deporte asignado. Devuelve `null` si:
+ *  - la licencia NO es BETA (no aplica restricción por deporte)
+ *  - o la licencia es BETA pero `licenseSport` está sin asignar
+ *  - o el user no existe / está eliminado
+ *
+ * IMPORTANTE: los SUPER_ADMIN están exentos de la restricción por deporte
+ * (aunque tengan licencia BETA), así que esta función devuelve `null` para
+ * ellos.
+ */
+
+export async function getViewerLicenseSport(
+  prisma: PrismaLike,
+  userId: string,
+): Promise<Sport | null> {
+  if (await isSuperAdmin(prisma, userId)) return null
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { licenseType: true, licenseSport: true, deletedAt: true },
+  })
+  if (!user || user.deletedAt !== null) return null
+  if (user.licenseType !== 'BETA') return null
+  if (user.licenseSport == null) return null
+  return user.licenseSport
 }
 
 // ─────────────────────────────────────────────
@@ -125,7 +154,6 @@ export async function getTeamRoles(
     )
 }
 
-
 async function isParentOfTeamMember(
   prisma: PrismaLike,
   userId: string,
@@ -153,9 +181,15 @@ export async function canViewTeam(
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
-    select: { clubId: true },
+    select: { clubId: true, sport: true },
   })
   if (!team) return false
+
+  // ✅ NUEVO — Restricción de deporte para licencia BETA
+  const viewerLicenseSport = await getViewerLicenseSport(prisma, userId)
+  if (viewerLicenseSport && team.sport !== viewerLicenseSport) {
+    return false
+  }
 
   // 1. ADMIN_CLUB siempre puede
   if (await isClubAdmin(prisma, userId, team.clubId)) return true
@@ -174,8 +208,8 @@ export async function canViewTeam(
       clubMemberRoles: {
         where: {
           OR: [
-            { scope: 'ALL' }, // Permiso para todo el club
-            { scope: 'TEAMS', teamScopes: { some: { teamId } } }, // Permiso específico para ESTE equipo
+            { scope: 'ALL' },
+            { scope: 'TEAMS', teamScopes: { some: { teamId } } },
           ],
         },
         select: {
@@ -193,7 +227,6 @@ export async function canViewTeam(
   })
 
   if (clubMember) {
-    // Si alguno de sus roles (que aplican a este equipo) tiene team:view, devolvemos true
     const hasTeamViewRole = clubMember.clubMemberRoles.some(
       (cmr) => cmr.roleRef.permissions.length > 0,
     )
@@ -230,9 +263,13 @@ export async function canEditTeam(
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
-    select: { clubId: true },
+    select: { clubId: true, sport: true },
   })
   if (!team) return false
+
+  // ✅ NUEVO — Restricción de deporte para licencia BETA
+  const viewerLicenseSport = await getViewerLicenseSport(prisma, userId)
+  if (viewerLicenseSport && team.sport !== viewerLicenseSport) return false
 
   if (await isClubAdmin(prisma, userId, team.clubId)) return true
 
@@ -259,9 +296,13 @@ export async function canDeleteTeam(
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
-    select: { clubId: true },
+    select: { clubId: true, sport: true },
   })
   if (!team) return false
+
+  // ✅ NUEVO — Restricción de deporte para licencia BETA
+  const viewerLicenseSport = await getViewerLicenseSport(prisma, userId)
+  if (viewerLicenseSport && team.sport !== viewerLicenseSport) return false
 
   return permissionsService.can(prisma, userId, 'team', 'delete', {
     clubId: team.clubId,
@@ -273,15 +314,6 @@ export async function canDeleteTeam(
 // ROLES DE EQUIPO
 // ─────────────────────────────────────────────
 
-/**
- * Roles que el actor puede AÑADIR a un miembro del equipo.
- *
- * Reglas:
- *  - SUPER_ADMIN o ADMIN_CLUB del club → todos los roles TEAM.
- *  - Cualquiera con `membership_role:create` en el equipo → todos MENOS ADMIN_TEAM.
- *    Un ADMIN_TEAM (sin ser ADMIN_CLUB) no puede escalar a otros a ADMIN_TEAM
- *    ni nombrarse a sí mismo ADMIN_TEAM.
- */
 export async function getAddableRoles(
   prisma: PrismaLike,
   actorId: string,
@@ -294,9 +326,13 @@ export async function getAddableRoles(
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
-    select: { clubId: true },
+    select: { clubId: true, sport: true },
   })
   if (!team) return []
+
+  // ✅ NUEVO — Restricción de deporte para licencia BETA
+  const viewerLicenseSport = await getViewerLicenseSport(prisma, actorId)
+  if (viewerLicenseSport && team.sport !== viewerLicenseSport) return []
 
   if (await isClubAdmin(prisma, actorId, team.clubId)) return ALL
 
@@ -310,12 +346,6 @@ export async function getAddableRoles(
   return canCreate ? EXCLUDING_ADMIN_TEAM : []
 }
 
-/**
- * Roles que el actor puede QUITAR a un miembro del equipo.
- *
- * Misma regla que `getAddableRoles`: sin ser ADMIN_CLUB, no se puede quitar
- * el rol ADMIN_TEAM (ni a otros ni a uno mismo por esta vía).
- */
 export async function getRemovableRoles(
   prisma: PrismaLike,
   actorId: string,
@@ -323,6 +353,7 @@ export async function getRemovableRoles(
 ): Promise<MembershipRoleValue[]> {
   return getAddableRoles(prisma, actorId, teamId)
 }
+
 export async function canAddRole(
   prisma: PrismaLike,
   actorId: string,
@@ -421,12 +452,6 @@ export async function assertCanManageMembers(
 // ─────────────────────────────────────────────
 // INVITACIONES A EQUIPO (B3)
 // ─────────────────────────────────────────────
-//
-// Invitar a un equipo debe aceptar:
-//   - member:edit     (gestión de miembros del equipo)
-//   - invitation:create (permiso "natural" de invitaciones a nivel club)
-//
-// No exigimos team:edit (demasiado estricto para una invitación).
 
 export async function canInviteToTeam(
   prisma: PrismaLike,
@@ -437,9 +462,13 @@ export async function canInviteToTeam(
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
-    select: { clubId: true },
+    select: { clubId: true, sport: true },
   })
   if (!team) return false
+
+  // ✅ NUEVO — Restricción de deporte para licencia BETA
+  const viewerLicenseSport = await getViewerLicenseSport(prisma, userId)
+  if (viewerLicenseSport && team.sport !== viewerLicenseSport) return false
 
   if (await isClubAdmin(prisma, userId, team.clubId)) return true
 
@@ -521,29 +550,10 @@ export async function assertCanRemoveMember(
 // USER
 // ─────────────────────────────────────────────
 
-/**
- * Scope de "quién puede ver los datos privados de quién" para un viewer
- * concreto. Se calcula UNA VEZ por request y se reutiliza para filtrar
- * listados (miembros de club, clubes, etc.) sin hacer N chequeos.
- *
- * Reglas (equivalentes a `canViewUserPrivateData` target-por-target):
- *  - El propio user siempre puede verse a sí mismo (se comprueba por id en
- *    el punto de uso, no aquí).
- *  - SUPER_ADMIN puede ver a cualquiera.
- *  - ADMIN_CLUB de un club compartido.
- *  - COACH / ASSISTANT / ADMIN_TEAM de un equipo compartido.
- *  - Tutor (PARENT) activo del target.
- *
- * Devuelve además los conjuntos de clubes/equipos del viewer para que el
- * llamante pueda aplicar la regla "el target está en alguno de estos".
- */
 export interface ViewerPrivateDataScope {
   isSuperAdmin: boolean
-  /** Clubes donde el viewer es ADMIN_CLUB activo. */
   adminClubIds: string[]
-  /** Equipos donde el viewer tiene rol staff activo. */
   staffTeamIds: string[]
-  /** Users de los que el viewer es tutor activo (PARENT). */
   tutorOfUserIds: string[]
 }
 
@@ -594,10 +604,6 @@ export async function getViewerPrivateDataScope(
   }
 }
 
-/**
- * Comprueba si un target cae dentro del scope del viewer.
- * `targetUserId` puede ser el propio viewer → siempre true.
- */
 export function isUserInPrivateDataScope(
   scope: ViewerPrivateDataScope,
   viewerId: string,
@@ -609,12 +615,6 @@ export function isUserInPrivateDataScope(
   return false
 }
 
-/**
- * Versión "por target" de `getViewerPrivateDataScope`. Mantiene la firma
- * pública original para compatibilidad con el resto del código. Internamente
- * usa el helper por-lote + un chequeo extra de pertenencia a club/equipo
- * para no degradar el caso de uso suelto.
- */
 export async function canViewUserPrivateData(
   prisma: PrismaLike,
   actorId: string,
@@ -623,7 +623,6 @@ export async function canViewUserPrivateData(
   if (actorId === targetUserId) return true
   if (await isSuperAdmin(prisma, actorId)) return true
 
-  // Tutor activo del target
   const isParent = await prisma.tutorRelationship.findFirst({
     where: {
       tutorUserId: actorId,
@@ -634,8 +633,6 @@ export async function canViewUserPrivateData(
   })
   if (isParent) return true
 
-  // Target en algún equipo del viewer con rol staff, o en algún club
-  // donde el viewer sea ADMIN_CLUB.
   const targetTeams = await prisma.teamMembership.findMany({
     where: { userId: targetUserId, status: 'ACTIVE' },
     select: { teamId: true },
@@ -836,9 +833,14 @@ export async function resolveViewerStatsRole(
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
-    select: { clubId: true },
+    select: { clubId: true, sport: true },
   })
   if (!team) return 'VISITOR'
+
+  const viewerLicenseSport = await getViewerLicenseSport(prisma, userId)
+  if (viewerLicenseSport && team.sport !== viewerLicenseSport) {
+    return 'VISITOR'
+  }
 
   if (await isClubAdmin(prisma, userId, team.clubId)) return 'ADMIN_TEAM'
 
@@ -1192,23 +1194,12 @@ export async function assertCanDeletePayment(
   if (!(await canDeletePayment(prisma, userId, paymentId))) {
     throw new ForbiddenException('No tienes permisos para borrar este pago')
   }
-
-
 }
+
 // ─────────────────────────────────────────────
 // STATS EN VIVO
 // ─────────────────────────────────────────────
 
-/**
- * Permiso para gestionar stats en vivo de un equipo (anotar).
- *
- * Reglas:
- * - SUPER_ADMIN
- * - ADMIN_CLUB del club del equipo
- * - Staff del equipo: COACH, ASSISTANT, ADMIN_TEAM
- * - (PLAYER queda fuera: solo puede VER stats, no anotar)
- * - (PARENT queda fuera)
- */
 export async function canManageLiveStats(
   prisma: PrismaLike,
   userId: string,
@@ -1218,15 +1209,16 @@ export async function canManageLiveStats(
 
   const team = await prisma.team.findUnique({
     where: { id: teamId },
-    select: { clubId: true },
+    select: { clubId: true, sport: true },
   })
   if (!team) return false
 
+  // ✅ NUEVO — Restricción de deporte para licencia BETA
+  const viewerLicenseSport = await getViewerLicenseSport(prisma, userId)
+  if (viewerLicenseSport && team.sport !== viewerLicenseSport) return false
+
   if (await isClubAdmin(prisma, userId, team.clubId)) return true
 
-  // ✅ Consultamos el nuevo sistema de permisos
-  // Permitimos a quien tenga stats:create (que es lo que abrirá el modal)
-  // O stats:edit (por si en el futuro un rol tiene solo edición)
   const canCreate = await permissionsService.can(
     prisma,
     userId,
@@ -1245,8 +1237,6 @@ export async function canManageLiveStats(
   )
   if (canEdit) return true
 
-  // Opcional: si quieres mantener compatibilidad con los roles hardcodeados
-  // por si tienes algún rol antiguo que no haya migrado bien
   const roles = await getTeamRoles(prisma, userId, teamId)
   return roles.some((r) =>
     ['COACH', 'ASSISTANT', 'ADMIN_TEAM'].includes(r),

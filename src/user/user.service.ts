@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, ConflictException, UnauthorizedException, ForbiddenException } from '@nestjs/common'
-import { LicenseType } from '@prisma/client'
+import { LicenseType, Sport } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import * as bcrypt from 'bcrypt'
 import { CreateGhostDto } from './dto/create-ghost.dto'
@@ -15,7 +15,8 @@ import {
   canViewUserPrivateData,
   getViewerPrivateDataScope,
   isUserInPrivateDataScope,
-  canManageMembers, 
+  canManageMembers,
+  getViewerLicenseSport,
 } from '../common/access'
 import { UpdatePlayerProfileDto } from './dto/update-player-profile.dto'
 import { CreateInjuryDto } from './dto/create-injury.dto'
@@ -28,6 +29,7 @@ import {
   resolveTeamRoleId,
 } from '../permissions/resolve-role-id'
 import { CloudinaryService } from '../cloudinary/cloudinary.service'
+import { ensureLicenseSportOnTeamJoin } from '../common/license-sport'
 
 @Injectable()
 export class UserService {
@@ -70,8 +72,8 @@ export class UserService {
         name: true,
         lastName: true,
         role: true,
-        // ✅ NUEVO — necesario para el panel /admin/users de la Fase 2
         licenseType: true,
+        licenseSport: true,
         createdAt: true,
         isGhost: true,
         clubs: {
@@ -135,8 +137,8 @@ export class UserService {
         avatar: true,
         bio: true,
         role: true,
-        // ✅ NUEVO
         licenseType: true,
+        licenseSport: true,
         isGhost: true,
         memberships: {
           where: { status: 'ACTIVE' },
@@ -160,9 +162,8 @@ export class UserService {
       throw new NotFoundException('Usuario no encontrado')
     }
 
-    // Filtrado de datos privados (igual que en findByUsername)
     const scope = await getViewerPrivateDataScope(this.prisma, viewerId)
-   const canSeePrivate = isUserInPrivateDataScope(scope, viewerId, user.id)
+    const canSeePrivate = isUserInPrivateDataScope(scope, viewerId, user.id)
     const canSeePrivateFull = canSeePrivate
       ? true
       : await canViewUserPrivateData(this.prisma, viewerId, user.id)
@@ -184,8 +185,8 @@ export class UserService {
         name: true,
         lastName: true,
         role: true,
-        // ✅ NUEVO
         licenseType: true,
+        licenseSport: true,
         createdAt: true,
         clubs: {
           include: {
@@ -241,8 +242,8 @@ export class UserService {
         name: true,
         lastName: true,
         role: true,
-        // ✅ NUEVO — para no perder el dato al cambiar rol desde el panel
         licenseType: true,
+        licenseSport: true,
       },
     })
   }
@@ -251,14 +252,10 @@ export class UserService {
   // CAMBIO DE LICENCIA (solo SUPER_ADMIN)
   // ============================================
 
-  /**
-   * Actualiza el `licenseType` de un usuario.
-   * Solo el SUPER_ADMIN puede invocarlo. La comprobación de rol se hace
-   * aquí (defensa en profundidad) además de en el controller.
-   */
   async updateLicense(
     targetUserId: string,
     licenseType: LicenseType,
+    licenseSport: Sport | null | undefined,
     actorId: string,
   ) {
     if (!(await isSuperAdmin(this.prisma, actorId))) {
@@ -282,7 +279,10 @@ export class UserService {
 
     return this.prisma.user.update({
       where: { id: targetUserId },
-      data: { licenseType },
+      data: {
+        licenseType,
+        ...(licenseSport !== undefined && { licenseSport }),
+      },
       select: {
         id: true,
         email: true,
@@ -291,6 +291,7 @@ export class UserService {
         username: true,
         role: true,
         licenseType: true,
+        licenseSport: true,
       },
     })
   }
@@ -346,10 +347,6 @@ export class UserService {
     }
   }
 
-  // ============================================
-  // DELETE ME (borrar mi propia cuenta)
-  // ============================================
-
   async deleteMe(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -393,10 +390,6 @@ export class UserService {
     }
   }
 
-  // ============================================
-  // HARD DELETE (solo SUPER_ADMIN)
-  // ============================================
-
   async hardDelete(id: string, actorId: string) {
     if (!(await isSuperAdmin(this.prisma, actorId))) {
       throw new ForbiddenException('Solo los super administradores pueden eliminar usuarios')
@@ -422,10 +415,6 @@ export class UserService {
       userId: id,
     }
   }
-
-  // ============================================
-  // NOTIFICAR A COACHES
-  // ============================================
 
   private async notifyCoachesOfDeparture(userId: string): Promise<void> {
     const memberships = await this.prisma.teamMembership.findMany({
@@ -477,10 +466,6 @@ export class UserService {
     }
   }
 
-  // ============================================
-  // CREAR USUARIO DESDE ADMIN
-  // ============================================
-
   async create(data: { email: string; password: string; name: string; lastName: string; role?: string }) {
     const existingUser = await this.prisma.user.findUnique({
       where: { email: data.email },
@@ -499,7 +484,6 @@ export class UserService {
         name: data.name,
         lastName: data.lastName,
         role: (data.role as any) || 'USER',
-        // licenseType: no se pasa → @default(BETA) del schema.
       },
       select: {
         id: true,
@@ -507,16 +491,12 @@ export class UserService {
         name: true,
         lastName: true,
         role: true,
-        // ✅ NUEVO
         licenseType: true,
+        licenseSport: true,
         createdAt: true,
       },
     })
   }
-
-  // ============================================
-  // PERFIL DEL USUARIO
-  // ============================================
 
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -607,10 +587,6 @@ export class UserService {
     return { message: 'Contraseña actualizada correctamente' }
   }
 
-  // ============================================
-  // RESETEO DE CONTRASEÑA
-  // ============================================
-
   async resetPassword(userId: string, newPassword: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -635,11 +611,8 @@ export class UserService {
     return { message: 'Contraseña reseteada correctamente' }
   }
 
-  // ============================================
-  // PERFIL PROPIO (getMe / updateMe)
-  // ============================================
-
   async getMe(userId: string) {
+    const viewerLicenseSport = await getViewerLicenseSport(this.prisma, userId)
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
@@ -652,8 +625,8 @@ export class UserService {
         avatar: true,
         bio: true,
         role: true,
-        // ✅ NUEVO — por si el frontend quiere mostrar la propia licencia
         licenseType: true,
+        licenseSport: true,
         isGhost: true,
         createdAt: true,
         emailNotificationsEnabled: true,
@@ -663,7 +636,10 @@ export class UserService {
         tacticalBackgroundMode: true,
         hiddenTabs: true,
         memberships: {
-          where: { status: { in: ['ACTIVE', 'PENDING'] } },
+          where: {
+          status: { in: ['ACTIVE', 'PENDING'] },
+          ...(viewerLicenseSport && { team: { sport: viewerLicenseSport } }),
+                      },
           select: {
             id: true,
             status: true,
@@ -758,10 +734,6 @@ export class UserService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } })
     if (!user) throw new NotFoundException('Usuario no encontrado')
 
-    // ✅ NUEVO: si el avatar viene en base64 (data:...), lo subimos a
-    // Cloudinary y guardamos solo la URL resultante. Así evitamos que el
-    // payload de /users/me (y de cualquier endpoint que devuelva el avatar)
-    // se infle con imágenes embebidas.
     let avatarToSave = data.avatar
     if (
       typeof avatarToSave === 'string' &&
@@ -805,10 +777,6 @@ export class UserService {
     })
   }
 
-  // ============================================
-  // PREFERENCIAS DE EMAIL (opt-out del propio usuario)
-  // ============================================
-
   async updateEmailOptOut(userId: string, optOut: boolean) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -828,10 +796,6 @@ export class UserService {
       },
     })
   }
-
-  // ============================================
-  // BÚSQUEDA DE USUARIOS
-  // ============================================
 
   async searchUsers(userId: string, query: string) {
     if (!query || query.trim().length < 2) {
@@ -957,14 +921,8 @@ export class UserService {
       throw new NotFoundException('Usuario no encontrado')
     }
 
-    // Filtrado de datos privados según el scope del viewer.
-    // El email/phone solo se devuelven si el viewer tiene derecho a verlos.
     const scope = await getViewerPrivateDataScope(this.prisma, viewerId)
     const canSeePrivate = isUserInPrivateDataScope(scope, viewerId, user.id)
-
-    // El scope por-lote no incluye comprobaciones "target está en mi club/equipo"
-    // (eso se resuelve al filtrar listados). Para el caso de un único target,
-    // caemos a la comprobación completa que sí lo verifica.
     const canSeePrivateFull = canSeePrivate
       ? true
       : await canViewUserPrivateData(this.prisma, viewerId, user.id)
@@ -1170,6 +1128,9 @@ export class UserService {
       return user
     })
 
+    // ✅ Asignación automática de licenseSport (al user, team y club)
+    await ensureLicenseSportOnTeamJoin(this.prisma, newUser.id, dto.teamId)
+
     let invitationSent = false
     if (dto.sendInvitation && newUser.email) {
       invitationSent = await this.sendGhostInvitation(
@@ -1313,6 +1274,9 @@ export class UserService {
       },
       update: { isActive: true },
     })
+
+    // ✅ Asignación automática de licenseSport
+    await ensureLicenseSportOnTeamJoin(this.prisma, ghostId, dto.teamId)
   }
 
   private async sendGhostInvitation(
@@ -1393,7 +1357,7 @@ export class UserService {
   // PERMISOS DE VISUALIZACIÓN DEL PERFIL
   // ============================================
 
-      async getUserPermissions(viewerId: string, targetUserId: string) {
+  async getUserPermissions(viewerId: string, targetUserId: string) {
     const target = await this.prisma.user.findUnique({
       where: { id: targetUserId },
       select: { id: true, deletedAt: true },
@@ -1415,9 +1379,6 @@ export class UserService {
       canViewUserPrivateData(this.prisma, viewerId, targetUserId),
     ])
 
-    // ✅ teamIds donde el viewer puede gestionar memberships del target.
-    // El frontend usará esta lista para mostrar el botón "Editar dorsal y
-    // posición" SOLO en las memberships de equipos que el viewer gestiona.
     const targetTeams = await this.prisma.teamMembership.findMany({
       where: { userId: targetUserId, status: 'ACTIVE' },
       select: { teamId: true },
@@ -1639,10 +1600,6 @@ export class UserService {
     return { deleted: true, id: injuryId }
   }
 
-  // ============================================
-  // FONDOS DE PIZARRA TÁCTICA
-  // ============================================
-
   async updateTacticalBackground(
     userId: string,
     data: {
@@ -1680,10 +1637,6 @@ export class UserService {
       },
     })
   }
-
-  // ============================================
-  // PREFERENCIAS DEL USUARIO
-  // ============================================
 
   async updatePreferences(
     userId: string,

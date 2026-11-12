@@ -19,8 +19,9 @@ import {
   canAddRole,
   canRemoveRole,
   canViewTeam,
+  getViewerLicenseSport,
   MembershipRoleValue,
-} from '../common/access'
+  } from '../common/access'
 import { resolveTeamRoleId } from '../permissions/resolve-role-id'
 import { normalizeMembershipRolesList } from '../common/serialize'
 import { PermissionsService } from '../permissions/permissions.service'
@@ -38,8 +39,14 @@ export class MembershipsService {
   // ============================================
 
   async findMine(userId: string) {
-    return this.prisma.teamMembership.findMany({
-      where: { userId },
+  // ✅ NUEVO — Deporte restringido para licencia BETA
+  const viewerLicenseSport = await getViewerLicenseSport(this.prisma, userId)
+
+  return this.prisma.teamMembership.findMany({
+      where: {
+      userId,
+      ...(viewerLicenseSport && { team: { sport: viewerLicenseSport } }),
+    },
       include: {
         team: {
           include: {
@@ -52,6 +59,7 @@ export class MembershipsService {
                 secondaryColor: true,
               },
             },
+        
           },
         },
         season: true,

@@ -14,6 +14,7 @@ import { ensureClubMemberForTeam } from '../club/utils/ensure-club-member'
 import { assertCanManageMembers } from '../common/access'
 import { resolveTeamRoleId } from '../permissions/resolve-role-id'
 import { assertCanInviteToTeam } from '../common/access'
+import { ensureLicenseSportOnTeamJoin } from '../common/license-sport'
 
 const INVITATION_EXPIRY_DAYS = 7
 
@@ -27,13 +28,8 @@ export class InvitationsService {
   ) {}
 
   private async verifyCanInvite(userId: string, teamId: string) {
-    // B3: aceptar member:edit || invitation:create (antes team:edit)
     await assertCanInviteToTeam(this.prisma, userId, teamId)
   }
-
-  // ============================================
-  // REGLA DE RESOLUCIÓN DE ENVÍO
-  // ============================================
 
   private shouldSendEmailToUser(user: {
     emailNotificationsEnabled: boolean
@@ -44,14 +40,9 @@ export class InvitationsService {
     return true
   }
 
-  // ============================================
-  // CREAR INVITACIÓN
-  // ============================================
-
   async create(userId: string, dto: CreateInvitationDto) {
     await this.verifyCanInvite(userId, dto.teamId)
 
-    // Resolver roleId antes de crear la invitación
     const team = await this.prisma.team.findUnique({
       where: { id: dto.teamId },
       select: { clubId: true },
@@ -178,10 +169,6 @@ export class InvitationsService {
       },
     })
 
-    // ============================================
-    // ENVÍO DE EMAIL
-    // ============================================
-
     let emailSent = false
     let emailError: string | undefined = undefined
 
@@ -245,10 +232,6 @@ export class InvitationsService {
     }
   }
 
-  // ============================================
-  // OBTENER INVITACIÓN POR CÓDIGO (público)
-  // ============================================
-
   async findByCode(code: string) {
     const invitation = await this.prisma.pendingInvitation.findUnique({
       where: { code },
@@ -275,10 +258,6 @@ export class InvitationsService {
 
     return invitation
   }
-
-  // ============================================
-  // MARCAR COMO USADA
-  // ============================================
 
   async markAsUsed(code: string, userId: string) {
     const invitation = await this.prisma.pendingInvitation.findUnique({
@@ -323,6 +302,8 @@ export class InvitationsService {
       })
 
       await ensureClubMemberForTeam(this.prisma, userId, invitation.teamId)
+      // ✅ Asignación automática de licenseSport
+      await ensureLicenseSportOnTeamJoin(this.prisma, userId, invitation.teamId)
     }
 
     return this.prisma.pendingInvitation.update({
@@ -334,10 +315,6 @@ export class InvitationsService {
       },
     })
   }
-
-  // ============================================
-  // LISTAR INVITACIONES DE UN EQUIPO
-  // ============================================
 
   async findByTeam(userId: string, teamId: string) {
     await this.verifyCanInvite(userId, teamId)
@@ -356,10 +333,6 @@ export class InvitationsService {
       orderBy: { createdAt: 'desc' },
     })
   }
-
-  // ============================================
-  // REVOCAR INVITACIÓN
-  // ============================================
 
   async revoke(userId: string, invitationId: string) {
     const invitation = await this.prisma.pendingInvitation.findUnique({
@@ -384,20 +357,12 @@ export class InvitationsService {
     })
   }
 
-  // ============================================
-  // UTILS
-  // ============================================
-
   private buildInvitationLink(code: string): string {
     const baseUrl =
       process.env.FRONTEND_URL || 'https://app.joinsportapp.com'
     const cleanBase = baseUrl.replace(/\/$/, '')
     return `${cleanBase}/register?invitation=${code}`
   }
-
-  // ============================================
-  // INVITACIONES DEL USUARIO LOGUEADO
-  // ============================================
 
   async findMineForUser(userId: string) {
     return this.prisma.pendingInvitation.findMany({
@@ -543,6 +508,9 @@ export class InvitationsService {
     })
 
     await ensureClubMemberForTeam(this.prisma, userId, invitation.teamId)
+
+    // ✅ Asignación automática de licenseSport
+    await ensureLicenseSportOnTeamJoin(this.prisma, userId, invitation.teamId)
 
     await this.prisma.pendingInvitation.update({
       where: { id: invitation.id },
