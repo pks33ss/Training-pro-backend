@@ -109,6 +109,13 @@ export class ClubService {
       cleanColors.secondaryColor = data.secondaryColor;
     }
 
+    // ✅ NUEVO — Solo el SUPER_ADMIN puede fijar una licencia distinta a BETA
+    // al crear un club. Si no es SUPER_ADMIN o no envía `licenseType`,
+    // se aplica el @default(BETA) del schema.
+    const superAdmin = await isSuperAdmin(this.prisma, userId);
+    const licenseOverride =
+      superAdmin && data.licenseType ? { licenseType: data.licenseType } : {};
+
     let club;
     try {
       club = await this.prisma.$transaction(
@@ -121,6 +128,7 @@ export class ClubService {
               phone: data.phone,
               email: data.email,
               ...cleanColors,
+              ...licenseOverride,
             },
           });
 
@@ -444,6 +452,14 @@ export class ClubService {
     }
 
     const data = normalizeOptionalClubStrings(updateClubDto);
+
+    // ✅ NUEVO — Solo el SUPER_ADMIN puede cambiar `licenseType`.
+    // Si un ADMIN_CLUB (u otro rol con permiso de edición) lo envía,
+    // se ignora silenciosamente.
+    const superAdmin = await isSuperAdmin(this.prisma, userId);
+    if (!superAdmin && 'licenseType' in data) {
+      delete (data as any).licenseType;
+    }
 
     return this.prisma.club.update({
       where: { id: clubId },

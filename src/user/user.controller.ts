@@ -21,6 +21,7 @@ import { UpdateInjuryDto } from './dto/update-injury.dto'
 import { UpdateEmailOptOutDto } from './dto/update-email-optout.dto'
 import { UpdateTacticalBackgroundDto } from './dto/update-tactical-background.dto'
 import { UpdatePreferencesDto } from './dto/update-preferences.dto'
+import { UpdateUserLicenseDto } from './dto/update-user-license.dto'
 import { ApiOperation } from '@nestjs/swagger'
 
 @Controller('users')
@@ -237,6 +238,21 @@ export class UserController {
     return this.userService.updateRole(id, role)
   }
 
+  // ✅ NUEVO — Cambio de licencia de un usuario (solo SUPER_ADMIN)
+  @Put(':id/license')
+  async updateLicense(
+    @Request() req,
+    @Param('id') id: string,
+    @Body() dto: UpdateUserLicenseDto,
+  ) {
+    if (req.user.role !== 'SUPER_ADMIN') {
+      throw new ForbiddenException(
+        'Solo los super administradores pueden cambiar la licencia de un usuario',
+      )
+    }
+    return this.userService.updateLicense(id, dto.licenseType, req.user.id)
+  }
+
   @Put(':id/ghost-profile')
   async updateGhostProfile(
     @Request() req,
@@ -287,6 +303,4 @@ export class UserController {
 
     return this.userService.resetPassword(id, newPassword)
   }
-
- 
 }

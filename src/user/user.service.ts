@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, ConflictException, UnauthorizedException, ForbiddenException } from '@nestjs/common'
+import { LicenseType } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import * as bcrypt from 'bcrypt'
 import { CreateGhostDto } from './dto/create-ghost.dto'
@@ -69,6 +70,8 @@ export class UserService {
         name: true,
         lastName: true,
         role: true,
+        // ✅ NUEVO — necesario para el panel /admin/users de la Fase 2
+        licenseType: true,
         createdAt: true,
         isGhost: true,
         clubs: {
@@ -132,6 +135,8 @@ export class UserService {
         avatar: true,
         bio: true,
         role: true,
+        // ✅ NUEVO
+        licenseType: true,
         isGhost: true,
         memberships: {
           where: { status: 'ACTIVE' },
@@ -179,6 +184,8 @@ export class UserService {
         name: true,
         lastName: true,
         role: true,
+        // ✅ NUEVO
+        licenseType: true,
         createdAt: true,
         clubs: {
           include: {
@@ -234,6 +241,56 @@ export class UserService {
         name: true,
         lastName: true,
         role: true,
+        // ✅ NUEVO — para no perder el dato al cambiar rol desde el panel
+        licenseType: true,
+      },
+    })
+  }
+
+  // ============================================
+  // CAMBIO DE LICENCIA (solo SUPER_ADMIN)
+  // ============================================
+
+  /**
+   * Actualiza el `licenseType` de un usuario.
+   * Solo el SUPER_ADMIN puede invocarlo. La comprobación de rol se hace
+   * aquí (defensa en profundidad) además de en el controller.
+   */
+  async updateLicense(
+    targetUserId: string,
+    licenseType: LicenseType,
+    actorId: string,
+  ) {
+    if (!(await isSuperAdmin(this.prisma, actorId))) {
+      throw new ForbiddenException(
+        'Solo los super administradores pueden cambiar la licencia de un usuario',
+      )
+    }
+
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, deletedAt: true },
+    })
+    if (!target) {
+      throw new NotFoundException('Usuario no encontrado')
+    }
+    if (target.deletedAt) {
+      throw new ConflictException(
+        'No se puede cambiar la licencia de un usuario eliminado',
+      )
+    }
+
+    return this.prisma.user.update({
+      where: { id: targetUserId },
+      data: { licenseType },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        lastName: true,
+        username: true,
+        role: true,
+        licenseType: true,
       },
     })
   }
@@ -442,6 +499,7 @@ export class UserService {
         name: data.name,
         lastName: data.lastName,
         role: (data.role as any) || 'USER',
+        // licenseType: no se pasa → @default(BETA) del schema.
       },
       select: {
         id: true,
@@ -449,6 +507,8 @@ export class UserService {
         name: true,
         lastName: true,
         role: true,
+        // ✅ NUEVO
+        licenseType: true,
         createdAt: true,
       },
     })
@@ -592,6 +652,8 @@ export class UserService {
         avatar: true,
         bio: true,
         role: true,
+        // ✅ NUEVO — por si el frontend quiere mostrar la propia licencia
+        licenseType: true,
         isGhost: true,
         createdAt: true,
         emailNotificationsEnabled: true,

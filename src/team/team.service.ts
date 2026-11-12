@@ -13,6 +13,7 @@ import {
   getRemovableRoles,
   getAddableRoles,
   isActiveClubMember,
+  isSuperAdmin,
 } from '../common/access'
 import { resolveTeamRoleId } from '../permissions/resolve-role-id'
 import { normalizeMembershipRolesList } from '../common/serialize'
@@ -41,6 +42,15 @@ export class TeamService {
       'ADMIN_TEAM',
     );
 
+    // ✅ NUEVO — Solo el SUPER_ADMIN puede fijar una licencia distinta a BETA
+    // al crear un equipo. Si no es SUPER_ADMIN o no envía `licenseType`,
+    // se aplica el @default(BETA) del schema.
+    const superAdmin = await isSuperAdmin(this.prisma, userId);
+    const licenseOverride =
+      superAdmin && createTeamDto.licenseType
+        ? { licenseType: createTeamDto.licenseType }
+        : {};
+
     const team = await this.prisma.$transaction(async (tx) => {
       // 1) Crear el equipo
       const newTeam = await tx.team.create({
@@ -53,6 +63,7 @@ export class TeamService {
           primaryColor: createTeamDto.primaryColor,
           secondaryColor: createTeamDto.secondaryColor,
           logo: createTeamDto.logo,
+          ...licenseOverride,
         },
         include: {
           club: true,
@@ -322,9 +333,17 @@ export class TeamService {
       throw new ForbiddenException('No tienes permisos para editar este equipo')
     }
 
+    // ✅ NUEVO — Solo el SUPER_ADMIN puede cambiar `licenseType`.
+    // Si otro rol con permiso de edición lo envía, se ignora silenciosamente.
+    const data: any = { ...updateTeamDto }
+    const superAdmin = await isSuperAdmin(this.prisma, userId)
+    if (!superAdmin && 'licenseType' in data) {
+      delete data.licenseType
+    }
+
     return this.prisma.team.update({
       where: { id: teamId },
-      data: updateTeamDto,
+      data,
     })
   }
 

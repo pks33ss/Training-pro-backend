@@ -1,4 +1,5 @@
 import { IsString, IsNotEmpty, IsOptional, IsEnum } from 'class-validator'
+import { LicenseType } from '@prisma/client'
 
 export enum Sport {
   BASKETBALL = 'BASKETBALL',
@@ -42,4 +43,10 @@ export class CreateTeamDto {
   @IsString()
   @IsOptional()
   logo?: string
+
+  // ✅ NUEVO — Tipo de licencia. Solo el SUPER_ADMIN puede cambiarlo
+  // (lo ignora el service si el actor no es SUPER_ADMIN).
+  @IsEnum(LicenseType)
+  @IsOptional()
+  licenseType?: LicenseType
 }

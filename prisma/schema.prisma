@@ -11,20 +11,21 @@ datasource db {
 // ============================================
 
 model User {
-  id        String     @id @default(cuid())
-  email     String?    @unique
-  password  String?
-  name      String
-  lastName  String
-  phone     String?
-  avatar    String?
-  bio       String?
-  role      GlobalRole @default(USER)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  username  String?    @unique
-  isGhost   Boolean    @default(false)
-  deletedAt DateTime?
+  id          String      @id @default(cuid())
+  email       String?     @unique
+  password    String?
+  name        String
+  lastName    String
+  phone       String?
+  avatar      String?
+  bio         String?
+  role        GlobalRole  @default(USER)
+  licenseType LicenseType @default(BETA)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  username    String?     @unique
+  isGhost     Boolean     @default(false)
+  deletedAt   DateTime?
 
   emailNotificationsEnabled Boolean @default(true)
   emailOptOut               Boolean @default(false)
@@ -67,7 +68,7 @@ model User {
   attendances        Attendance[]
   matchCallups       MatchCallup[]
   matchExclusions    MatchExcludedPlayer[]
-  matchViewers MatchViewer[]
+  matchViewers       MatchViewer[]
 
   playerProfile PlayerProfile?
   injuries      Injury[]
@@ -99,18 +100,19 @@ model User {
 }
 
 model Club {
-  id                      String   @id @default(cuid())
+  id                      String      @id @default(cuid())
   name                    String
   description             String?
   address                 String?
   phone                   String?
   email                   String?
   logo                    String?
-  primaryColor            String?  @default("#00E676")
-  secondaryColor          String?  @default("#0A0A0A")
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
-  paymentRemindersEnabled Boolean  @default(true)
+  primaryColor            String?     @default("#00E676")
+  secondaryColor          String?     @default("#0A0A0A")
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+  paymentRemindersEnabled Boolean     @default(true)
+  licenseType             LicenseType @default(BETA)
 
   members         ClubMember[]
   teams           Team[]
@@ -123,13 +125,13 @@ model Club {
 }
 
 model ClubMember {
-  id       String   @id @default(cuid())
-  userId   String
-  clubId   String
-  roleId   String
-  isActive Boolean  @default(true)
-  joinedAt DateTime @default(now())
-    // Lote 4.A — NUEVO
+  id              String           @id @default(cuid())
+  userId          String
+  clubId          String
+  roleId          String
+  isActive        Boolean          @default(true)
+  joinedAt        DateTime         @default(now())
+  // Lote 4.A — NUEVO
   clubMemberRoles ClubMemberRole[]
 
   user    User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -141,18 +143,19 @@ model ClubMember {
 }
 
 model Team {
-  id             String   @id @default(cuid())
-  name           String
-  sport          Sport    @default(BASKETBALL)
-  category       String?
-  season         String?
-  clubId         String
-  primaryColor   String?
-  secondaryColor String?
-  logo           String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-    // Lote 4.A — NUEVO
+  id                       String                    @id @default(cuid())
+  name                     String
+  sport                    Sport                     @default(BASKETBALL)
+  category                 String?
+  season                   String?
+  clubId                   String
+  primaryColor             String?
+  secondaryColor           String?
+  logo                     String?
+  createdAt                DateTime                  @default(now())
+  updatedAt                DateTime                  @updatedAt
+  licenseType              LicenseType               @default(BETA)
+  // Lote 4.A — NUEVO
   clubMemberRoleTeamScopes ClubMemberRoleTeamScope[]
 
   club Club @relation(fields: [clubId], references: [id], onDelete: Cascade)
@@ -408,7 +411,7 @@ model MembershipRole {
   createdAt    DateTime @default(now())
 
   membership TeamMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
-  roleRef Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  roleRef    Role           @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@unique([membershipId, roleId])
   @@index([membershipId])
@@ -418,6 +421,18 @@ model MembershipRole {
 enum GlobalRole {
   SUPER_ADMIN
   USER
+}
+
+/// Licencia asignable a usuarios, clubes y equipos.
+/// - BETA: licencia inicial para todos los usuarios, clubes y equipos
+///   existentes y nuevos (fase beta del producto).
+/// - FREE / BASIC / PRO / ENTERPRISE: niveles comerciales (futuro).
+enum LicenseType {
+  BETA
+  FREE
+  BASIC
+  PRO
+  ENTERPRISE
 }
 
 // ============================================
@@ -430,16 +445,16 @@ enum RoleScope {
 }
 
 model Role {
-  id          String    @id @default(cuid())
-  clubId      String
-  scope       RoleScope
-  name        String
-  description String?
-  isSystem    Boolean   @default(false)
-  isDefault   Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-    // Lote 4.A — NUEVO
+  id              String           @id @default(cuid())
+  clubId          String
+  scope           RoleScope
+  name            String
+  description     String?
+  isSystem        Boolean          @default(false)
+  isDefault       Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  // Lote 4.A — NUEVO
   clubMemberRoles ClubMemberRole[]
 
   club               Club                @relation(fields: [clubId], references: [id], onDelete: Cascade)
@@ -529,7 +544,7 @@ model Match {
   notes           String?
   subMatchesCount Int?
   setsPerSubMatch Int?
-    manualWinner String? // 'TEAM' | 'OPPONENT' | null (para empates en pádel)
+  manualWinner    String? // 'TEAM' | 'OPPONENT' | null (para empates en pádel)
 
   gamePlan String?
   lineup   Json?
@@ -554,7 +569,7 @@ model Match {
   liveStream      LiveStream?
   statSessions    StatSession[]
   opponentPlayers MatchOpponentPlayer[]
-  viewers MatchViewer[]
+  viewers         MatchViewer[]
 
   // ── Stats en vivo (Lote 1) ────────────────────────────────
   // true mientras hay una sesión de anotación en vivo abierta.
@@ -629,13 +644,12 @@ model MatchPlayerStats {
   turnovers   Int  @default(0)
   fouls       Int  @default(0)
 
-
- // ── Tiros (convención FIBA: FGM/FGA incluyen los triples) ─────
+  // ── Tiros (convención FIBA: FGM/FGA incluyen los triples) ─────
   // 2P y 3P son la fuente de verdad editables.
   // FGM = 2PM + 3PM y FGA = 2PA + 3PA se recalculan en el backend
   // en cada escritura. PTS = 2*2PM + 3*3PM + FTM también.
-  twoPointersMade      Int @default(0)  // ← NUEVO
-  twoPointersAttempted Int @default(0)  // ← NUEVO
+  twoPointersMade        Int @default(0) // ← NUEVO
+  twoPointersAttempted   Int @default(0) // ← NUEVO
   fieldGoalsMade         Int @default(0)
   fieldGoalsAttempted    Int @default(0)
   threePointersMade      Int @default(0)
@@ -1332,8 +1346,8 @@ model OpponentPlayerStats {
   turnovers   Int  @default(0)
   fouls       Int  @default(0)
 
-  twoPointersMade      Int @default(0)  // ← NUEVO
-  twoPointersAttempted Int @default(0)  // ← NUEVO
+  twoPointersMade        Int @default(0) // ← NUEVO
+  twoPointersAttempted   Int @default(0) // ← NUEVO
   fieldGoalsMade         Int @default(0)
   fieldGoalsAttempted    Int @default(0)
   threePointersMade      Int @default(0)
@@ -1433,8 +1447,8 @@ model MatchOpponentPlayerStats {
   turnovers   Int  @default(0)
   fouls       Int  @default(0)
 
-  twoPointersMade      Int @default(0)  // ← NUEVO
-  twoPointersAttempted Int @default(0)  // ← NUEVO
+  twoPointersMade        Int @default(0) // ← NUEVO
+  twoPointersAttempted   Int @default(0) // ← NUEVO
   fieldGoalsMade         Int @default(0)
   fieldGoalsAttempted    Int @default(0)
   threePointersMade      Int @default(0)
@@ -1496,8 +1510,8 @@ model TeamOpponentPlayerStats {
   turnovers   Int  @default(0)
   fouls       Int  @default(0)
 
-  twoPointersMade      Int @default(0)  // ← NUEVO
-  twoPointersAttempted Int @default(0)  // ← NUEVO
+  twoPointersMade        Int @default(0) // ← NUEVO
+  twoPointersAttempted   Int @default(0) // ← NUEVO
   fieldGoalsMade         Int @default(0)
   fieldGoalsAttempted    Int @default(0)
   threePointersMade      Int @default(0)
@@ -1558,8 +1572,8 @@ model ClubMemberRole {
   scope        String   @default("ALL")
   createdAt    DateTime @default(now())
 
-  clubMember ClubMember                 @relation(fields: [clubMemberId], references: [id], onDelete: Cascade)
-  roleRef    Role                       @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  clubMember ClubMember                @relation(fields: [clubMemberId], references: [id], onDelete: Cascade)
+  roleRef    Role                      @relation(fields: [roleId], references: [id], onDelete: Restrict)
   teamScopes ClubMemberRoleTeamScope[]
 
   @@unique([clubMemberId, roleId])
