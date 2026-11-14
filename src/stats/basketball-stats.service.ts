@@ -64,6 +64,7 @@ export class BasketballStatsService {
       opponent: m.opponent,
       teamScore: m.teamScore,
       opponentScore: m.opponentScore,
+      location: (m as any).location,
       playerStats: m.playerStats.map((ps) => ({
         userId: ps.userId,
         user: {
@@ -466,6 +467,7 @@ export class BasketballStatsService {
         matchId: pm.match.id,
         date: pm.match.date.toISOString(),
         opponent: pm.match.opponent,
+        location: (pm.match as any).location, 
         result: r,
         teamScore: pm.match.teamScore,
         opponentScore: pm.match.opponentScore,

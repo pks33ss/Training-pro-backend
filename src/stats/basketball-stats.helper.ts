@@ -42,6 +42,7 @@ export type MatchWithBasketball = {
   opponent: string
   teamScore: number | null
   opponentScore: number | null
+   location?: string //
   playerStats: BasketballPlayerStatsRow[]
 }
 
@@ -122,6 +123,7 @@ export type BasketballMatchStatsResult = {
     teamId: string
     date: Date
     opponent: string
+    location?: string 
     teamScore: number | null
     opponentScore: number | null
     result: MatchResult
@@ -287,6 +289,7 @@ export function computeBasketballStatsFromMatch(
       teamId: match.teamId,
       date: match.date,
       opponent: match.opponent,
+      location: match.location,
       teamScore: effectiveTeamScore, // 👈 Usamos el efectivo
       opponentScore: effectiveOpponentScore, // 👈 Usamos el efectivo
       result: (effectiveTeamScore !== null && effectiveOpponentScore !== null) ? resultFromMatch({ teamScore: effectiveTeamScore, opponentScore: effectiveOpponentScore }) : null,
