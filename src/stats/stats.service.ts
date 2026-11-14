@@ -231,7 +231,7 @@ export class TeamStatsService {
         playerUserId,
         visiblePlayerKeys,
         availableTrendMetrics,
-      )
+             )
     }
 
     return {
@@ -343,6 +343,7 @@ export class TeamStatsService {
     matches: Awaited<ReturnType<TeamStatsService['fetchPadelMatchesForPlayer']>>,
     playerUserId: string,
     visiblePlayerKeys: Set<string>,
+     
     availableTrendMetrics: Array<{ key: string; label: string; unit: string }>,
   ) {
     const mainTeam = teams[0]
