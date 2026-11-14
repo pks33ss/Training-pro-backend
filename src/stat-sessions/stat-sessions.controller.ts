@@ -44,6 +44,16 @@ export class StatSessionsController {
     return this.service.create(req.user.id, teamId, dto)
   }
 
+  // ─── Nuevo: sesiones disponibles para el agregado de entrenamientos ───
+
+  @Get('teams/:teamId/stat-sessions/training-aggregates')
+  listTrainingAggregates(
+    @Request() req,
+    @Param('teamId') teamId: string,
+  ) {
+    return this.service.listTrainingAggregates(req.user.id, teamId)
+  }
+
   // ─── Bajo /stat-sessions/:id ──────────────────────────
 
   @Get('stat-sessions/:id')
@@ -95,7 +105,7 @@ export class StatSessionsController {
     return this.service.updatePlayerStats(req.user.id, id, userId, dto)
   }
 
-    @Get('stat-sessions/:id/candidates')
+  @Get('stat-sessions/:id/candidates')
   getCandidates(@Request() req, @Param('id') id: string) {
     return this.service.getCandidates(req.user.id, id)
   }

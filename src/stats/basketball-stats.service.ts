@@ -33,8 +33,8 @@ type MatchLoaded = {
     blocksAgainst: number
     foulsDrawn: number
     plusMinus: number | null
-    twoPointersMade: number         // ← NUEVO
-    twoPointersAttempted: number    // ← NUEVO
+    twoPointersMade: number
+    twoPointersAttempted: number
     fieldGoalsMade: number
     fieldGoalsAttempted: number
     threePointersMade: number
@@ -83,8 +83,8 @@ export class BasketballStatsService {
         blocksAgainst: ps.blocksAgainst,
         foulsDrawn: ps.foulsDrawn,
         plusMinus: ps.plusMinus,
-        twoPointersMade: ps.twoPointersMade,         // ← NUEVO
-        twoPointersAttempted: ps.twoPointersAttempted, // ← NUEVO
+        twoPointersMade: ps.twoPointersMade,
+        twoPointersAttempted: ps.twoPointersAttempted,
         fieldGoalsMade: ps.fieldGoalsMade,
         fieldGoalsAttempted: ps.fieldGoalsAttempted,
         threePointersMade: ps.threePointersMade,
@@ -130,8 +130,10 @@ export class BasketballStatsService {
       else if (r === 'LOSS') losses++
       else if (r === 'DRAW') draws++
 
-      points += pm.match.teamScore ?? 0
-      opponentPoints += pm.match.opponentScore ?? 0
+      // 👇 Usamos pm.teamSummary.points (que ya tiene en cuenta los entrenamientos)
+      points += pm.teamSummary.points 
+      opponentPoints += pm.teamSummary.opponentPoints ?? 0
+      
       rebounds += pm.teamSummary.rebounds
       assists += pm.teamSummary.assists
       steals += pm.teamSummary.steals
@@ -164,13 +166,6 @@ export class BasketballStatsService {
         ? Math.round((wins / (wins + losses + draws)) * 1000) / 10
         : 0
 
-    // ── Valoración del equipo
-    // IMPORTANTE: se calcula con `playerPoints` (suma de puntos de jugadores)
-    // y NO con `points` (marcador manual del partido), para que:
-    //  1. Cuadre con la suma de valoraciones individuales de la tabla.
-    //  2. Sea coherente con la fila TOTALES (que ya muestra playerPoints).
-    // El marcador oficial (`points`) se sigue usando para Pts/Partido y
-    // Pts rival/Partido, que son métricas del resultado, no del rendimiento.
     const teamValuation = computeValuation({
       points: playerPoints,
       rebounds,
@@ -252,8 +247,8 @@ export class BasketballStatsService {
       blocksAgainst: number
       foulsDrawn: number
       plusMinus: number
-      twoPointersMade: number       // ← NUEVO
-      twoPointersAttempted: number  // ← NUEVO
+      twoPointersMade: number
+      twoPointersAttempted: number
       fieldGoalsMade: number
       fieldGoalsAttempted: number
       threePointersMade: number
@@ -287,8 +282,8 @@ export class BasketballStatsService {
           blocksAgainst: 0,
           foulsDrawn: 0,
           plusMinus: 0,
-          twoPointersMade: 0,         // ← NUEVO
-          twoPointersAttempted: 0,    // ← NUEVO
+          twoPointersMade: 0,
+          twoPointersAttempted: 0,
           fieldGoalsMade: 0,
           fieldGoalsAttempted: 0,
           threePointersMade: 0,
@@ -338,8 +333,8 @@ export class BasketballStatsService {
         agg.blocksAgainst += p.blocksAgainst
         agg.foulsDrawn += p.foulsDrawn
         agg.plusMinus += p.plusMinus ?? 0
-        agg.twoPointersMade += p.twoPointersMade           // ← NUEVO
-        agg.twoPointersAttempted += p.twoPointersAttempted // ← NUEVO
+        agg.twoPointersMade += p.twoPointersMade
+        agg.twoPointersAttempted += p.twoPointersAttempted
         agg.fieldGoalsMade += p.fieldGoalsMade
         agg.fieldGoalsAttempted += p.fieldGoalsAttempted
         agg.threePointersMade += p.threePointersMade
@@ -388,7 +383,7 @@ export class BasketballStatsService {
           ...p,
           minutesPerMatch: perMatch(p.minutes, p.matches),
           pointsPerMatch: perMatch(p.points, p.matches),
-          twoPointersPct: pct(p.twoPointersMade, p.twoPointersAttempted), // ← NUEVO
+          twoPointersPct: pct(p.twoPointersMade, p.twoPointersAttempted),
           fieldGoalPct: pct(p.fieldGoalsMade, p.fieldGoalsAttempted),
           threePointPct: pct(p.threePointersMade, p.threePointersAttempted),
           freeThrowPct: pct(p.freeThrowsMade, p.freeThrowsAttempted),
@@ -440,8 +435,10 @@ export class BasketballStatsService {
       if (r === 'WIN') b.wins++
       else if (r === 'LOSS') b.losses++
       else if (r === 'DRAW') b.draws++
-      b.points += pm.match.teamScore ?? 0
-      b.opponentPoints += pm.match.opponentScore ?? 0
+      
+      // 👇 Usamos pm.teamSummary.points
+      b.points += pm.teamSummary.points
+      b.opponentPoints += pm.teamSummary.opponentPoints ?? 0
     }
 
     const byMonth = Array.from(byMonthMap.entries())
@@ -475,10 +472,11 @@ export class BasketballStatsService {
         matchesPlayed: 1,
         wins: r === 'WIN' ? 1 : 0,
         losses: r === 'LOSS' ? 1 : 0,
-        points: pm.match.teamScore ?? 0,
-        pointsPerMatch: pm.match.teamScore ?? 0,
-        opponentPoints: pm.match.opponentScore ?? 0,
-        opponentPointsPerMatch: pm.match.opponentScore ?? 0,
+        // 👇 Usamos pm.teamSummary.points
+        points: pm.teamSummary.points,
+        pointsPerMatch: pm.teamSummary.points,
+        opponentPoints: pm.teamSummary.opponentPoints ?? 0,
+        opponentPointsPerMatch: pm.teamSummary.opponentPoints ?? 0,
         playerPoints: pm.teamSummary.points,
         playerPointsPerMatch: pm.teamSummary.points,
         rebounds: pm.teamSummary.rebounds,
@@ -514,8 +512,9 @@ export class BasketballStatsService {
       if (metricDef) {
         const trendInput: TrendMatchInput[] = perMatchStats.map((pm) => {
           const r = resultFromMatch(pm.match)
-          const pts = pm.match.teamScore ?? 0
-          const oppPts = pm.match.opponentScore ?? 0
+          // 👇 Usamos pm.teamSummary.points
+          const pts = pm.teamSummary.points
+          const oppPts = pm.teamSummary.opponentPoints ?? 0
           const reb = pm.teamSummary.rebounds
           const ast = pm.teamSummary.assists
           const stl = pm.teamSummary.steals
@@ -552,7 +551,6 @@ export class BasketballStatsService {
             __ratioDen_tpPct: pm.teamSummary.threePointersAttempted,
             __ratioNum_ftPct: pm.teamSummary.freeThrowsMade,
             __ratioDen_ftPct: pm.teamSummary.freeThrowsAttempted,
-            // Añadimos los campos para el futuro trend de %2P
             __ratioNum_twoPointersPct: pm.teamSummary.twoPointersMade,
             __ratioDen_twoPointersPct: pm.teamSummary.twoPointersAttempted,
           }
@@ -571,6 +569,7 @@ export class BasketballStatsService {
       result: resultFromMatch(pm.match),
       teamScore: pm.match.teamScore,
       opponentScore: pm.match.opponentScore,
+     isTraining: pm.match.teamScore === null && pm.match.opponentScore === null,
     }))
 
     return {

@@ -25,8 +25,8 @@ export type BasketballPlayerStatsRow = {
   blocksAgainst: number
   foulsDrawn: number
   plusMinus: number | null
-  twoPointersMade: number         // ← NUEVO
-  twoPointersAttempted: number    // ← NUEVO
+  twoPointersMade: number
+  twoPointersAttempted: number
   fieldGoalsMade: number
   fieldGoalsAttempted: number
   threePointersMade: number
@@ -129,6 +129,7 @@ export type BasketballMatchStatsResult = {
   }
   teamSummary: {
     points: number
+    opponentPoints: number // 👈 NUEVO
     rebounds: number
     assists: number
     steals: number
@@ -139,8 +140,8 @@ export type BasketballMatchStatsResult = {
     foulsDrawn: number
     plusMinus: number
     valuation: number
-    twoPointersMade: number         // ← NUEVO
-    twoPointersAttempted: number    // ← NUEVO
+    twoPointersMade: number
+    twoPointersAttempted: number
     fieldGoalsMade: number
     fieldGoalsAttempted: number
     threePointersMade: number
@@ -168,8 +169,8 @@ export type BasketballMatchStatsResult = {
     foulsDrawn: number
     plusMinus: number | null
     valuation: number
-    twoPointersMade: number         // ← NUEVO
-    twoPointersAttempted: number    // ← NUEVO
+    twoPointersMade: number
+    twoPointersAttempted: number
     fieldGoalsMade: number
     fieldGoalsAttempted: number
     fieldGoalPct: number
@@ -197,8 +198,8 @@ export function computeBasketballStatsFromMatch(
   let blocksAgainst = 0
   let foulsDrawn = 0
   let plusMinus = 0
-  let twoPointersMade = 0         // ← NUEVO
-  let twoPointersAttempted = 0    // ← NUEVO
+  let twoPointersMade = 0
+  let twoPointersAttempted = 0
   let fgm = 0
   let fga = 0
   let tpm = 0
@@ -217,8 +218,8 @@ export function computeBasketballStatsFromMatch(
     blocksAgainst += ps.blocksAgainst
     foulsDrawn += ps.foulsDrawn
     plusMinus += ps.plusMinus ?? 0
-    twoPointersMade += ps.twoPointersMade           // ← NUEVO
-    twoPointersAttempted += ps.twoPointersAttempted // ← NUEVO
+    twoPointersMade += ps.twoPointersMade
+    twoPointersAttempted += ps.twoPointersAttempted
     fgm += ps.fieldGoalsMade
     fga += ps.fieldGoalsAttempted
     tpm += ps.threePointersMade
@@ -245,8 +246,8 @@ export function computeBasketballStatsFromMatch(
       foulsDrawn: ps.foulsDrawn,
       plusMinus: ps.plusMinus,
       valuation,
-      twoPointersMade: ps.twoPointersMade,         // ← NUEVO
-      twoPointersAttempted: ps.twoPointersAttempted, // ← NUEVO
+      twoPointersMade: ps.twoPointersMade,
+      twoPointersAttempted: ps.twoPointersAttempted,
       fieldGoalsMade: ps.fieldGoalsMade,
       fieldGoalsAttempted: ps.fieldGoalsAttempted,
       fieldGoalPct: pct(ps.fieldGoalsMade, ps.fieldGoalsAttempted),
@@ -277,20 +278,24 @@ export function computeBasketballStatsFromMatch(
     fouls,
   })
 
+  const effectiveTeamScore = match.teamScore !== null ? match.teamScore : points
+  const effectiveOpponentScore = match.opponentScore !== null ? match.opponentScore : 0
+
   return {
     match: {
       id: match.id,
       teamId: match.teamId,
       date: match.date,
       opponent: match.opponent,
-      teamScore: match.teamScore,
-      opponentScore: match.opponentScore,
-      result,
+      teamScore: effectiveTeamScore, // 👈 Usamos el efectivo
+      opponentScore: effectiveOpponentScore, // 👈 Usamos el efectivo
+      result: (effectiveTeamScore !== null && effectiveOpponentScore !== null) ? resultFromMatch({ teamScore: effectiveTeamScore, opponentScore: effectiveOpponentScore }) : null,
       hasGlobalScore:
         match.teamScore !== null && match.opponentScore !== null,
     },
     teamSummary: {
-      points,
+      points: effectiveTeamScore, // 👈 El resumen usa el efectivo
+      opponentPoints: effectiveOpponentScore, // 👈 NUEVO
       rebounds,
       assists,
       steals,
@@ -301,8 +306,8 @@ export function computeBasketballStatsFromMatch(
       foulsDrawn,
       plusMinus,
       valuation: teamValuation,
-      twoPointersMade,           // ← NUEVO
-      twoPointersAttempted,      // ← NUEVO
+      twoPointersMade,
+      twoPointersAttempted,
       fieldGoalsMade: fgm,
       fieldGoalsAttempted: fga,
       threePointersMade: tpm,

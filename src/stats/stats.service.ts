@@ -1152,11 +1152,83 @@ export class TeamStatsService {
     })
   }
 
+  // NUEVO: obtiene las sesiones de entrenamiento incluidas en agregados
+    // Obtiene las sesiones de entrenamiento incluidas en agregados
+private async fetchIncludedTrainingSessions(
+  teamIds: string[],
+  range: { from: Date | null; to: Date | null },
+  query: TeamStatsQueryDto,
+) {
+  const where: any = {
+    teamId: { in: teamIds },
+    type: 'TRAINING',
+    includeInTeamStats: true,
+    // 👇 Ya NO filtramos por closedAt: una sesión marcada cuenta aunque esté abierta.
+  }
+
+  if (query.trainingSessionIds && query.trainingSessionIds.length > 0) {
+    where.id = { in: query.trainingSessionIds }
+  }
+
+  if (range.from || range.to) {
+    where.statDate = {}
+    if (range.from) where.statDate.gte = range.from
+    if (range.to) where.statDate.lte = range.to
+  }
+
+  return this.prisma.statSession.findMany({
+    where,
+    include: {
+      playerStats: {
+        include: {
+          user: { select: USER_SELECT },
+        },
+      },
+    },
+  })
+}
+
+  // NUEVO: adaptador StatSession -> Match-like para el agregador
+  private adaptSessionToMatch(session: any) {
+    return {
+      id: session.id,
+      teamId: session.teamId,
+      date: session.statDate,
+      opponent: session.opponent || 'Entrenamiento',
+      location: 'HOME',
+      teamScore: null,
+      opponentScore: null,
+      isTraining: true, // 👈 NUEVO
+      playerStats: session.playerStats.map((ps: any) => ({
+        ...ps,
+        user: ps.user,
+      })),
+      callups: [],
+    }
+  }
+
   private async fetchBasketballMatches(
     teamIds: string[],
     range: { from: Date | null; to: Date | null },
     query: TeamStatsQueryDto,
   ) {
+    const mode = query.trainingSessionsMode ?? 'only'
+
+    // Modo "solo entrenamientos": no cargamos partidos.
+    if (query.includeTrainingSessions && mode === 'only') {
+      const sessions = await this.fetchIncludedTrainingSessions(
+        teamIds,
+        range,
+        query,
+      )
+      return sessions
+        .map((s) => this.adaptSessionToMatch(s))
+        .sort(
+          (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+        )
+    }
+
+    // Cargamos partidos (siempre).
     const where = this.buildBaseWhere(
       teamIds,
       range,
@@ -1164,14 +1236,15 @@ export class TeamStatsService {
       query.season,
     )
 
-    const playerIds = query.playerIds ?? (query.playerId ? [query.playerId] : [])
+    const playerIds =
+      query.playerIds ?? (query.playerId ? [query.playerId] : [])
     if (playerIds.length > 0) {
       where.playerStats = {
         some: { userId: { in: playerIds } },
       }
     }
 
-    return this.prisma.match.findMany({
+    const matches = await this.prisma.match.findMany({
       where,
       orderBy: { date: 'asc' },
       include: {
@@ -1189,8 +1262,24 @@ export class TeamStatsService {
         },
       },
     })
+
+    // Modo "merge": partidos + entrenamientos.
+    if (query.includeTrainingSessions && mode === 'merge') {
+      const sessions = await this.fetchIncludedTrainingSessions(
+        teamIds,
+        range,
+        query,
+      )
+      const adapted = sessions.map((s) => this.adaptSessionToMatch(s))
+      return [...matches, ...adapted].sort(
+        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
+      )
+    }
+
+    // Modo por defecto: solo partidos.
+    return matches
   }
-  
+
   private buildPadelResponse(
     teams: Array<{ id: string; name: string; sport: string }>,
     query: TeamStatsQueryDto,

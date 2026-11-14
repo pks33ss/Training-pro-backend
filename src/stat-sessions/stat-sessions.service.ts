@@ -99,6 +99,7 @@ function validateShotBreakdown(args: {
 export class StatSessionsService {
   constructor(private prisma: PrismaService) {}
 
+
   // ─────────────────────────────────────────────
   // LIST
   // ─────────────────────────────────────────────
@@ -116,6 +117,13 @@ export class StatSessionsService {
     if (query.type) where.type = query.type
     if (query.season) {
       where.OR = [{ match: { season: query.season } }]
+    }
+
+    // 👇 NUEVO: modo "sesiones del agregado de entrenamientos"
+    if (query.trainingAggregatesOnly === 'true') {
+      where.type = 'TRAINING'
+      where.includeInTeamStats = true
+      
     }
 
     const sessions = await this.prisma.statSession.findMany({
@@ -181,6 +189,39 @@ export class StatSessionsService {
     return response
   }
 
+  // 👇 NUEVO: listado específico para el filtro del agregado de entrenamientos.
+async listTrainingAggregates(userId: string, teamId: string) {
+  if (!(await canViewTeam(this.prisma, userId, teamId))) {
+    throw new ForbiddenException('No tienes acceso a este equipo')
+  }
+
+  const sessions = await this.prisma.statSession.findMany({
+    where: {
+      teamId,
+      type: 'TRAINING',
+      includeInTeamStats: true,
+      // 👇 Ya NO exigimos closedAt.
+    },
+    orderBy: [{ statDate: 'desc' }, { createdAt: 'desc' }],
+    select: {
+      id: true,
+      label: true,
+      statDate: true,
+      closedAt: true, // 👈 Lo devolvemos para que el frontend pinte el chip de estado.
+      _count: { select: { playerStats: true } },
+    },
+  })
+
+  return sessions.map((s) => ({
+    id: s.id,
+    label: s.label,
+    statDate: s.statDate.toISOString(),
+    playerCount: s._count.playerStats,
+    closedAt: s.closedAt ? s.closedAt.toISOString() : null, // 👈 NUEVO
+  }))
+}
+
+
   // ─────────────────────────────────────────────
   // GET
   // ─────────────────────────────────────────────
@@ -204,7 +245,7 @@ export class StatSessionsService {
   }
 
   // ─────────────────────────────────────────────
-  // CREATE (todas independientes)
+  // CREATE
   // ─────────────────────────────────────────────
 
   async create(userId: string, teamId: string, dto: CreateStatSessionDto) {
@@ -295,6 +336,22 @@ export class StatSessionsService {
     if (dto.teamScore !== undefined) data.teamScore = dto.teamScore
     if (dto.opponentScore !== undefined)
       data.opponentScore = dto.opponentScore
+
+    // 👇 NUEVO: flag del agregado de entrenamientos
+    if (dto.includeInTeamStats !== undefined) {
+      // Solo tiene sentido para sesiones TRAINING.
+      if (dto.includeInTeamStats && session.type !== 'TRAINING') {
+        throw new BadRequestException(
+          'Solo las sesiones de tipo TRAINING pueden añadirse al agregado de entrenamientos',
+        )
+      }
+      data.includeInTeamStats = dto.includeInTeamStats
+    }
+
+    // 👇 NUEVO: reabrir sesión cerrada
+    if (dto.reopen === true && session.closedAt) {
+      data.closedAt = null
+    }
 
     await this.prisma.statSession.update({ where: { id: sessionId }, data })
 
@@ -419,7 +476,6 @@ export class StatSessionsService {
     }
 
     const data: Prisma.MatchPlayerStatsUpdateInput = {}
-    // Campos que se copian tal cual del DTO (no derivados).
     const passthrough: (keyof UpdateSessionPlayerStatsDto)[] = [
       'minutes',
       'seconds',
@@ -438,7 +494,6 @@ export class StatSessionsService {
       if (v !== undefined) (data as any)[f] = v
     }
 
-    // ── Mezclar DTO con valores actuales para 2P / 3P / TL.
     const p2m =
       dto.twoPointersMade !== undefined
         ? dto.twoPointersMade
@@ -473,9 +528,6 @@ export class StatSessionsService {
       freeThrowsAttempted: fta,
     })
 
-    // ── Derivados: FGM, FGA y Pts SIEMPRE se recalculan.
-    //    `points`, `fieldGoalsMade`, `fieldGoalsAttempted` del DTO
-    //    se ignoran (no se copian).
     const derivedFg = derivedFieldGoals({
       twoPointersMade: p2m,
       twoPointersAttempted: p2a,
@@ -588,6 +640,8 @@ export class StatSessionsService {
     teamScore: number | null
     opponentScore: number | null
     createdAt: Date
+    includeInTeamStats: boolean // 👈 NUEVO
+    closedAt: Date | null // 👈 NUEVO
     match: {
       id: string
       opponent: string
@@ -611,6 +665,8 @@ export class StatSessionsService {
       teamScore: s.match?.teamScore ?? s.teamScore,
       opponentScore: s.match?.opponentScore ?? s.opponentScore,
       playerCount: s._count.playerStats,
+      includeInTeamStats: s.includeInTeamStats, // 👈 NUEVO
+      closedAt: s.closedAt ? s.closedAt.toISOString() : null, // 👈 NUEVO
       match: s.match
         ? {
             id: s.match.id,

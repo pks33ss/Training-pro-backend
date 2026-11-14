@@ -12,9 +12,16 @@ export class ListStatSessionsQueryDto {
   @IsString()
   season?: string
 
-  // Para el menú de "vincular a partido": devuelve todos los partidos del
-  // equipo con un flag "ya tiene stats".
   @IsOptional()
   @IsString()
   includeMatches?: string // "true"
+
+  /**
+   * NUEVO: devuelve solo las sesiones TRAINING cerradas con
+   * includeInTeamStats = true. Se usa en el filtro del agregado de
+   * entrenamientos.
+   */
+  @IsOptional()
+  @IsString()
+  trainingAggregatesOnly?: string // "true"
 }
