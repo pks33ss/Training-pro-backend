@@ -183,8 +183,11 @@ export class MatchService {
       where,
       include: {
         team: { include: { club: true } },
-        _count: {
-          select: { callups: true, playerStats: true },
+                _count: {
+          select: { 
+            callups: { where: { calledUpStatus: 'YES' } }, 
+            playerStats: true 
+          },
         },
       },
       orderBy: { date: 'desc' },
