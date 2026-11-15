@@ -79,24 +79,29 @@ const BASKETBALL_METRICS: MetricDefinition[] = [
     trendable: true, trendKey: 'valuationPerMatch', trendLabel: 'Valoración / partido', aggregation: 'avg', unit: 'val' },
   { key: 'PLUS_MINUS', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: '+/-', group: 'equipo', defaultVisible: true },
 
-  // ─── Tiros de 2 (NUEVOS) ────────────────────────────────────
-  { key: 'TWO_POINTERS_MADE', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Tiros de 2 anotados', group: 'tiros', defaultVisible: true },
-  { key: 'TWO_POINTERS_ATTEMPTED', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Tiros de 2 intentados', group: 'tiros', defaultVisible: true },
+   // ─── Tiros de 2 ─────────────────────────────────────────────
+  { key: 'TWO_POINTERS_MADE', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Tiros de 2 anotados', group: 'tiros', defaultVisible: true,
+    trendable: true, trendKey: 'twoPointersMade', trendLabel: 'T2 anotados', aggregation: 'sum', unit: 't2' },
+  { key: 'TWO_POINTERS_ATTEMPTED', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Tiros de 2 intentados', group: 'tiros', defaultVisible: true,
+    trendable: true, trendKey: 'twoPointersAttempted', trendLabel: 'T2 intentados', aggregation: 'sum', unit: 't2' },
   { key: 'TWO_POINTERS_PCT', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: '% Tiros de 2', group: 'tiros', defaultVisible: true, computed: true,
     trendable: true, trendKey: 'twoPointersPct', trendLabel: '% Tiros de 2', aggregation: 'ratio', unit: '%' },
 
   // ─── Tiros de campo (incluyen 2P + 3P) ──────────────────────
-  { key: 'FG_MADE', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Tiros de campo anotados', group: 'tiros', defaultVisible: true },
-  { key: 'FG_ATTEMPTED', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Tiros de campo intentados', group: 'tiros', defaultVisible: true },
+  { key: 'FG_MADE', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Tiros de campo anotados', group: 'tiros', defaultVisible: true,
+    trendable: true, trendKey: 'fgMade', trendLabel: 'TC anotados', aggregation: 'sum', unit: 'tc' },
+  { key: 'FG_ATTEMPTED', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Tiros de campo intentados', group: 'tiros', defaultVisible: true,
+    trendable: true, trendKey: 'fgAttempted', trendLabel: 'TC intentados', aggregation: 'sum', unit: 'tc' },
   { key: 'FG_PCT', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: '% Tiros de campo', group: 'tiros', defaultVisible: true, computed: true,
     trendable: true, trendKey: 'fgPct', trendLabel: '% Tiros de campo', aggregation: 'ratio', unit: '%' },
 
   // ─── Triples ────────────────────────────────────────────────
-  { key: 'TP_MADE', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Triples anotados', group: 'tiros', defaultVisible: true },
-  { key: 'TP_ATTEMPTED', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Triples intentados', group: 'tiros', defaultVisible: true },
+  { key: 'TP_MADE', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Triples anotados', group: 'tiros', defaultVisible: true,
+    trendable: true, trendKey: 'tpMade', trendLabel: 'T3 anotados', aggregation: 'sum', unit: 't3' },
+  { key: 'TP_ATTEMPTED', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Triples intentados', group: 'tiros', defaultVisible: true,
+    trendable: true, trendKey: 'tpAttempted', trendLabel: 'T3 intentados', aggregation: 'sum', unit: 't3' },
   { key: 'TP_PCT', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: '% Triples', group: 'tiros', defaultVisible: true, computed: true,
     trendable: true, trendKey: 'tpPct', trendLabel: '% Triples', aggregation: 'ratio', unit: '%' },
-
   // ─── Tiros libres ───────────────────────────────────────────
   { key: 'FT_MADE', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Tiros libres anotados', group: 'tiros', defaultVisible: true },
   { key: 'FT_ATTEMPTED', sport: 'BASKETBALL', scopes: ['TEAM', 'MATCH', 'PLAYER'], label: 'Tiros libres intentados', group: 'tiros', defaultVisible: true },

@@ -487,6 +487,12 @@ export class BasketballStatsService {
         blocks: pm.teamSummary.blocks,
         turnovers: pm.teamSummary.turnovers,
         valuation: pm.teamSummary.valuation,
+                twoPointersMade: pm.teamSummary.twoPointersMade,
+        twoPointersAttempted: pm.teamSummary.twoPointersAttempted,
+        threePointersMade: pm.teamSummary.threePointersMade,
+        threePointersAttempted: pm.teamSummary.threePointersAttempted,
+        fieldGoalsMade: pm.teamSummary.fieldGoalsMade,
+        fieldGoalsAttempted: pm.teamSummary.fieldGoalsAttempted,
         winRate: r === 'WIN' ? 100 : r === 'DRAW' ? 50 : 0,
         fieldGoalPct: pct(
           pm.teamSummary.fieldGoalsMade,

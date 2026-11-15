@@ -475,6 +475,7 @@ export class TeamStatsService {
         matchId: pm.match.id,
         date: pm.match.date.toISOString(),
         opponent: pm.match.opponent,
+        location: (pm.match as any).location, 
         result: matchResult,
         teamScore: pm.match.teamScore,
         opponentScore: pm.match.opponentScore,
@@ -494,7 +495,8 @@ export class TeamStatsService {
         gamesWon: pmGamesWon,
         gamesLost: pmGamesLost,
         gamesDiff: pmGamesWon - pmGamesLost,
-      })
+     
+            })
     }
 
     const winRate =
