@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core'; // <-- AÑADIR
-import { DemoReadonlyGuard } from './auth/demo-readonly.guard'; // <-- AÑADIR
+import { APP_GUARD } from '@nestjs/core';
+import { DemoReadonlyGuard } from './auth/demo-readonly.guard';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 
@@ -29,13 +29,14 @@ import { PlaybookModule } from './playbook/playbook.module';
 import { AdminModule } from './admin/admin.module';
 import { MailModule } from './mail/mail.module';
 import { PaymentsModule } from './payments/payments.module';
-import { PermissionsModule } from './permissions/permissions.module'; // LOTE 8.2
-
+import { PermissionsModule } from './permissions/permissions.module';
 import { StatSessionsModule } from './stat-sessions/stat-sessions.module'
 import { LiveEventsModule } from './live-events/live-events.module'
 import { MatchImportModule } from './match-import/match-import.module'
-
 import { AnalyticsModule } from './analytics/analytics.module';
+
+// ✅ NUEVO — Lote 1: Cumplimiento legal
+import { LegalModule } from './legal/legal.module';
 
 @Module({
   imports: [
@@ -45,7 +46,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     ScheduleModule.forRoot(),
 
     PrismaModule,
-    PermissionsModule, // LOTE 8.2 — @Global, expone PermissionsService/TeamPolicyService
+    PermissionsModule,
     AuthModule,
     UserModule,
     ClubModule,
@@ -59,7 +60,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     CloudinaryModule,
     MatchModule,
     MatchImportModule,
-    StatSessionsModule, 
+    StatSessionsModule,
     LiveEventsModule,
     DashboardModule,
     LiveModule,
@@ -79,8 +80,11 @@ import { AnalyticsModule } from './analytics/analytics.module';
     MailModule,
 
     HealthModule,
+
+    // ✅ NUEVO — Lote 1
+    LegalModule,
   ],
-    providers: [
+  providers: [
     {
       provide: APP_GUARD,
       useClass: DemoReadonlyGuard,

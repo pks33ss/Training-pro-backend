@@ -1608,3 +1608,31 @@ model ClubMemberRoleTeamScope {
   @@index([clubMemberRoleId])
   @@index([teamId])
 }
+
+// ============================================
+// LEGAL — Configuración de textos legales (Lote 1)
+// ============================================
+// Tabla singleton: solo debe existir 1 fila con id = "singleton".
+// Se gestiona desde /api/legal/config (SUPER_ADMIN).
+// Sirve para rellenar Aviso Legal, Política de Privacidad y Cookies.
+
+model LegalConfig {
+  id                String   @id @default("singleton")
+  razonSocial       String?
+  nif               String?
+  direccion         String?
+  ciudad            String?
+  codigoPostal      String?
+  pais              String   @default("España")
+  telefono          String?
+  emailContacto     String?
+  emailPrivacidad   String?
+  emailCookies      String?
+  registroMercantil String?
+  dominio           String?
+  actividad         String?
+  updatedAt         DateTime @updatedAt
+  updatedBy         String?
+
+  @@map("legal_config")
+}
