@@ -348,10 +348,13 @@ async listTrainingAggregates(userId: string, teamId: string) {
       data.includeInTeamStats = dto.includeInTeamStats
     }
 
-    // 👇 NUEVO: reabrir sesión cerrada
-    if (dto.reopen === true && session.closedAt) {
-      data.closedAt = null
-    }
+   // 👇 Gestionar cierre y reapertura
+if (dto.reopen === true && session.closedAt) {
+  data.closedAt = null
+} else if (dto.closedAt !== undefined) {
+  // Si envían una fecha (ISO string), la guardamos. Si envían null o string vacío, cerramos con la fecha actual.
+  data.closedAt = dto.closedAt ? new Date(dto.closedAt) : new Date()
+}
 
     await this.prisma.statSession.update({ where: { id: sessionId }, data })
 

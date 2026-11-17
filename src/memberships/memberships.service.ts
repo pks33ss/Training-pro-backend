@@ -38,16 +38,25 @@ export class MembershipsService {
   // MIS MEMBERSHIPS
   // ============================================
 
-  async findMine(userId: string) {
-  // ✅ NUEVO — Deporte restringido para licencia BETA
-  const viewerLicenseSport = await getViewerLicenseSport(this.prisma, userId)
+async findMine(userId: string) {
+  // Comprobamos el rol ANTES de aplicar filtros de licencia,
+  // porque el SUPER_ADMIN debe ver todas sus memberships.
+  const viewer = await this.prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true, licenseType: true, licenseSport: true, deletedAt: true },
+  })
+
+  const isSuper = viewer?.role === 'SUPER_ADMIN' && viewer.deletedAt === null
+  const isBeta =
+    !isSuper && viewer?.licenseType === 'BETA' && viewer.licenseSport != null
+  const viewerLicenseSport = isBeta ? viewer.licenseSport : null
 
   return this.prisma.teamMembership.findMany({
-      where: {
+    where: {
       userId,
       ...(viewerLicenseSport && { team: { sport: viewerLicenseSport } }),
     },
-      include: {
+    include: {
         team: {
           include: {
             club: {

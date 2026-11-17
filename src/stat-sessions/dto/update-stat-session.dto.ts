@@ -17,6 +17,7 @@ import {
  *  - label, statDate, opponent, teamScore, opponentScore.
  *  - includeInTeamStats: marca la sesión para el agregado de entrenamientos.
  *  - reopen: si true y la sesión estaba cerrada, vuelve a estado abierto.
+ *  - closedAt: si se envía, cierra la sesión con esa fecha (o con la actual si se envía un string vacío).
  *
  * NO se puede cambiar `type` ni `matchId` (eso sería crear otra sesión).
  */
@@ -52,4 +53,8 @@ export class UpdateStatSessionDto {
   @IsOptional()
   @IsBoolean()
   reopen?: boolean
+
+  @IsOptional()
+  @IsISO8601()
+  closedAt?: string
 }

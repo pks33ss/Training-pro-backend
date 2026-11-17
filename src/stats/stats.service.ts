@@ -4,8 +4,7 @@ import { Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import {
   getTeamsForViewer,
-  resolveViewerStatsRole,
-  canViewTeam,
+    canViewTeam,
 } from '../common/access'
 import { TeamStatsQueryDto } from './dto/team-stats-query.dto'
 import { PlayerStatsQueryDto } from './dto/player-stats-query.dto'
@@ -60,20 +59,12 @@ export class TeamStatsService {
 
     const range = await this.resolveDateRange(teamId, query)
 
-    const viewerRole = await resolveViewerStatsRole(
-      this.prisma,
-      userId,
-      teamId,
-    )
-    const configRows = await this.prisma.statsVisibilityConfig.findMany({
-      where: { teamId, sport: mainTeam.sport },
-    })
-    const visibleTeamKeys = buildVisibleKeys(
-      mainTeam.sport,
-      'TEAM',
-      viewerRole,
-      configRows as any,
-    )
+const visibleTeamKeys = buildVisibleKeys(
+  mainTeam.sport,
+  'TEAM',
+  'ADMIN_TEAM', // rol que por defecto ve todo (no aplica porque no hay filas)
+  [], // sin configRows → buildVisibleKeys devuelve todas por defecto
+)
 
     const availableTrendMetrics = getAvailableTrendMetrics(
       mainTeam.sport,
@@ -173,20 +164,13 @@ export class TeamStatsService {
 
     const range = await this.resolveDateRange(teamId, query)
 
-    const viewerRole = await resolveViewerStatsRole(
-      this.prisma,
-      viewerId,
-      teamId,
-    )
-    const configRows = await this.prisma.statsVisibilityConfig.findMany({
-      where: { teamId, sport: mainTeam.sport },
-    })
-    const visiblePlayerKeys = buildVisibleKeys(
-      mainTeam.sport,
-      'PLAYER',
-      viewerRole,
-      configRows as any,
-    )
+// ⚠️ Igual que en getTeamStats: configuración por roles desactivada.
+const visiblePlayerKeys = buildVisibleKeys(
+  mainTeam.sport,
+  'PLAYER',
+  'PLAYER', // indiferente porque no hay filas
+  [], // sin configRows → todo visible por defecto
+)
 
     const availableTrendMetrics = getAvailableTrendMetrics(
       mainTeam.sport,

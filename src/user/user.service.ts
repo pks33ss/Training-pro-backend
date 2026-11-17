@@ -87,43 +87,87 @@ export class UserService {
   }
 
   async getUserMemberships(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        name: true,
-        lastName: true,
-        username: true,
-        email: true,
-        isGhost: true,
-        clubs: {
-          include: {
-            club: { select: { id: true, name: true, logo: true } },
-            clubMemberRoles: {
-              include: { roleRef: { select: { name: true } } },
-            },
-          },
-        },
-        memberships: {
-          where: { status: 'ACTIVE' },
-          include: {
-            team: {
-              select: {
-                id: true,
-                name: true,
-                clubId: true,
-                club: { select: { id: true, name: true } },
-              },
-            },
-            roles: { include: { roleRef: { select: { name: true } } } },
+  // 1) Comprobar si es SUPER_ADMIN
+  const viewer = await this.prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true, deletedAt: true },
+  })
+  const isSuper = viewer?.role === 'SUPER_ADMIN' && viewer.deletedAt === null
+
+  // 2) Datos del user con sus memberships reales
+  const user = await this.prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      name: true,
+      lastName: true,
+      username: true,
+      email: true,
+      isGhost: true,
+      clubs: {
+        include: {
+          club: { select: { id: true, name: true, logo: true } },
+          clubMemberRoles: {
+            include: { roleRef: { select: { name: true } } },
           },
         },
       },
+      memberships: {
+        where: { status: 'ACTIVE' },
+        include: {
+          team: {
+            select: {
+              id: true,
+              name: true,
+              sport: true,
+              clubId: true,
+              club: { select: { id: true, name: true } },
+            },
+          },
+          roles: { include: { roleRef: { select: { name: true } } } },
+        },
+      },
+    },
+  })
+
+  if (!user) throw new NotFoundException('Usuario no encontrado')
+
+  // 3) Si es SUPER_ADMIN, añadir memberships virtuales para todos los equipos
+  if (isSuper) {
+    const allTeams = await this.prisma.team.findMany({
+      select: {
+        id: true,
+        name: true,
+        sport: true,
+        clubId: true,
+        club: { select: { id: true, name: true } },
+      },
     })
 
-    if (!user) throw new NotFoundException('Usuario no encontrado')
-    return user
+    const realByTeamId = new Map(
+      (user.memberships ?? []).map((m) => [m.team?.id, m]),
+    )
+
+    const virtualMemberships = allTeams.map((team) => {
+      const real = realByTeamId.get(team.id)
+      if (real) return real
+
+      return {
+        id: `virtual-${team.id}`,
+        status: 'ACTIVE',
+        team,
+        roles: [],
+      }
+    })
+
+    return {
+      ...user,
+      memberships: virtualMemberships as any,
+    }
   }
+
+  return user
+}
   async findById(viewerId: string, id: string) {
     const user = await this.prisma.user.findUnique({
       where: { id },
@@ -611,115 +655,180 @@ export class UserService {
     return { message: 'Contraseña reseteada correctamente' }
   }
 
-  async getMe(userId: string) {
-    const viewerLicenseSport = await getViewerLicenseSport(this.prisma, userId)
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        username: true,
-        name: true,
-        lastName: true,
-        phone: true,
-        avatar: true,
-        bio: true,
-        role: true,
-        licenseType: true,
-        licenseSport: true,
-        isGhost: true,
-        createdAt: true,
-        emailNotificationsEnabled: true,
-        emailOptOut: true,
-        tacticalBackgroundUrlHalf: true,
-        tacticalBackgroundUrlFull: true,
-        tacticalBackgroundMode: true,
-        hiddenTabs: true,
-        memberships: {
-          where: {
+async getMe(userId: string) {
+  // 1) Comprobamos el rol para aplicar (o no) filtros de licencia
+  const viewer = await this.prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true, licenseType: true, licenseSport: true, deletedAt: true },
+  })
+
+  const isSuper = viewer?.role === 'SUPER_ADMIN' && viewer.deletedAt === null
+  const isBeta =
+    !isSuper && viewer?.licenseType === 'BETA' && viewer.licenseSport != null
+  const viewerLicenseSport = isBeta ? viewer.licenseSport : null
+
+  // 2) Datos del user (con memberships reales)
+  const user = await this.prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      email: true,
+      username: true,
+      name: true,
+      lastName: true,
+      phone: true,
+      avatar: true,
+      bio: true,
+      role: true,
+      licenseType: true,
+      licenseSport: true,
+      isGhost: true,
+      createdAt: true,
+      emailNotificationsEnabled: true,
+      emailOptOut: true,
+      tacticalBackgroundUrlHalf: true,
+      tacticalBackgroundUrlFull: true,
+      tacticalBackgroundMode: true,
+      hiddenTabs: true,
+      memberships: {
+        where: {
           status: { in: ['ACTIVE', 'PENDING'] },
           ...(viewerLicenseSport && { team: { sport: viewerLicenseSport } }),
-                      },
-          select: {
-            id: true,
-            status: true,
-            jerseyNumber: true,
-            position: true,
-            seasonId: true,
-            joinedAt: true,
-            team: {
-              select: {
-                id: true,
-                name: true,
-                sport: true,
-                category: true,
-                season: true,
-                clubId: true,
-                primaryColor: true,
-                secondaryColor: true,
-                logo: true,
-                club: {
-                  select: {
-                    id: true,
-                    name: true,
-                    logo: true,
-                    primaryColor: true,
-                    secondaryColor: true,
-                  },
+        },
+        select: {
+          id: true,
+          status: true,
+          jerseyNumber: true,
+          position: true,
+          seasonId: true,
+          joinedAt: true,
+          team: {
+            select: {
+              id: true,
+              name: true,
+              sport: true,
+              category: true,
+              season: true,
+              clubId: true,
+              primaryColor: true,
+              secondaryColor: true,
+              logo: true,
+              club: {
+                select: {
+                  id: true,
+                  name: true,
+                  logo: true,
+                  primaryColor: true,
+                  secondaryColor: true,
                 },
               },
             },
-            season: {
-              select: { id: true, name: true, color: true },
-            },
           },
-          orderBy: [{ status: 'asc' }, { joinedAt: 'desc' }],
-        },
-        tutorRelationships: {
-          where: { status: { in: ['ACTIVE', 'PENDING'] } },
-          select: {
-            id: true,
-            status: true,
-            relationship: true,
-            canPickUp: true,
-            isEmergencyContact: true,
-            playerUser: {
-              select: {
-                id: true,
-                name: true,
-                lastName: true,
-                username: true,
-                avatar: true,
-              },
-            },
+          season: {
+            select: { id: true, name: true, color: true },
           },
         },
-        playerRelationships: {
-          where: { status: { in: ['ACTIVE', 'PENDING'] } },
-          select: {
-            id: true,
-            status: true,
-            relationship: true,
-            canPickUp: true,
-            isEmergencyContact: true,
-            tutorUser: {
-              select: {
-                id: true,
-                name: true,
-                lastName: true,
-                username: true,
-                avatar: true,
-              },
+        orderBy: [{ status: 'asc' }, { joinedAt: 'desc' }],
+      },
+      tutorRelationships: {
+        where: { status: { in: ['ACTIVE', 'PENDING'] } },
+        select: {
+          id: true,
+          status: true,
+          relationship: true,
+          canPickUp: true,
+          isEmergencyContact: true,
+          playerUser: {
+            select: {
+              id: true,
+              name: true,
+              lastName: true,
+              username: true,
+              avatar: true,
             },
           },
         },
       },
+      playerRelationships: {
+        where: { status: { in: ['ACTIVE', 'PENDING'] } },
+        select: {
+          id: true,
+          status: true,
+          relationship: true,
+          canPickUp: true,
+          isEmergencyContact: true,
+          tutorUser: {
+            select: {
+              id: true,
+              name: true,
+              lastName: true,
+              username: true,
+              avatar: true,
+            },
+          },
+        },
+      },
+    },
+  })
+
+  if (!user) throw new NotFoundException('Usuario no encontrado')
+
+  // 3) ✅ Si es SUPER_ADMIN, añadimos "memberships virtuales" para
+  //    todos los equipos del sistema que no tenga ya como member real.
+  //    Así el ActiveTeamContext puede construir allTeams completo.
+  if (isSuper) {
+    const allTeams = await this.prisma.team.findMany({
+      select: {
+        id: true,
+        name: true,
+        sport: true,
+        category: true,
+        season: true,
+        clubId: true,
+        primaryColor: true,
+        secondaryColor: true,
+        logo: true,
+        club: {
+          select: {
+            id: true,
+            name: true,
+            logo: true,
+            primaryColor: true,
+            secondaryColor: true,
+          },
+        },
+      },
+      orderBy: { name: 'asc' },
     })
 
-    if (!user) throw new NotFoundException('Usuario no encontrado')
+    const realByTeamId = new Map(
+      (user.memberships ?? []).map((m) => [m.team?.id, m]),
+    )
 
-    return user
+    const virtualMemberships = allTeams.map((team) => {
+      const real = realByTeamId.get(team.id)
+      if (real) return real
+
+      return {
+        id: `virtual-${team.id}`,
+        status: 'ACTIVE',
+        jerseyNumber: null,
+        position: null,
+        seasonId: null,
+        joinedAt: new Date(),
+        team,
+        season: null,
+      }
+    })
+
+    return {
+      ...user,
+      memberships: virtualMemberships as typeof user.memberships,
+    }
   }
+
+  return user
+}
 
   async updateMe(
     userId: string,
