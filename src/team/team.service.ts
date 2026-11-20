@@ -159,14 +159,14 @@ export class TeamService {
     await ensureLicenseSportOnTeamJoin(this.prisma, userId, team.id);
 
     const refreshedTeam = await this.prisma.team.findUniqueOrThrow({
-  where: { id: team.id },
-  include: { club: true },
-});
+      where: { id: team.id },
+      include: { club: true },
+    });
 
-const creator = await this.prisma.user.findUnique({
-  where: { id: userId },
-  select: { name: true, lastName: true, email: true },
-});
+    const creator = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, lastName: true, email: true },
+    });
 
     this.mailService
       .sendAdminNotification({
@@ -192,56 +192,77 @@ const creator = await this.prisma.user.findUnique({
     return refreshedTeam;
   }
 
+  // ============================================
+  // LISTADO DE EQUIPOS POR CLUB
+  // ============================================
 
+  /**
+   * Equipos de un club visibles para el usuario:
+   * - Miembro activo del club → todos los equipos del club.
+   * - No miembro del club pero con membresía activa en algún equipo → solo esos equipos.
+   * - Ninguna de las dos → 403.
+   */
+  private async findTeamsForViewer(
+    userId: string,
+    clubId: string,
+    orderBy?: { name: 'asc' | 'desc' },
+  ) {
+    console.log('findTeamsForViewer', { userId, clubId })
+    const viewerSport = await getViewerLicenseSport(this.prisma, userId)
+    const sportFilter = viewerSport ? { sport: viewerSport } : {}
 
-async findAllByClub(userId: string, clubId: string) {
-  if (!(await isActiveClubMember(this.prisma, userId, clubId))) {
-    throw new ForbiddenException('No tienes acceso a este club')
-  }
-
-  const viewerSport = await getViewerLicenseSport(this.prisma, userId)
-
-  return this.prisma.team.findMany({
-    where: {
-      clubId,
-      ...(viewerSport ? { sport: viewerSport } : {}),
-    },
-    include: {
+    const include = {
       memberships: {
         where: {
           roles: { some: { roleRef: { name: 'PLAYER' } } },
-          status: 'ACTIVE',
+          status: 'ACTIVE' as const,
         },
         select: { id: true },
       },
-    },
-  })
-}
+    }
 
-async findAllByClubWithMembers(userId: string, clubId: string) {
-  if (!(await isActiveClubMember(this.prisma, userId, clubId))) {
-    throw new ForbiddenException('No tienes acceso a este club')
+    const isClubMember = await isActiveClubMember(this.prisma, userId, clubId)
+
+    if (isClubMember) {
+      return this.prisma.team.findMany({
+        where: { clubId, ...sportFilter },
+        include,
+        ...(orderBy ? { orderBy } : {}),
+      })
+    }
+
+    // No es miembro del club: solo los equipos donde participa
+    const myTeams = await this.prisma.team.findMany({
+      where: {
+        clubId,
+        ...sportFilter,
+        memberships: { some: { userId, status: 'ACTIVE' } },
+      },
+      include,
+      ...(orderBy ? { orderBy } : {}),
+    })
+
+    if (myTeams.length === 0) {
+      // Sin ClubMember y sin ningún equipo activo (o ninguno del deporte de su licencia)
+      const hasAnyMembership = await this.prisma.teamMembership.findFirst({
+        where: { userId, status: 'ACTIVE', team: { clubId } },
+        select: { id: true },
+      })
+      if (!hasAnyMembership) {
+        throw new ForbiddenException('No tienes acceso a este club')
+      }
+    }
+
+    return myTeams
   }
 
-  const viewerSport = await getViewerLicenseSport(this.prisma, userId)
+  async findAllByClub(userId: string, clubId: string) {
+    return this.findTeamsForViewer(userId, clubId)
+  }
 
-  return this.prisma.team.findMany({
-    where: {
-      clubId,
-      ...(viewerSport ? { sport: viewerSport } : {}),
-    },
-    include: {
-      memberships: {
-        where: {
-          roles: { some: { roleRef: { name: 'PLAYER' } } },
-          status: 'ACTIVE',
-        },
-        select: { id: true },
-      },
-    },
-    orderBy: { name: 'asc' },
-  })
-}
+  async findAllByClubWithMembers(userId: string, clubId: string) {
+    return this.findTeamsForViewer(userId, clubId, { name: 'asc' })
+  }
 
   async findOne(userId: string, teamId: string) {
     const team = await this.prisma.team.findUnique({

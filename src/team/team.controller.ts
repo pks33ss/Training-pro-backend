@@ -30,13 +30,13 @@ export class TeamController {
   }
 
   @Get('club/:clubId')
-  @RequirePermission('team', 'view', { clubIdFrom: { param: 'clubId' } })
+  // @RequirePermission('team', 'view', { clubIdFrom: { param: 'clubId' } })
   findAllByClub(@Request() req, @Param('clubId') clubId: string) {
     return this.teamService.findAllByClub(req.user.id, clubId);
   }
 
   @Get('club/:clubId/with-members')
-  @RequirePermission('team', 'view', { clubIdFrom: { param: 'clubId' } })
+  //@RequirePermission('team', 'view', { clubIdFrom: { param: 'clubId' } })
   async findAllByClubWithMembers(@Request() req, @Param('clubId') clubId: string) {
     return this.teamService.findAllByClubWithMembers(req.user.id, clubId)
   }

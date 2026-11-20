@@ -1376,14 +1376,20 @@ async findClubPlayers(userId: string, clubId: string) {
 
       const desiredRolesByTeam = new Map<string, Set<string>>()
 
-      for (const assignment of dto.roles) {
+     for (const assignment of dto.roles) {
         const roleRef = roles.find(r => r.name === assignment.name)
         if (!roleRef) continue
-        if (roleRef.scope !== 'TEAM') continue
-
+        
+        // 👇 ELIMINAMOS LA RESTRICCIÓN DE SCOPE
+        // Si el assignment tiene teamIds explícitos o scope es 'TEAMS', creamos la TeamMembership
+        
         const targetTeams = assignment.scope === 'ALL' 
           ? allTeamIdsOfClub 
           : (assignment.teamIds || [])
+          
+        // Si targetTeams está vacío pero el assignment no es 'ALL', no asignamos a ningún equipo
+        if (targetTeams.length === 0) continue;
+
         for (const tId of targetTeams) {
           if (!desiredRolesByTeam.has(tId)) desiredRolesByTeam.set(tId, new Set())
           desiredRolesByTeam.get(tId)!.add(roleRef.id)
